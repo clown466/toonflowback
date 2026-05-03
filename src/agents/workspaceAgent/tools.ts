@@ -3,6 +3,7 @@ import { z } from "zod";
 import ResTool from "@/socket/resTool";
 import u from "@/utils";
 import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
+import { generateProjectStoryboardDraft } from "@/services/storyboardDraftGeneration";
 
 interface ToolConfig {
   resTool: ResTool;
@@ -384,6 +385,59 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
   }
 
   return { handled: true, message: lines.join("\n"), result };
+}
+
+export async function runProjectStoryboardDraftFastPath(config: ToolConfig, options?: { sourceText?: string; force?: boolean; append?: boolean }) {
+  const { resTool, msg } = config;
+  const projectId = Number(resTool.data.projectId);
+  const thinking = msg.thinking("正在生成生产分镜草案...");
+
+  const result = await generateProjectStoryboardDraft(projectId, {
+    sourceText: options?.sourceText,
+    preferredScriptId: typeof resTool.data.scriptId === "number" ? resTool.data.scriptId : undefined,
+    force: options?.force,
+    append: options?.append,
+  });
+
+  thinking.appendText(
+    JSON.stringify(
+      {
+        projectId,
+        episodesId: result.episodesId,
+        scriptName: result.scriptName,
+        scriptCreated: result.scriptCreated,
+        createdCount: result.createdCount,
+        existingCount: result.existingCount,
+        replaced: result.replaced,
+        appended: result.appended,
+        storyboardIds: result.storyboardIds,
+      },
+      null,
+      2,
+    ),
+  );
+  thinking.updateTitle(result.createdCount > 0 ? "分镜草案已写入生产工作台" : "已有分镜，已切换生产工作台");
+  thinking.complete();
+
+  resTool.socket.emit("productionDataUpdated", {
+    projectId,
+    episodesId: result.episodesId,
+    scriptName: result.scriptName,
+    createdCount: result.createdCount,
+    existingCount: result.existingCount,
+    storyboardIds: result.storyboardIds,
+  });
+
+  const lines = [
+    result.message,
+    `已关联当前项目资产库，并写入 Flova 工作台/生产工作台可读取的数据。`,
+    result.createdCount > 0 ? "现在可以在左侧分镜列表查看；需要分镜图片时点“生成全部”。" : "",
+  ].filter(Boolean);
+  const text = msg.text(lines.join("\n"));
+  text.complete();
+  msg.complete();
+
+  return { handled: true, result };
 }
 
 export default function useTools(config: ToolConfig) {

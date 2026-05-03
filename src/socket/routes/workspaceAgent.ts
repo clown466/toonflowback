@@ -3,7 +3,7 @@ import u from "@/utils";
 import { Namespace, Socket } from "socket.io";
 import * as agent from "@/agents/workspaceAgent/index";
 import ResTool from "@/socket/resTool";
-import { runNovelAssetExtractionFastPath, runProjectAssetImageGenerationFastPath } from "@/agents/workspaceAgent/tools";
+import { runNovelAssetExtractionFastPath, runProjectAssetImageGenerationFastPath, runProjectStoryboardDraftFastPath } from "@/agents/workspaceAgent/tools";
 
 async function verifyToken(rawToken: string): Promise<Boolean> {
   const setting = await u.db("o_setting").where("key", "tokenKey").select("value").first();
@@ -74,6 +74,15 @@ export default (nsp: Namespace) => {
       };
 
       try {
+        const shouldFastGenerateStoryboards =
+          /(分镜|镜头|storyboard|镜号|shot list)/i.test(content) &&
+          /(出|生成|做|创建|规划|拆|整理|帮我|开始|直接|一键|一句话|生产)/i.test(content);
+        if (shouldFastGenerateStoryboards) {
+          console.log("[workspaceAgent] 命中生产分镜快速路径");
+          await runProjectStoryboardDraftFastPath({ resTool, msg }, { sourceText: content });
+          return;
+        }
+
         const explicitAssetImageIntent =
           /(资产|角色|场景|道具|参考图).*(出图|生图|生成.*图|批量.*图|图片)|(出图|生图|生成.*图).*(资产|角色|场景|道具|参考图)/i.test(content);
         const genericBatchImageIntent =

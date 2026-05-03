@@ -17,7 +17,9 @@ export default router.post(
     const { projectId, name, includeFlovaProductionContainer } = req.body;
     let query = u.db("o_script").where("projectId", projectId).select("*");
     if (!includeFlovaProductionContainer) {
-      query = query.andWhere("name", "!=", FLOVA_SCRIPT_NAME);
+      query = query.andWhere((builder) => {
+        builder.whereNull("name").orWhere("name", "not like", `${FLOVA_SCRIPT_NAME}%`);
+      });
     }
     if (name) {
       query = query.andWhere("name", "like", `%${name}%`);

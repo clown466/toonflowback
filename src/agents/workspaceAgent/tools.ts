@@ -413,6 +413,8 @@ export async function runProjectStoryboardDraftFastPath(config: ToolConfig, opti
         existingCount: result.existingCount,
         replaced: result.replaced,
         appended: result.appended,
+        selectedNovelIds: result.selectedNovelIds,
+        selectedChapterIndexes: result.selectedChapterIndexes,
         storyboardIds: result.storyboardIds,
       },
       null,
@@ -433,6 +435,7 @@ export async function runProjectStoryboardDraftFastPath(config: ToolConfig, opti
 
   const lines = [
     result.message,
+    result.selectedChapterIndexes.length ? `本次章节：${result.selectedChapterIndexes.map((index) => `第${index}章`).join("、")}。` : "",
     `已关联当前项目资产库，并写入 Flova 工作台/生产工作台可读取的数据。`,
     result.createdCount > 0 ? "现在可以在左侧分镜列表查看；需要分镜图片时点“生成全部”。" : "",
   ].filter(Boolean);

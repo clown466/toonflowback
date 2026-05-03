@@ -52,6 +52,8 @@ export interface GenerateProjectStoryboardDraftOptions {
   preferredScriptId?: number;
   force?: boolean;
   append?: boolean;
+  novelIds?: number[];
+  chapterIndexes?: number[];
 }
 
 export interface GenerateProjectStoryboardDraftResult {
@@ -64,6 +66,8 @@ export interface GenerateProjectStoryboardDraftResult {
   existingCount: number;
   replaced: boolean;
   appended: boolean;
+  selectedNovelIds: number[];
+  selectedChapterIndexes: number[];
   storyboardTable: string;
   message: string;
 }
@@ -83,6 +87,98 @@ function compactText(value: unknown, maxLength = 600) {
 
 function cleanName(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function toUniquePositiveNumbers(values: unknown[]) {
+  const result: number[] = [];
+  for (const value of values) {
+    const numberValue = Number(value);
+    if (!Number.isInteger(numberValue) || numberValue <= 0 || result.includes(numberValue)) continue;
+    result.push(numberValue);
+  }
+  return result;
+}
+
+function chineseNumberToArabic(value: string): number | null {
+  const text = value.trim();
+  if (/^\d+$/.test(text)) return Number(text);
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  };
+  if (text === "十") return 10;
+  const hundredParts = text.split("百");
+  let total = 0;
+  let rest = text;
+  if (hundredParts.length === 2) {
+    total += (digits[hundredParts[0]!] ?? 1) * 100;
+    rest = hundredParts[1]!;
+  }
+  const tenParts = rest.split("十");
+  if (tenParts.length === 2) {
+    total += (tenParts[0] ? digits[tenParts[0]] ?? 0 : 1) * 10;
+    total += tenParts[1] ? digits[tenParts[1]] ?? 0 : 0;
+    return total > 0 ? total : null;
+  }
+  if (rest.length === 1 && digits[rest] != null) return total + digits[rest];
+  return total > 0 ? total : null;
+}
+
+function expandRange(start: number, end: number) {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start <= 0 || end <= 0) return [];
+  const [from, to] = start <= end ? [start, end] : [end, start];
+  return Array.from({ length: to - from + 1 }, (_, index) => from + index);
+}
+
+function addParsedNumber(target: number[], value: string | undefined) {
+  if (!value) return;
+  const numberValue = chineseNumberToArabic(value);
+  if (numberValue && !target.includes(numberValue)) target.push(numberValue);
+}
+
+export function parseStoryboardChapterIndexes(sourceText?: string) {
+  const text = sourceText ?? "";
+  const indexes: number[] = [];
+  const numberToken = String.raw`(\d{1,4}|[零〇一二两三四五六七八九十百]{1,8})`;
+  const rangePatterns = [
+    new RegExp(String.raw`\bjuben\s*${numberToken}\s*(?:-|~|—|到|至)\s*(?:juben\s*)?${numberToken}\b`, "gi"),
+    new RegExp(String.raw`第?\s*${numberToken}\s*(?:章|章节|回)?\s*(?:-|~|—|到|至)\s*第?\s*${numberToken}\s*(?:章|章节|回)`, "gi"),
+    new RegExp(String.raw`\bchapters?\s*${numberToken}\s*(?:-|~|—|to)\s*${numberToken}\b`, "gi"),
+  ];
+
+  for (const pattern of rangePatterns) {
+    for (const match of text.matchAll(pattern)) {
+      const start = chineseNumberToArabic(match[1] ?? "");
+      const end = chineseNumberToArabic(match[2] ?? "");
+      for (const index of expandRange(start ?? 0, end ?? 0)) {
+        if (!indexes.includes(index)) indexes.push(index);
+      }
+    }
+  }
+
+  const singlePatterns = [
+    new RegExp(String.raw`\bjuben\s*${numberToken}\b`, "gi"),
+    new RegExp(String.raw`第\s*${numberToken}\s*(?:章|章节|回)`, "gi"),
+    new RegExp(String.raw`${numberToken}\s*(?:章|章节|回)`, "gi"),
+    new RegExp(String.raw`\bchapters?\s*${numberToken}\b`, "gi"),
+    new RegExp(String.raw`\bch(?:apter)?\.?\s*${numberToken}\b`, "gi"),
+  ];
+
+  for (const pattern of singlePatterns) {
+    for (const match of text.matchAll(pattern)) addParsedNumber(indexes, match[1]);
+  }
+
+  return indexes;
 }
 
 function normalizeForMatch(value: unknown) {
@@ -152,20 +248,37 @@ async function linkProjectAssetsToScript(projectId: number, scriptId: number) {
   return assets.length;
 }
 
+function formatChapterLabel(novel: NovelRow) {
+  const index = novel.chapterIndex ?? novel.id;
+  const title = cleanName(novel.chapter);
+  return `第${index}章${title ? ` ${compactText(title, 24)}` : ""}`;
+}
+
+function getProductionScriptName(novels: NovelRow[]) {
+  if (novels.length === 1) return `${FLOVA_SCRIPT_NAME} - ${formatChapterLabel(novels[0]!)}`;
+  if (novels.length > 1) {
+    const indexes = novels.map((novel) => novel.chapterIndex ?? novel.id).filter((index): index is number => typeof index === "number");
+    const label = indexes.length ? `第${indexes[0]}-${indexes[indexes.length - 1]}章` : `${novels.length}章`;
+    return `${FLOVA_SCRIPT_NAME} - ${label}`;
+  }
+  return FLOVA_SCRIPT_NAME;
+}
+
 async function ensureProductionScript(project: ProjectRow, novels: NovelRow[], preferredScriptId?: number) {
   const scriptRows = await u.db("o_script").where("projectId", project.id).select("id", "name", "content", "projectId", "createTime").orderBy("id", "asc");
   const scripts: ScriptRow[] = scriptRows.filter((script: { id?: number | null }): script is ScriptRow => typeof script.id === "number");
   const content = buildScriptContent(project, novels, scripts);
+  const targetScriptName = getProductionScriptName(novels);
 
   if (preferredScriptId) {
     const preferred = scripts.find((script) => script.id === preferredScriptId);
-    if (preferred) {
+    if (preferred && (!novels.length || preferred.name === targetScriptName)) {
       await linkProjectAssetsToScript(project.id, preferred.id);
       return { script: preferred, created: false, content };
     }
   }
 
-  const flovaScript = scripts.find((script) => script.name === FLOVA_SCRIPT_NAME);
+  const flovaScript = scripts.find((script) => script.name === targetScriptName);
   if (flovaScript) {
     const update: Partial<ScriptRow> = {};
     if (content && content !== flovaScript.content) update.content = content;
@@ -181,14 +294,14 @@ async function ensureProductionScript(project: ProjectRow, novels: NovelRow[], p
   }
 
   const [insertedId] = await u.db("o_script").insert({
-    name: FLOVA_SCRIPT_NAME,
+    name: targetScriptName,
     content,
     projectId: project.id,
     createTime: Date.now(),
   });
   const script: ScriptRow = {
     id: Number(insertedId),
-    name: FLOVA_SCRIPT_NAME,
+    name: targetScriptName,
     content,
     projectId: project.id,
     createTime: Date.now(),
@@ -428,11 +541,29 @@ function shouldAppend(sourceText?: string) {
   return /追加|补充|继续|接着/i.test(sourceText ?? "");
 }
 
+function selectStoryboardNovels(allNovels: NovelRow[], options: GenerateProjectStoryboardDraftOptions) {
+  if (!allNovels.length) return [];
+
+  const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);
+  const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(options.sourceText)]);
+
+  let selected = allNovels;
+  if (requestedNovelIds.length) {
+    selected = allNovels.filter((novel) => requestedNovelIds.includes(novel.id));
+  } else if (requestedChapterIndexes.length) {
+    selected = allNovels.filter((novel) => typeof novel.chapterIndex === "number" && requestedChapterIndexes.includes(novel.chapterIndex));
+  } else {
+    selected = [allNovels[0]!];
+  }
+
+  return selected.slice(0, 1);
+}
+
 export async function generateProjectStoryboardDraft(projectId: number, options: GenerateProjectStoryboardDraftOptions = {}): Promise<GenerateProjectStoryboardDraftResult> {
   const project = (await u.db("o_project").where("id", projectId).first()) as ProjectRow | undefined;
   if (!project?.id) throw new Error("当前项目不存在，无法生成分镜。");
 
-  const [novels, assets] = await Promise.all([
+  const [allNovels, assets] = await Promise.all([
     u.db("o_novel").where("projectId", projectId).select("id", "chapterIndex", "chapter", "chapterData", "event", "eventState").orderBy("chapterIndex", "asc") as Promise<NovelRow[]>,
     u
       .db("o_assets")
@@ -442,6 +573,13 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
       .orderByRaw(`CASE type WHEN 'scene' THEN 1 WHEN 'role' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
       .orderBy("id", "asc") as Promise<AssetRow[]>,
   ]);
+  const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(options.sourceText)]);
+  const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);
+  const novels = selectStoryboardNovels(allNovels, options);
+  if (allNovels.length && (requestedChapterIndexes.length || requestedNovelIds.length) && !novels.length) {
+    const requested = requestedChapterIndexes.length ? `章节 ${requestedChapterIndexes.join(", ")}` : `小说记录 ${requestedNovelIds.join(", ")}`;
+    throw new Error(`没有匹配到${requested}，已停止生成，避免把其他章节误写入分镜。`);
+  }
 
   const force = options.force ?? shouldForce(options.sourceText);
   const append = options.append ?? shouldAppend(options.sourceText);
@@ -463,8 +601,10 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
       existingCount,
       replaced: false,
       appended: false,
+      selectedNovelIds: novels.map((novel) => novel.id),
+      selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
       storyboardTable,
-      message: `当前生产容器「${script.name ?? FLOVA_SCRIPT_NAME}」已有 ${existingCount} 个分镜，已切换到该剧集。需要覆盖重做时请说“重新生成分镜”。`,
+      message: `当前生产容器「${script.name ?? FLOVA_SCRIPT_NAME}」已有 ${existingCount} 个分镜，已切换到该章节剧集。需要覆盖重做时请说“重新生成分镜”。`,
     };
   }
 
@@ -492,7 +632,9 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
     existingCount,
     replaced: removedCount > 0,
     appended: append && existingCount > 0,
+    selectedNovelIds: novels.map((novel) => novel.id),
+    selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
     storyboardTable,
-    message: `${verb} ${storyboardIds.length} 个分镜，生产剧集为「${script.name ?? FLOVA_SCRIPT_NAME}」。`,
+    message: `${verb} ${storyboardIds.length} 个分镜，生产剧集为「${script.name ?? FLOVA_SCRIPT_NAME}」。已按单章节隔离处理，未把后续章节并入上下文。`,
   };
 }

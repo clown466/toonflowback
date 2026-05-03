@@ -18,6 +18,49 @@ import { isEletron } from "@/utils/getPath";
 const app = express();
 const server = http.createServer(app);
 
+const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
+
+function isHashedWebAsset(filePath: string): boolean {
+  return /(?:[.-])[a-z0-9_-]{8,}\.(?:js|css|json|png|jpe?g|webp|ico|svg|woff2?|ttf|eot)$/i.test(filePath);
+}
+
+function setWebStaticCacheHeaders(filePath: string, res: Response) {
+  const fileName = path.basename(filePath);
+  if (fileName === "index.html") {
+    res.setHeader("Cache-Control", "no-cache");
+  } else if (isHashedWebAsset(fileName)) {
+    res.setHeader("Cache-Control", `public, max-age=${ONE_YEAR_SECONDS}, immutable`);
+  } else {
+    res.setHeader("Cache-Control", "public, max-age=3600");
+  }
+}
+
+function compressedStatic(webDir: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (!/\bgzip\b/.test(String(req.headers["accept-encoding"] || ""))) return next();
+
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(new URL(req.url, "http://toonflow.local").pathname);
+    } catch {
+      return next();
+    }
+
+    const relPath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+    const filePath = path.resolve(webDir, relPath);
+    const gzPath = `${filePath}.gz`;
+    if (!filePath.startsWith(`${path.resolve(webDir)}${path.sep}`) && filePath !== path.resolve(webDir, "index.html")) return next();
+    if (!fs.existsSync(gzPath) || !fs.statSync(gzPath).isFile()) return next();
+
+    res.setHeader("Content-Encoding", "gzip");
+    res.setHeader("Vary", "Accept-Encoding");
+    setWebStaticCacheHeaders(filePath, res);
+    res.type(path.extname(filePath));
+    res.sendFile(gzPath);
+  };
+}
+
 async function checkPermissions() {
   if (!isEletron()) return true;
   const userDataPath = u.getPath();
@@ -98,7 +141,8 @@ export default async function startServe(randomPort: Boolean = false) {
   const webDir = u.getPath("web");
   if (fs.existsSync(webDir)) {
     console.log("静态网站目录:", webDir);
-    app.use(express.static(webDir, { acceptRanges: false }));
+    app.use(compressedStatic(webDir));
+    app.use(express.static(webDir, { acceptRanges: false, setHeaders: (res, filePath) => setWebStaticCacheHeaders(filePath, res) }));
   } else {
     console.warn("静态网站目录不存在:", webDir);
   }

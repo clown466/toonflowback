@@ -68,7 +68,7 @@ export interface GenerateProjectStoryboardDraftResult {
   message: string;
 }
 
-const FLOVA_SCRIPT_NAME = "Flova 原文生产容器";
+export const FLOVA_SCRIPT_NAME = "Flova 原文生产容器";
 const MAIN_TRACK_NAME = "主线分镜";
 
 function nonEmpty(value: unknown): string | undefined {

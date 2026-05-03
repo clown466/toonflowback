@@ -19,6 +19,18 @@ const APP_VERSION: string = (() => {
   return pkg.version;
 })();
 
+const UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
+const updateInfoCache = new Map<string, { expiresAt: number; value: any }>();
+
+async function getVersionInfo(url: string) {
+  const cached = updateInfoCache.get(url);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const versionInfo = await fetch(url, { signal: AbortSignal.timeout(3000) }).then((res) => res.json());
+  updateInfoCache.set(url, { expiresAt: Date.now() + UPDATE_CACHE_TTL_MS, value: versionInfo });
+  return versionInfo;
+}
+
 export default router.post(
   "/",
   validateFields({
@@ -30,7 +42,7 @@ export default router.post(
 
     const getUrl = url ?? "https://toonflow.oss-cn-beijing.aliyuncs.com/update.json";
 
-    const versionInfo = await fetch(getUrl).then((res) => res.json());
+    const versionInfo = await getVersionInfo(getUrl);
     if (!versionInfo) return res.status(400).send(error("无法获取版本信息"));
     const { version: tagger, time, data } = versionInfo;
 

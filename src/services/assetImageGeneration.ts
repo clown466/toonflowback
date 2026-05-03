@@ -1,6 +1,12 @@
 import pLimit from "p-limit";
 import { v4 as uuidv4 } from "uuid";
 import u from "@/utils";
+import {
+  getVisualManualForAssetType,
+  ImageGenerationAssetType,
+  renderImageGenerationSkillPrompt,
+  resolveImageGenerationSkill,
+} from "@/services/imageGenerationSkill";
 
 type AssetType = "role" | "scene" | "tool";
 
@@ -17,7 +23,10 @@ export interface AssetImageGenerationItem {
   type: AssetType | "storyboard";
   name: string;
   prompt: string;
+  describe?: string | null;
   base64?: string | null;
+  skillId?: string | null;
+  userRequirement?: string | null;
 }
 
 export interface SubmitAssetImageGenerationInput {
@@ -25,6 +34,8 @@ export interface SubmitAssetImageGenerationInput {
   model: `${string}:${string}` | string;
   resolution: "1K" | "2K" | "4K" | string;
   concurrentCount?: number;
+  skillId?: string | null;
+  userRequirement?: string | null;
   items: AssetImageGenerationItem[];
 }
 
@@ -52,16 +63,22 @@ const assetTypeConfig: Record<AssetType, AssetTypeConfig> = {
   },
 };
 
-function buildPrompt(cfg: AssetTypeConfig, artStyle: string, name: string, prompt: string): string {
+function buildPrompt(cfg: AssetTypeConfig, project: { artStyle?: string | null; type?: string | null; intro?: string | null }, name: string, prompt: string, visualManual: string, userRequirement?: string | null): string {
   return `
     请根据以下参数生成${cfg.promptTitle}：
 
     **基础参数：**
-    - 画风风格: ${artStyle || "未指定"}
+    - 画风风格: ${project.artStyle || "未指定"}
+    - 项目类型: ${project.type || "未指定"}
+    - 项目简介: ${project.intro || "无"}
+
+    **视觉手册：**
+    ${visualManual || "当前项目未配置对应视觉手册，请只按项目画风和资产设定生成。"}
 
     **${cfg.label}设定：**
     - 名称:${name},
     - 提示词:${prompt},
+    - 用户额外要求:${userRequirement || "无"}
 
     请严格按照系统规范生成${cfg.promptEnd}。
   `;
@@ -99,13 +116,14 @@ async function runImageTaskWithRetry(task: () => Promise<void>, maxAttempts = 3)
 
 export async function submitAssetImageGeneration(input: SubmitAssetImageGenerationInput) {
   const { projectId, model, resolution, concurrentCount, items } = input;
-  const project = await u.db("o_project").where("id", projectId).select("artStyle", "type", "intro").first();
+  const project = await u.db("o_project").where("id", projectId).select("id", "name", "artStyle", "type", "intro", "directorManual").first();
   if (!project) throw new Error("项目为空");
 
   const validItems = items.filter((item) => isSupportedAssetType(item.type));
   const imageIdByAssetId = new Map<number, number>();
   const previousCompletedImageIds = new Map<number, number>();
   const skippedGenerating: Array<{ assetId: number; imageId: number }> = [];
+  const skillUsage = new Map<number, { id: string; name: string }>();
 
   for (const item of validItems) {
     const currentImage = await u
@@ -152,16 +170,46 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
         return;
       }
 
-      const cfg = assetTypeConfig[item.type as AssetType];
-      if (!cfg) return;
-
-      await u.db("o_assets").where("id", item.id).update({ imageId });
-
-      const imagePath = `/${projectId}/${cfg.dir}/${uuidv4()}.jpg`;
-      const userPrompt = buildPrompt(cfg, project.artStyle ?? "", item.name, item.prompt);
-      const describe = `生成${cfg.label}图，名称：${item.name}，提示词：${item.prompt}`;
-      const relatedObjects = { id: item.id, projectId, type: cfg.label };
       try {
+        const cfg = assetTypeConfig[item.type as AssetType];
+        if (!cfg) return;
+
+        await u.db("o_assets").where("id", item.id).update({ imageId });
+
+        const imagePath = `/${projectId}/${cfg.dir}/${uuidv4()}.jpg`;
+        const assetType = item.type as ImageGenerationAssetType;
+        const visualManual = getVisualManualForAssetType(project.artStyle, assetType);
+        const selectedSkill = await resolveImageGenerationSkill({
+          skillId: item.skillId ?? input.skillId,
+          requestText: item.userRequirement ?? input.userRequirement,
+          assetType,
+        });
+        if (selectedSkill) skillUsage.set(item.id, { id: selectedSkill.id, name: selectedSkill.name });
+        const promptContext = {
+          project: {
+            id: projectId,
+            name: project.name,
+            intro: project.intro,
+            type: project.type,
+            artStyle: project.artStyle,
+            directorManual: project.directorManual,
+          },
+          asset: {
+            id: item.id,
+            type: assetType,
+            name: item.name,
+            describe: item.describe ?? null,
+            prompt: item.prompt,
+          },
+          visualManual,
+          userRequirement: item.userRequirement ?? input.userRequirement ?? null,
+        };
+        const userPrompt = selectedSkill
+          ? renderImageGenerationSkillPrompt(selectedSkill, promptContext)
+          : buildPrompt(cfg, project, item.name, item.prompt, visualManual, item.userRequirement ?? input.userRequirement);
+        const describe = `生成${cfg.label}图，名称：${item.name}，提示词：${item.prompt}`;
+        const relatedObjects = { id: item.id, projectId, type: cfg.label, skillId: selectedSkill?.id ?? null, prompt: userPrompt.slice(0, 1200) };
+
         await runImageTaskWithRetry(async () => {
           const aiImage = u.Ai.Image(model as `${string}:${string}`);
           await aiImage.run(
@@ -169,7 +217,7 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
               prompt: userPrompt,
               referenceList: item.base64 ? [{ base64: item.base64, type: "image" }] : [],
               size: resolution as "1K" | "2K" | "4K",
-              aspectRatio: "16:9",
+              aspectRatio: selectedSkill?.aspectRatio ?? "16:9",
             },
             {
               taskClass: cfg.taskClass,
@@ -239,6 +287,7 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
     skippedGenerating: skippedGenerating.length,
     skippedUnsupported: items.length - validItems.length,
     skippedGeneratingItems: skippedGenerating,
+    skillUsage: Array.from(skillUsage.entries()).map(([assetId, skill]) => ({ assetId, ...skill })),
     imageIds: Array.from(imageIdByAssetId.entries()).map(([assetId, imageId]) => ({ assetId, imageId })),
   };
 }

@@ -343,8 +343,11 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
       id: asset.id,
       type: asset.type,
       name: asset.name || `资产 #${asset.id}`,
+      describe: nonEmpty(asset.describe) ?? null,
       prompt: nonEmpty(asset.prompt) ?? nonEmpty(asset.describe) ?? asset.name ?? "",
+      userRequirement: options?.sourceText ?? null,
     })),
+    userRequirement: options?.sourceText ?? null,
   });
 
   thinking.appendText(

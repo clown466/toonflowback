@@ -3,6 +3,7 @@ import u from "@/utils";
 import { z } from "zod";
 import { success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
+import { FLOVA_SCRIPT_NAME } from "@/services/storyboardDraftGeneration";
 const router = express.Router();
 
 export default router.post(
@@ -10,10 +11,14 @@ export default router.post(
   validateFields({
     projectId: z.number(),
     name: z.string().optional(),
+    includeFlovaProductionContainer: z.boolean().optional(),
   }),
   async (req, res) => {
-    const { projectId, name } = req.body;
+    const { projectId, name, includeFlovaProductionContainer } = req.body;
     let query = u.db("o_script").where("projectId", projectId).select("*");
+    if (!includeFlovaProductionContainer) {
+      query = query.andWhere("name", "!=", FLOVA_SCRIPT_NAME);
+    }
     if (name) {
       query = query.andWhere("name", "like", `%${name}%`);
     }

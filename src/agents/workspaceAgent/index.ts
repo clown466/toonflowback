@@ -5,6 +5,12 @@ import u from "@/utils";
 import Memory from "@/utils/agent/memory";
 import { getSkillContentForAgent } from "@/utils/agent/skillsTools";
 import useTools, { useNovelWorkflowTools } from "@/agents/workspaceAgent/tools";
+import {
+  getWorkspaceDomainAgentCatalog,
+  getWorkspaceSkillCatalog,
+  WORKSPACE_DOMAIN_AGENT_IDS,
+  WorkspaceDomainAgentId,
+} from "@/agents/workspaceAgent/orchestrationRegistry";
 import ResTool from "@/socket/resTool";
 import * as fs from "fs";
 import path from "path";
@@ -191,133 +197,176 @@ async function createSubAgent(parentCtx: AgentContext) {
     prompt: z.string().describe("交给子Agent的项目级任务简约描述，100字以内；不要包含虚构的 scriptId"),
   });
 
+  async function delegateScriptAgent(prompt: string) {
+    const skill = path.join(u.getPath("skills"), "script_agent_decision.md");
+    const systemPrompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "scriptAgent:decisionAgent");
+    const [projectData, novelData, scriptList] = await Promise.all([
+      u.db("o_project").where("id", resTool.data.projectId).first(),
+      u.db("o_novel").where("projectId", resTool.data.projectId).select("chapterIndex"),
+      u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime"),
+    ]);
+
+    const projectInfo = [
+      "## 项目级编剧上下文",
+      `projectId：${resTool.data.projectId}`,
+      `小说名称：${projectData?.name ?? "未知"}`,
+      `小说类型：${projectData?.type ?? "未知"}`,
+      `小说简介：${projectData?.intro ?? "无"}`,
+      `目标画风：${projectData?.artStyle ?? "无"}`,
+      `视频画幅：${projectData?.videoRatio ?? "16:9"}`,
+      `章节数量：${novelData.length}章`,
+      `已有剧本：${scriptList.map((s: any) => `${s.id}:${s.name ?? "未命名"}`).join("，") || "无"}`,
+    ].join("\n");
+
+    return runAgent({
+      key: "scriptAgent:decisionAgent",
+      prompt,
+      system: systemPrompt,
+      name: "编剧总控",
+      memoryKey: "assistant:delegation:scriptAgent",
+      messages: [
+        { role: "assistant", content: projectInfo },
+        { role: "user", content: prompt },
+      ],
+    });
+  }
+
+  async function delegateProductionAgent(prompt: string) {
+    const scripts = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime");
+    const scriptId = resTool.data.scriptId;
+    const needsScript = /分镜| storyboard|storyboard|导演|拍摄|视频|生产|生成视频|镜头/i.test(prompt);
+
+    if (!scriptId && needsScript) {
+      return {
+        status: "workspace_key_required",
+        projectId: resTool.data.projectId,
+        message:
+          "旧生产工作台的分镜/导演计划/视频生产数据当前仍需要一个 scriptId/episodesId 作为工作区键。这个键只是生产容器，不等于必须生成正式改编剧本；若用户要求跳过剧本，应创建或选择一个‘小说原文/事件摘要生产容器’，内容来自小说原文或事件摘要，再继续分镜。",
+        scripts,
+      };
+    }
+
+    const skill = path.join(u.getPath("skills"), "production_agent_decision.md");
+    const systemPrompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "productionAgent:decisionAgent");
+    const [projectData, assets] = await Promise.all([
+      u.db("o_project").where("id", resTool.data.projectId).first(),
+      u
+        .db("o_assets")
+        .where("projectId", resTool.data.projectId)
+        .whereNull("assetsId")
+        .select("id", "name", "type", "describe", "prompt")
+        .orderBy("id", "asc"),
+    ]);
+
+    const productionContext = [
+      "## 项目级生产上下文",
+      `projectId：${resTool.data.projectId}`,
+      `scriptId：${scriptId ?? "未指定"}`,
+      `项目名称：${projectData?.name ?? "未知"}`,
+      `目标画风：${projectData?.artStyle ?? "无"}`,
+      `资产库：${JSON.stringify(assets).slice(0, 12000)}`,
+      `可用剧本：${scripts.map((s: any) => `${s.id}:${s.name ?? "未命名"}`).join("，") || "无"}`,
+    ].join("\n");
+
+    return runAgent({
+      key: "productionAgent:decisionAgent",
+      prompt,
+      system: systemPrompt,
+      name: "生产总控",
+      memoryKey: "assistant:delegation:productionAgent",
+      messages: [
+        { role: "assistant", content: productionContext },
+        { role: "user", content: prompt },
+      ],
+    });
+  }
+
+  async function buildAssetReferencePlan(focus?: string) {
+    const assets = await u
+      .db("o_assets")
+      .leftJoin("o_image", "o_assets.imageId", "o_image.id")
+      .where("o_assets.projectId", resTool.data.projectId)
+      .whereNull("o_assets.assetsId")
+      .select("o_assets.id", "o_assets.name", "o_assets.type", "o_assets.describe", "o_assets.prompt", "o_assets.imageId", "o_image.state as imageState")
+      .orderByRaw(`CASE o_assets.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
+      .orderBy("o_assets.id", "asc");
+
+    const missingImageAssets = assets.filter((asset: any) => !asset.imageId || asset.imageState === "生成失败");
+    const pick = (type: string) => missingImageAssets.filter((asset: any) => asset.type === type).slice(0, 10);
+    return {
+      projectId: resTool.data.projectId,
+      focus: focus ?? null,
+      summary: {
+        totalAssets: assets.length,
+        missingImageAssets: missingImageAssets.length,
+      },
+      plan: {
+        roleFourViews: pick("role").map((asset: any) => ({ assetId: asset.id, name: asset.name, reason: "角色缺少可用参考图，优先规划四视图。" })),
+        sceneReferences: pick("scene").map((asset: any) => ({ assetId: asset.id, name: asset.name, reason: "场景缺少可用参考图，优先规划环境参考。" })),
+        propReferences: pick("tool").map((asset: any) => ({ assetId: asset.id, name: asset.name, reason: "道具缺少可用参考图，优先规划单体参考。" })),
+      },
+      nextStep: "如需实际生成图片，请先确认范围，再交给现有资产生成/生产流程执行。",
+    };
+  }
+
+  async function delegateDomainAgent(agentId: WorkspaceDomainAgentId, prompt: string) {
+    if (agentId === "script") return delegateScriptAgent(prompt);
+    if (agentId === "production") return delegateProductionAgent(prompt);
+    return buildAssetReferencePlan(prompt);
+  }
+
+  const list_available_agents = tool({
+    description: "列出 Flova 可转交的领域子控目录。总控做路由决策前优先调用。",
+    inputSchema: z.object({}),
+    execute: async () => ({
+      projectId: resTool.data.projectId,
+      agents: getWorkspaceDomainAgentCatalog(),
+      routingRule: "Flova 先判断用户意图；只转交领域子控，不直接暴露叶子子 Agent。",
+    }),
+  });
+
+  const list_available_skills = tool({
+    description: "列出当前项目可用的 skills 目录；只用于选择路线和说明能力，不直接激活所有技能。",
+    inputSchema: z.object({}),
+    execute: async () => ({
+      projectId: resTool.data.projectId,
+      skills: await getWorkspaceSkillCatalog(Number(resTool.data.projectId)),
+    }),
+  });
+
+  const delegate_agent = tool({
+    description: "统一转交给领域子控。优先使用这个工具，而不是直接调用具体旧工具；叶子子 Agent 和 skills 由领域子控自行调度。",
+    inputSchema: z.object({
+      agentId: z.enum(WORKSPACE_DOMAIN_AGENT_IDS).describe("要转交的领域子控"),
+      prompt: z.string().describe("交给领域子控的项目级任务描述，100字以内；不要包含虚构的 scriptId"),
+    }),
+    execute: async ({ agentId, prompt }) => delegateDomainAgent(agentId, prompt),
+  });
+
   const run_script_agent_for_project = tool({
-    description: "项目级转交编剧决策 Agent，用于故事骨架、改编策略、剧本规划或剧本生成；只传 projectId 上下文，不需要 scriptId。",
+    description: "兼容旧提示词：项目级转交编剧决策 Agent。新流程优先调用 delegate_agent(agentId='script')。",
     inputSchema: promptInput,
-    execute: async ({ prompt }) => {
-      const skill = path.join(u.getPath("skills"), "script_agent_decision.md");
-      const systemPrompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "scriptAgent:decisionAgent");
-      const [projectData, novelData, scriptList] = await Promise.all([
-        u.db("o_project").where("id", resTool.data.projectId).first(),
-        u.db("o_novel").where("projectId", resTool.data.projectId).select("chapterIndex"),
-        u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime"),
-      ]);
-
-      const projectInfo = [
-        "## 项目级编剧上下文",
-        `projectId：${resTool.data.projectId}`,
-        `小说名称：${projectData?.name ?? "未知"}`,
-        `小说类型：${projectData?.type ?? "未知"}`,
-        `小说简介：${projectData?.intro ?? "无"}`,
-        `目标画风：${projectData?.artStyle ?? "无"}`,
-        `视频画幅：${projectData?.videoRatio ?? "16:9"}`,
-        `章节数量：${novelData.length}章`,
-        `已有剧本：${scriptList.map((s: any) => `${s.id}:${s.name ?? "未命名"}`).join("，") || "无"}`,
-      ].join("\n");
-
-      return runAgent({
-        key: "scriptAgent:decisionAgent",
-        prompt,
-        system: systemPrompt,
-        name: "编剧总控",
-        memoryKey: "assistant:delegation:scriptAgent",
-        messages: [
-          { role: "assistant", content: projectInfo },
-          { role: "user", content: prompt },
-        ],
-      });
-    },
+    execute: async ({ prompt }) => delegateScriptAgent(prompt),
   });
 
   const run_production_agent_for_assets = tool({
-    description: "项目级资产/生产转交工具。用于基于项目资产库制定生产方案；不会伪造 scriptId。若用户明确要求跳过正式剧本、直接做 Seedance/分镜，本工具只报告需要工作区键/原文生产容器，不得说必须生成剧本。",
+    description: "兼容旧提示词：项目级资产/生产转交工具。新流程优先调用 delegate_agent(agentId='production')。",
     inputSchema: promptInput,
-    execute: async ({ prompt }) => {
-      const scripts = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime");
-      const scriptId = resTool.data.scriptId;
-      const needsScript = /分镜| storyboard|storyboard|导演|拍摄|视频|生产|生成视频|镜头/i.test(prompt);
-
-      if (!scriptId && needsScript) {
-        return {
-          status: "workspace_key_required",
-          projectId: resTool.data.projectId,
-          message:
-            "旧生产工作台的分镜/导演计划/视频生产数据当前仍需要一个 scriptId/episodesId 作为工作区键。这个键只是生产容器，不等于必须生成正式改编剧本；若用户要求跳过剧本，应创建或选择一个‘小说原文/事件摘要生产容器’，内容来自小说原文或事件摘要，再继续分镜。",
-          scripts,
-        };
-      }
-
-      const skill = path.join(u.getPath("skills"), "production_agent_decision.md");
-      const systemPrompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "productionAgent:decisionAgent");
-      const [projectData, assets] = await Promise.all([
-        u.db("o_project").where("id", resTool.data.projectId).first(),
-        u
-          .db("o_assets")
-          .where("projectId", resTool.data.projectId)
-          .whereNull("assetsId")
-          .select("id", "name", "type", "describe", "prompt")
-          .orderBy("id", "asc"),
-      ]);
-
-      const productionContext = [
-        "## 项目级生产上下文",
-        `projectId：${resTool.data.projectId}`,
-        `scriptId：${scriptId ?? "未指定"}`,
-        `项目名称：${projectData?.name ?? "未知"}`,
-        `目标画风：${projectData?.artStyle ?? "无"}`,
-        `资产库：${JSON.stringify(assets).slice(0, 12000)}`,
-        `可用剧本：${scripts.map((s: any) => `${s.id}:${s.name ?? "未命名"}`).join("，") || "无"}`,
-      ].join("\n");
-
-      return runAgent({
-        key: "productionAgent:decisionAgent",
-        prompt,
-        system: systemPrompt,
-        name: "生产总控",
-        memoryKey: "assistant:delegation:productionAgent",
-        messages: [
-          { role: "assistant", content: productionContext },
-          { role: "user", content: prompt },
-        ],
-      });
-    },
+    execute: async ({ prompt }) => delegateProductionAgent(prompt),
   });
 
   const run_asset_reference_generation_plan = tool({
-    description: "基于项目级资产库生成角色四视图、场景参考图和道具参考图的下一步计划；只做计划，不直接生成图片或视频。",
+    description: "兼容旧提示词：基于项目级资产库规划参考图。新流程优先调用 delegate_agent(agentId='asset_reference_planner')。",
     inputSchema: z.object({
       focus: z.string().optional().describe("可选：计划关注点，例如优先主角、重点场景、缺图资产等"),
     }),
-    execute: async ({ focus }) => {
-      const assets = await u
-        .db("o_assets")
-        .leftJoin("o_image", "o_assets.imageId", "o_image.id")
-        .where("o_assets.projectId", resTool.data.projectId)
-        .whereNull("o_assets.assetsId")
-        .select("o_assets.id", "o_assets.name", "o_assets.type", "o_assets.describe", "o_assets.prompt", "o_assets.imageId", "o_image.state as imageState")
-        .orderByRaw(`CASE o_assets.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
-        .orderBy("o_assets.id", "asc");
-
-      const missingImageAssets = assets.filter((asset: any) => !asset.imageId || asset.imageState === "生成失败");
-      const pick = (type: string) => missingImageAssets.filter((asset: any) => asset.type === type).slice(0, 10);
-      return {
-        projectId: resTool.data.projectId,
-        focus: focus ?? null,
-        summary: {
-          totalAssets: assets.length,
-          missingImageAssets: missingImageAssets.length,
-        },
-        plan: {
-          roleFourViews: pick("role").map((asset: any) => ({ assetId: asset.id, name: asset.name, reason: "角色缺少可用参考图，优先规划四视图。" })),
-          sceneReferences: pick("scene").map((asset: any) => ({ assetId: asset.id, name: asset.name, reason: "场景缺少可用参考图，优先规划环境参考。" })),
-          propReferences: pick("tool").map((asset: any) => ({ assetId: asset.id, name: asset.name, reason: "道具缺少可用参考图，优先规划单体参考。" })),
-        },
-        nextStep: "如需实际生成图片，请先确认范围，再交给现有资产生成/生产流程执行。",
-      };
-    },
+    execute: async ({ focus }) => buildAssetReferencePlan(focus),
   });
 
   return {
+    list_available_agents,
+    list_available_skills,
+    delegate_agent,
     run_script_agent_for_project,
     run_production_agent_for_assets,
     run_asset_reference_generation_plan,

@@ -37,6 +37,17 @@ export interface SubmitAssetImageGenerationInput {
   skillId?: string | null;
   userRequirement?: string | null;
   items: AssetImageGenerationItem[];
+  onStatusChange?: (event: AssetImageGenerationStatusEvent) => void | Promise<void>;
+}
+
+export interface AssetImageGenerationStatusEvent {
+  projectId: number;
+  assetId: number;
+  imageId: number;
+  state: "生成中" | "已完成" | "生成失败";
+  src?: string | null;
+  filePath?: string | null;
+  errorReason?: string | null;
 }
 
 const assetTypeConfig: Record<AssetType, AssetTypeConfig> = {
@@ -97,6 +108,13 @@ function isRetryableImageError(error: unknown) {
   return /429|负载|饱和|稍后|timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|temporarily|rate limit/i.test(message);
 }
 
+function notifyStatusChange(input: SubmitAssetImageGenerationInput, event: AssetImageGenerationStatusEvent) {
+  if (!input.onStatusChange) return;
+  Promise.resolve(input.onStatusChange(event)).catch((error) => {
+    console.warn("[assetImageGeneration] status callback failed", u.error(error).message);
+  });
+}
+
 async function runImageTaskWithRetry(task: () => Promise<void>, maxAttempts = 3) {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -152,6 +170,12 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
     });
     imageIdByAssetId.set(item.id, imageId);
     await u.db("o_assets").where("id", item.id).update({ imageId });
+    notifyStatusChange(input, {
+      projectId,
+      assetId: item.id,
+      imageId,
+      state: "生成中",
+    });
   }
 
   const limit = pLimit(concurrentCount ?? 1);
@@ -262,15 +286,33 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
         }
 
         await u.db("o_assets").where("id", item.id).update({ imageId });
+        notifyStatusChange(input, {
+          projectId,
+          assetId: item.id,
+          imageId,
+          state: "已完成",
+          filePath: imagePath,
+          src: await u.oss.getSmallImageUrl(imagePath),
+          errorReason: null,
+        });
       } catch (e: any) {
+        const errorReason = u.error(e).message;
         await u
           .db("o_image")
           .where({ id: imageId })
           .where("state", "生成中")
-          .update({ state: "生成失败", errorReason: u.error(e).message });
+          .update({ state: "生成失败", errorReason });
         const previousCompletedImageId = previousCompletedImageIds.get(item.id);
         if (previousCompletedImageId) {
           await u.db("o_assets").where("id", item.id).where("imageId", imageId).update({ imageId: previousCompletedImageId });
+        } else {
+          notifyStatusChange(input, {
+            projectId,
+            assetId: item.id,
+            imageId,
+            state: "生成失败",
+            errorReason,
+          });
         }
       }
     }),

@@ -238,7 +238,7 @@ export async function runNovelAssetExtractionFastPath(config: ToolConfig) {
   const text = msg.text(lines.join("\n"));
   text.complete();
   msg.complete();
-  return { handled: true, result };
+  return { handled: true, message: lines.join("\n"), result };
 }
 
 function shouldIncludeCompletedAssets(text: string) {
@@ -249,6 +249,13 @@ function formatAssetNames(assets: Array<{ id: number; name: string }>, limit = 1
   const names = assets.slice(0, limit).map((asset) => `${asset.name || `#${asset.id}`}`);
   if (assets.length > limit) names.push(`等 ${assets.length} 个`);
   return names.join("、");
+}
+
+function emitProjectAssetImageUpdate(resTool: ResTool, payload: Record<string, unknown>) {
+  resTool.socket.emit("productionDataUpdated", {
+    type: "asset_images",
+    ...payload,
+  });
 }
 
 export async function runProjectAssetImageGenerationFastPath(config: ToolConfig, options?: { includeCompleted?: boolean; sourceText?: string; finalizeMessage?: boolean }) {
@@ -339,6 +346,13 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     model: project.imageModel,
     resolution: project.imageQuality,
     concurrentCount: 1,
+    onStatusChange: (event) => {
+      emitProjectAssetImageUpdate(resTool, {
+        projectId,
+        stage: "progress",
+        records: [event],
+      });
+    },
     items: validAssets.map((asset: any) => ({
       id: asset.id,
       type: asset.type,
@@ -348,6 +362,19 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
       userRequirement: options?.sourceText ?? null,
     })),
     userRequirement: options?.sourceText ?? null,
+  });
+
+  emitProjectAssetImageUpdate(resTool, {
+    projectId,
+    stage: "submitted",
+    submitted: result.submitted,
+    assetIds: validAssets.map((asset: any) => asset.id),
+    records: result.imageIds.map((item) => ({
+      projectId,
+      assetId: item.assetId,
+      imageId: item.imageId,
+      state: "生成中",
+    })),
   });
 
   thinking.appendText(

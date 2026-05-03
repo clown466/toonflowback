@@ -4,6 +4,13 @@ import { Namespace, Socket } from "socket.io";
 import * as agent from "@/agents/workspaceAgent/index";
 import ResTool from "@/socket/resTool";
 import { runNovelAssetExtractionFastPath, runProjectAssetImageGenerationFastPath, runProjectStoryboardClearFastPath, runProjectStoryboardDraftFastPath } from "@/agents/workspaceAgent/tools";
+import Memory from "@/utils/agent/memory";
+
+function getFastPathMemoryContent(result: any): string | null {
+  const message = result?.message ?? result?.result?.message;
+  if (typeof message === "string" && message.trim()) return message.trim();
+  return null;
+}
 
 async function verifyToken(rawToken: string): Promise<Boolean> {
   const setting = await u.db("o_setting").where("key", "tokenKey").select("value").first();
@@ -55,6 +62,17 @@ export default (nsp: Namespace) => {
       callback?.({ success: true });
     });
 
+    async function runFastPathWithMemory<T>(content: string, userMessageTime: number, runner: () => Promise<T>): Promise<T> {
+      const memory = new Memory("workspaceAgent", isolationKey);
+      await memory.add("user", content, { createTime: userMessageTime });
+      const result = await runner();
+      const assistantContent = getFastPathMemoryContent(result);
+      if (assistantContent) {
+        await memory.add("assistant:fastPath", assistantContent);
+      }
+      return result;
+    }
+
     socket.on("chat", async (data: { content: string }) => {
       const { content } = data;
       abortController?.abort();
@@ -72,13 +90,14 @@ export default (nsp: Namespace) => {
         msg,
         thinkConfig,
       };
+      const userMessageTime = ctx.userMessageTime ?? Date.now();
 
       try {
         const shouldFastClearStoryboards =
           /(清空|清除|删除|删掉|移除|重置).{0,12}(分镜|镜头|storyboard)|(分镜|镜头|storyboard).{0,12}(清空|清除|删除|删掉|移除|重置)/i.test(content);
         if (shouldFastClearStoryboards) {
           console.log("[workspaceAgent] 命中清空分镜快速路径");
-          await runProjectStoryboardClearFastPath({ resTool, msg }, { sourceText: content });
+          await runFastPathWithMemory(content, userMessageTime, () => runProjectStoryboardClearFastPath({ resTool, msg }, { sourceText: content }));
           return;
         }
 
@@ -87,7 +106,7 @@ export default (nsp: Namespace) => {
           /(出|生成|做|创建|规划|拆|整理|帮我|开始|直接|一键|一句话|生产)/i.test(content);
         if (shouldFastGenerateStoryboards) {
           console.log("[workspaceAgent] 命中生产分镜快速路径");
-          await runProjectStoryboardDraftFastPath({ resTool, msg }, { sourceText: content });
+          await runFastPathWithMemory(content, userMessageTime, () => runProjectStoryboardDraftFastPath({ resTool, msg }, { sourceText: content }));
           return;
         }
 
@@ -99,14 +118,14 @@ export default (nsp: Namespace) => {
         const shouldFastGenerateAssetImages = explicitAssetImageIntent || genericBatchImageIntent;
         if (shouldFastGenerateAssetImages) {
           console.log("[workspaceAgent] 命中资产批量出图快速路径");
-          await runProjectAssetImageGenerationFastPath({ resTool, msg }, { sourceText: content });
+          await runFastPathWithMemory(content, userMessageTime, () => runProjectAssetImageGenerationFastPath({ resTool, msg }, { sourceText: content }));
           return;
         }
 
         const shouldFastExtractAssets = /提取?资产|提资产|资产库|角色.*场景.*道具|塑角造景|准备资产/i.test(content);
         if (shouldFastExtractAssets) {
           console.log("[workspaceAgent] 命中小说资产提取快速路径");
-          await runNovelAssetExtractionFastPath({ resTool, msg });
+          await runFastPathWithMemory(content, userMessageTime, () => runNovelAssetExtractionFastPath({ resTool, msg }));
           return;
         }
         await agent.runDecisionAI(ctx);

@@ -23,15 +23,21 @@ export default router.post(
 
     const scriptData = await u.db("o_script").where("projectId", projectId).where("id", episodesId).first();
     const scriptAssets = await u.db("o_scriptAssets").where("scriptId", episodesId);
-    const assetIds = scriptAssets.map((i) => i.assetId);
-    const assetsData = await u
+    const assetIds = scriptAssets.map((i) => Number(i.assetId)).filter((id) => Number.isFinite(id));
+    const assetsQuery = u
       .db("o_assets")
       .leftJoin("o_image", "o_assets.imageId", "o_image.id")
       .select("o_assets.*", "o_image.filePath", "o_image.state", "o_image.errorReason")
-      // @ts-ignore
-      .where("o_assets.id", "in", assetIds)
       .andWhere("o_assets.assetsId", null)
       .where("o_assets.projectId", projectId);
+
+    if (assetIds.length > 0) {
+      assetsQuery.orderByRaw(`CASE WHEN o_assets.id IN (${assetIds.map(() => "?").join(",")}) THEN 0 ELSE 1 END`, assetIds);
+    }
+    assetsQuery.orderByRaw(`CASE o_assets.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`).orderBy("o_assets.id", "asc");
+
+    const assetsData = await assetsQuery;
+    const parentAssetIds = assetsData.map((item) => item.id);
 
     let childAssetsData = await u
       .db("o_assets")
@@ -39,7 +45,7 @@ export default router.post(
       .select("o_assets.*", "o_image.filePath", "o_image.state", "o_image.errorReason")
       .where("o_assets.projectId", projectId)
       // @ts-ignore
-      .where("o_assets.assetsId", "in", assetIds)
+      .where("o_assets.assetsId", "in", parentAssetIds)
       .whereNotNull("o_assets.assetsId");
 
     if (!sqlData) {
@@ -54,6 +60,8 @@ export default router.post(
             prompt: item.prompt ?? "",
             desc: item.describe ?? "",
             src: item.filePath && (await u.oss.getSmallImageUrl(item.filePath!)),
+            state: item.state ?? "未生成",
+            errorReason: item.errorReason ?? "",
             derive: await Promise.all(
               childAssetsData
                 .filter((child) => child.assetsId === item.id)
@@ -119,6 +127,8 @@ export default router.post(
             prompt: item.prompt ?? "",
             desc: item.describe ?? "",
             src: item.filePath && (await u.oss.getSmallImageUrl(item.filePath!)),
+            state: item.state ?? "未生成",
+            errorReason: item.errorReason ?? "",
             flowId: item.flowId,
             derive: await Promise.all(
               childAssetsData

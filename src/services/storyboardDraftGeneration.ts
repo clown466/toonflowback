@@ -72,6 +72,22 @@ export interface GenerateProjectStoryboardDraftResult {
   message: string;
 }
 
+export interface ClearProjectStoryboardsOptions {
+  sourceText?: string;
+  preferredScriptId?: number;
+  chapterIndexes?: number[];
+}
+
+export interface ClearProjectStoryboardsResult {
+  projectId: number;
+  cleared: boolean;
+  deletedCount: number;
+  remainingCount: number;
+  targetScripts: Array<{ id: number; name: string; projectId: number; storyboardCount: number }>;
+  needsSelection: boolean;
+  message: string;
+}
+
 export const FLOVA_SCRIPT_NAME = "Flova 原文生产容器";
 const MAIN_TRACK_NAME = "主线分镜";
 
@@ -429,6 +445,29 @@ async function deleteStoryboards(scriptId: number, projectId: number) {
   return storyboardIds.length;
 }
 
+async function clearProductionWorkDataStoryboards(projectId: number, scriptId: number) {
+  const existing = await u.db("o_agentWorkData").where({ projectId, episodesId: scriptId, key: "productionAgent" }).first();
+  if (!existing?.id) return;
+  let data: Record<string, any> = {};
+  if (existing?.data) {
+    try {
+      data = JSON.parse(existing.data);
+    } catch {
+      data = {};
+    }
+  }
+  data.storyboardTable = buildStoryboardTable([]);
+  data.storyboard = [];
+  if (data.workbench && typeof data.workbench === "object") data.workbench.videoList = [];
+  await u
+    .db("o_agentWorkData")
+    .where("id", existing.id)
+    .update({
+      data: JSON.stringify(data),
+      updateTime: Date.now(),
+    });
+}
+
 async function ensureTrack(projectId: number, scriptId: number, track: string, duration: number) {
   const existing = await u.db("o_storyboard").where({ projectId, scriptId, track }).whereNotNull("trackId").select("trackId").first();
   if (existing?.trackId) {
@@ -557,6 +596,90 @@ function selectStoryboardNovels(allNovels: NovelRow[], options: GenerateProjectS
   }
 
   return selected.slice(0, 1);
+}
+
+function scriptNameMatchesChapter(scriptName: string | null | undefined, chapterIndexes: number[]) {
+  const name = scriptName ?? "";
+  return chapterIndexes.some((index) => new RegExp(`第\\s*${index}\\s*章`).test(name) || new RegExp(`juben\\s*${index}\\b`, "i").test(name));
+}
+
+async function getProjectScriptsWithStoryboardCounts(projectId: number) {
+  const rows = await u
+    .db("o_script as s")
+    .leftJoin("o_storyboard as sb", function joinStoryboard(this: any) {
+      this.on("sb.scriptId", "=", "s.id").andOn("sb.projectId", "=", "s.projectId");
+    })
+    .where("s.projectId", projectId)
+    .select("s.id", "s.name", "s.projectId")
+    .count({ storyboardCount: "sb.id" })
+    .groupBy("s.id", "s.name", "s.projectId")
+    .orderBy("s.id", "asc");
+
+  return rows.map((row: any) => ({
+    id: Number(row.id),
+    name: String(row.name ?? "未命名生产容器"),
+    projectId: Number(row.projectId),
+    storyboardCount: Number(row.storyboardCount ?? 0),
+  }));
+}
+
+export async function clearProjectStoryboards(projectId: number, options: ClearProjectStoryboardsOptions = {}): Promise<ClearProjectStoryboardsResult> {
+  const project = (await u.db("o_project").where("id", projectId).first()) as ProjectRow | undefined;
+  if (!project?.id) throw new Error("当前项目不存在，无法清空分镜。");
+
+  const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(options.sourceText)]);
+  const scripts = await getProjectScriptsWithStoryboardCounts(projectId);
+  const scriptsWithStoryboards = scripts.filter((script) => script.storyboardCount > 0);
+  const flovaScriptsWithStoryboards = scriptsWithStoryboards.filter((script) => script.name.startsWith(FLOVA_SCRIPT_NAME));
+
+  let targetScripts = scriptsWithStoryboards;
+  if (options.preferredScriptId) targetScripts = scriptsWithStoryboards.filter((script) => script.id === options.preferredScriptId);
+  if (!options.preferredScriptId && requestedChapterIndexes.length) targetScripts = scriptsWithStoryboards.filter((script) => scriptNameMatchesChapter(script.name, requestedChapterIndexes));
+  if (!options.preferredScriptId && !requestedChapterIndexes.length && flovaScriptsWithStoryboards.length === 1) targetScripts = flovaScriptsWithStoryboards;
+
+  if (!targetScripts.length) {
+    return {
+      projectId,
+      cleared: false,
+      deletedCount: 0,
+      remainingCount: scriptsWithStoryboards.reduce((sum, script) => sum + script.storyboardCount, 0),
+      targetScripts: scriptsWithStoryboards,
+      needsSelection: scriptsWithStoryboards.length > 1,
+      message: scriptsWithStoryboards.length
+        ? `没有匹配到要清空的生产容器。当前有分镜的容器：${scriptsWithStoryboards.map((script) => `${script.name}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`
+        : "当前项目没有可清空的分镜。",
+    };
+  }
+
+  if (!options.preferredScriptId && !requestedChapterIndexes.length && targetScripts.length > 1) {
+    return {
+      projectId,
+      cleared: false,
+      deletedCount: 0,
+      remainingCount: scriptsWithStoryboards.reduce((sum, script) => sum + script.storyboardCount, 0),
+      targetScripts,
+      needsSelection: true,
+      message: `当前有多个生产容器含分镜，请指定要清空的容器：${targetScripts.map((script) => `${script.name}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`,
+    };
+  }
+
+  let deletedCount = 0;
+  for (const script of targetScripts) {
+    deletedCount += await deleteStoryboards(script.id, projectId);
+    await clearProductionWorkDataStoryboards(projectId, script.id);
+  }
+
+  const remainingCountRow = await u.db("o_storyboard").where("projectId", projectId).count({ count: "id" }).first();
+  const remainingCount = Number((remainingCountRow as any)?.count ?? 0);
+  return {
+    projectId,
+    cleared: true,
+    deletedCount,
+    remainingCount,
+    targetScripts,
+    needsSelection: false,
+    message: `已清空 ${targetScripts.map((script) => `「${script.name}」`).join("、")} 的 ${deletedCount} 条分镜。`,
+  };
 }
 
 export async function generateProjectStoryboardDraft(projectId: number, options: GenerateProjectStoryboardDraftOptions = {}): Promise<GenerateProjectStoryboardDraftResult> {

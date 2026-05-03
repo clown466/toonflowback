@@ -155,6 +155,15 @@ async function main() {
   assert.ok(!storyboardText.includes('JUBEN16_EVENT_SHOULD_NOT_APPEAR'), 'storyboards must not use chapter 16 event');
   assert.ok(!result.storyboardTable.includes('JUBEN16_EVENT_SHOULD_NOT_APPEAR'), 'storyboard table must not include chapter 16 event');
 
+  const clearResult = await service.clearProjectStoryboards(1, {
+    sourceText: '清空 juben10 分镜',
+  });
+  assert.strictEqual(clearResult.cleared, true, 'chapter-scoped storyboard clear should execute');
+  assert.strictEqual(clearResult.deletedCount, 3, 'clear should delete the three chapter 10 storyboards');
+  assert.strictEqual(await db('o_storyboard').where('scriptId', result.episodesId).count({ count: 'id' }).first().then((row) => Number(row.count)), 0);
+  assert.strictEqual(await db('o_assets2Storyboard').count({ count: 'storyboardId' }).first().then((row) => Number(row.count)), 0);
+  assert.strictEqual(await db('o_videoTrack').count({ count: 'id' }).first().then((row) => Number(row.count)), 0);
+
   await db.destroy();
   console.log('Storyboard chapter isolation checks passed');
 }

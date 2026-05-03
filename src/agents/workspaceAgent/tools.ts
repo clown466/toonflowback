@@ -3,7 +3,7 @@ import { z } from "zod";
 import ResTool from "@/socket/resTool";
 import u from "@/utils";
 import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
-import { generateProjectStoryboardDraft } from "@/services/storyboardDraftGeneration";
+import { clearProjectStoryboards, generateProjectStoryboardDraft } from "@/services/storyboardDraftGeneration";
 
 interface ToolConfig {
   resTool: ResTool;
@@ -440,6 +440,50 @@ export async function runProjectStoryboardDraftFastPath(config: ToolConfig, opti
     result.createdCount > 0 ? "现在可以在左侧分镜列表查看；需要分镜图片时点“生成全部”。" : "",
   ].filter(Boolean);
   const text = msg.text(lines.join("\n"));
+  text.complete();
+  msg.complete();
+
+  return { handled: true, result };
+}
+
+export async function runProjectStoryboardClearFastPath(config: ToolConfig, options?: { sourceText?: string }) {
+  const { resTool, msg } = config;
+  const projectId = Number(resTool.data.projectId);
+  const thinking = msg.thinking("正在清空生产分镜...");
+
+  const result = await clearProjectStoryboards(projectId, {
+    sourceText: options?.sourceText,
+    preferredScriptId: typeof resTool.data.scriptId === "number" ? resTool.data.scriptId : undefined,
+  });
+
+  thinking.appendText(
+    JSON.stringify(
+      {
+        projectId,
+        cleared: result.cleared,
+        deletedCount: result.deletedCount,
+        remainingCount: result.remainingCount,
+        needsSelection: result.needsSelection,
+        targetScripts: result.targetScripts,
+      },
+      null,
+      2,
+    ),
+  );
+  thinking.updateTitle(result.cleared ? "分镜已清空" : result.needsSelection ? "需要指定生产容器" : "没有可清空的分镜");
+  thinking.complete();
+
+  if (result.cleared) {
+    resTool.socket.emit("productionDataUpdated", {
+      projectId,
+      cleared: true,
+      deletedCount: result.deletedCount,
+      remainingCount: result.remainingCount,
+      scripts: result.targetScripts,
+    });
+  }
+
+  const text = msg.text(result.message);
   text.complete();
   msg.complete();
 

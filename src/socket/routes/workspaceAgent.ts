@@ -3,7 +3,7 @@ import u from "@/utils";
 import { Namespace, Socket } from "socket.io";
 import * as agent from "@/agents/workspaceAgent/index";
 import ResTool from "@/socket/resTool";
-import { runNovelAssetExtractionFastPath, runProjectAssetImageGenerationFastPath, runProjectStoryboardDraftFastPath } from "@/agents/workspaceAgent/tools";
+import { runNovelAssetExtractionFastPath, runProjectAssetImageGenerationFastPath, runProjectStoryboardClearFastPath, runProjectStoryboardDraftFastPath } from "@/agents/workspaceAgent/tools";
 
 async function verifyToken(rawToken: string): Promise<Boolean> {
   const setting = await u.db("o_setting").where("key", "tokenKey").select("value").first();
@@ -74,6 +74,14 @@ export default (nsp: Namespace) => {
       };
 
       try {
+        const shouldFastClearStoryboards =
+          /(清空|清除|删除|删掉|移除|重置).{0,12}(分镜|镜头|storyboard)|(分镜|镜头|storyboard).{0,12}(清空|清除|删除|删掉|移除|重置)/i.test(content);
+        if (shouldFastClearStoryboards) {
+          console.log("[workspaceAgent] 命中清空分镜快速路径");
+          await runProjectStoryboardClearFastPath({ resTool, msg }, { sourceText: content });
+          return;
+        }
+
         const shouldFastGenerateStoryboards =
           /(分镜|镜头|storyboard|镜号|shot list)/i.test(content) &&
           /(出|生成|做|创建|规划|拆|整理|帮我|开始|直接|一键|一句话|生产)/i.test(content);

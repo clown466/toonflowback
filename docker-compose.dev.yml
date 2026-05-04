@@ -1,0 +1,17 @@
+services:
+  toonflow-back-dev:
+    image: toonflow:local
+    build:
+      context: .
+    container_name: toonflow-back-dev
+    working_dir: /app
+    command: yarn dev
+    environment:
+      NODE_ENV: dev
+      PORT: 10589
+    ports:
+      - "10589:10589"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /root/toonflow-data:/app/data

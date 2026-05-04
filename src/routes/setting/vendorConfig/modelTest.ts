@@ -3,7 +3,7 @@ import { success, error } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
 import u from "@/utils";
 import { z } from "zod";
-import { tool } from "ai";
+import { tool, jsonSchema } from "ai";
 const router = express.Router();
 
 // 检查语言模型
@@ -40,11 +40,15 @@ export default router.post(
       const modelList = await u.vendor.getModelList(vendorConfigData.id!);
 
       const selectedModel = modelList.find((i: any) => i.modelName == modelName);
+      if (!selectedModel) return res.status(500).send(error(`未找到模型 ${modelName}`));
       if (type == "video") {
+        const duration = selectedModel.durationResolutionMap?.[0]?.duration?.[0];
+        const resolution = selectedModel.durationResolutionMap?.[0]?.resolution?.[0];
+        if (!duration || !resolution) return res.status(500).send(error(`模型 ${modelName} 缺少视频测试所需的时长或分辨率配置`));
         requestFn["video"].modelData = {
           model: modelName,
-          duration: selectedModel.durationResolutionMap[0].duration[0],
-          resolution: selectedModel.durationResolutionMap[0].resolution[0],
+          duration,
+          resolution,
           aspectRatio: "16:9",
           prompt:
             "A shirtless middle-aged man with a horse head is standing in a supermarket, carefully comparing two identical bottles of shampoo for 3 seconds, then suddenly bursts into tears, drops to his knees dramatically, a flock of pigeons explodes out of nowhere from behind him, the supermarket lights flicker, an old grandma nearby continues shopping completely unbothered, the horse head man instantly stops crying, puts both shampoo bottles back, and moonwalks away disappearing into the vegetable section. Security camera footage style, slightly grainy, 5 seconds.",
@@ -57,9 +61,13 @@ export default router.post(
 
       const getWeatherTool = tool({
         description: "Get the weather in a location",
-        inputSchema: z.object({
-          location: z.string().describe("The location to get the weather for"),
-        }),
+        inputSchema: jsonSchema<{ location: string }>(
+          z
+            .object({
+              location: z.string().describe("The location to get the weather for"),
+            })
+            .toJSONSchema(),
+        ),
         execute: async ({ location }) => {
           return {
             location,

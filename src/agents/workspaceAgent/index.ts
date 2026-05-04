@@ -12,6 +12,7 @@ import {
   WorkspaceDomainAgentId,
 } from "@/agents/workspaceAgent/orchestrationRegistry";
 import ResTool from "@/socket/resTool";
+import { toToolJsonSchema } from "@/utils/jsonSchema";
 import * as fs from "fs";
 import path from "path";
 
@@ -193,9 +194,9 @@ async function createSubAgent(parentCtx: AgentContext) {
     return fullResponse;
   }
 
-  const promptInput = z.object({
+  const promptInput = toToolJsonSchema<{ prompt: string }>(z.object({
     prompt: z.string().describe("交给子Agent的项目级任务简约描述，100字以内；不要包含虚构的 scriptId"),
-  });
+  }));
 
   async function delegateScriptAgent(prompt: string) {
     const skill = path.join(u.getPath("skills"), "script_agent_decision.md");
@@ -317,7 +318,7 @@ async function createSubAgent(parentCtx: AgentContext) {
 
   const list_available_agents = tool({
     description: "列出 Flova 可转交的领域子控目录。总控做路由决策前优先调用。",
-    inputSchema: z.object({}),
+    inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
     execute: async () => ({
       projectId: resTool.data.projectId,
       agents: getWorkspaceDomainAgentCatalog(),
@@ -327,7 +328,7 @@ async function createSubAgent(parentCtx: AgentContext) {
 
   const list_available_skills = tool({
     description: "列出当前项目可用的 skills 目录；只用于选择路线和说明能力，不直接激活所有技能。",
-    inputSchema: z.object({}),
+    inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
     execute: async () => ({
       projectId: resTool.data.projectId,
       skills: await getWorkspaceSkillCatalog(Number(resTool.data.projectId)),
@@ -336,10 +337,10 @@ async function createSubAgent(parentCtx: AgentContext) {
 
   const delegate_agent = tool({
     description: "统一转交给领域子控。优先使用这个工具，而不是直接调用具体旧工具；叶子子 Agent 和 skills 由领域子控自行调度。",
-    inputSchema: z.object({
+    inputSchema: toToolJsonSchema<{ agentId: WorkspaceDomainAgentId; prompt: string }>(z.object({
       agentId: z.enum(WORKSPACE_DOMAIN_AGENT_IDS).describe("要转交的领域子控"),
       prompt: z.string().describe("交给领域子控的项目级任务描述，100字以内；不要包含虚构的 scriptId"),
-    }),
+    })),
     execute: async ({ agentId, prompt }) => delegateDomainAgent(agentId, prompt),
   });
 
@@ -357,9 +358,9 @@ async function createSubAgent(parentCtx: AgentContext) {
 
   const run_asset_reference_generation_plan = tool({
     description: "兼容旧提示词：基于项目级资产库规划参考图。新流程优先调用 delegate_agent(agentId='asset_reference_planner')。",
-    inputSchema: z.object({
+    inputSchema: toToolJsonSchema<{ focus?: string }>(z.object({
       focus: z.string().optional().describe("可选：计划关注点，例如优先主角、重点场景、缺图资产等"),
-    }),
+    })),
     execute: async ({ focus }) => buildAssetReferencePlan(focus),
   });
 

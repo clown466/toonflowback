@@ -4,6 +4,7 @@ import ResTool from "@/socket/resTool";
 import u from "@/utils";
 import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
 import { clearProjectStoryboards, generateProjectStoryboardDraft } from "@/services/storyboardDraftGeneration";
+import { toToolJsonSchema } from "@/utils/jsonSchema";
 
 interface ToolConfig {
   resTool: ResTool;
@@ -12,6 +13,7 @@ interface ToolConfig {
 }
 
 const assetTypeSchema = z.enum(["role", "scene", "tool", "other"]);
+type AssetType = z.infer<typeof assetTypeSchema>;
 
 const assetInputSchema = z.object({
   name: z.string().min(1).describe("资产名称"),
@@ -524,7 +526,7 @@ export default function useTools(config: ToolConfig) {
   const tools: Record<string, Tool> = {
     get_project_overview: tool({
       description: "获取当前项目的基础信息、小说章节数、资产数和剧本数，适用于项目级总控判断下一步。",
-      inputSchema: z.object({}),
+      inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
       execute: async () => {
         const thinking = msg.thinking("正在获取项目概览...");
         const projectId = resTool.data.projectId;
@@ -568,7 +570,7 @@ export default function useTools(config: ToolConfig) {
     }),
     list_project_scripts: tool({
       description: "列出当前项目已有剧本，供项目级总控决定是否需要转交编剧或生产流程。",
-      inputSchema: z.object({}),
+      inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
       execute: async () => {
         const thinking = msg.thinking("正在获取项目剧本列表...");
         const scripts = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "errorReason", "createTime");
@@ -580,9 +582,9 @@ export default function useTools(config: ToolConfig) {
     }),
     get_project_plan_data: tool({
       description: "获取前端工作区中的项目级计划数据。仅在需要读取工作区缓存内容时使用。",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ key: string }>(z.object({
         key: z.string().describe("工作区数据 key"),
-      }),
+      })),
       execute: async ({ key }) => {
         const thinking = msg.thinking(`正在获取工作区数据 ${key}...`);
         const timeoutMs = 3000;
@@ -623,7 +625,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
   const tools: Record<string, Tool> = {
     get_project_novel_status: tool({
       description: "检查当前项目是否有上传小说，以及每章小说事件分析的原始状态和事件数量。",
-      inputSchema: z.object({}),
+      inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
       execute: async () => {
         const thinking = msg.thinking("正在检查小说与事件分析状态...");
         const projectId = resTool.data.projectId;
@@ -665,7 +667,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
     }),
     get_project_asset_status: tool({
       description: "按 role/scene/tool/other 汇总当前项目已有资产数量，默认排除衍生资产。",
-      inputSchema: z.object({}),
+      inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
       execute: async () => {
         const thinking = msg.thinking("正在统计项目资产...");
         const projectId = resTool.data.projectId;
@@ -691,9 +693,9 @@ export function useNovelWorkflowTools(config: ToolConfig) {
     }),
     list_project_assets: tool({
       description: "列出当前项目已有资产，帮助避免重复创建。",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ type?: AssetType }>(z.object({
         type: assetTypeSchema.optional().describe("可选：按资产类型过滤"),
-      }),
+      })),
       execute: async ({ type }) => {
         const thinking = msg.thinking("正在获取项目资产列表...");
         const query = u
@@ -730,9 +732,9 @@ export function useNovelWorkflowTools(config: ToolConfig) {
     }),
     create_or_update_project_assets_from_json: tool({
       description: "将从小说中提取的角色、场景、道具等资产写入项目级资产库；按 projectId + name + type 去重，存在则只用非空字段更新。",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ assets: AssetInput[] }>(z.object({
         assets: z.array(assetInputSchema).describe("要创建或更新的项目级资产列表"),
-      }),
+      })),
       execute: async ({ assets }) => {
         const thinking = msg.thinking("正在写入项目级资产库...");
         const projectId = resTool.data.projectId;
@@ -746,20 +748,20 @@ export function useNovelWorkflowTools(config: ToolConfig) {
     }),
     batch_generate_project_asset_images: tool({
       description: "直接提交当前项目资产库的角色/场景/道具参考图生成任务，后台异步生成，固定 16:9；用于用户明确要求资产出图、批量生图、生成参考图。",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ includeCompleted?: boolean }>(z.object({
         includeCompleted: z.boolean().optional().describe("是否连已完成图片的资产也重新提交；默认 false，只补缺图/失败图"),
-      }),
+      })),
       execute: async ({ includeCompleted }) => {
         return runProjectAssetImageGenerationFastPath(config, { includeCompleted, finalizeMessage: false });
       },
     }),
     start_or_report_novel_event_analysis: tool({
       description: "按用户选择的小说章节报告或触发事件分析。可只分析指定章节；不要默认全章节分析。",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ novelIds?: number[]; chapterIndexes?: number[]; force?: boolean }>(z.object({
         novelIds: z.array(z.number()).optional().describe("需要分析的小说章节 ID；优先使用 get_project_novel_status 返回的 id"),
         chapterIndexes: z.array(z.number()).optional().describe("也可按章节序号选择，例如第1章、第3章"),
         force: z.boolean().optional().describe("已完成的章节是否也重新分析；默认 false，只分析未完成章节"),
-      }),
+      })),
       execute: async ({ novelIds, chapterIndexes, force }) => {
         const thinking = msg.thinking("正在处理所选章节事件分析...");
         const projectId = resTool.data.projectId;

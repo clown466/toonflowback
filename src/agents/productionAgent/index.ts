@@ -6,6 +6,7 @@ import Memory from "@/utils/agent/memory";
 import { createSkillTools, getSkillContentForAgent, parseFrontmatter, scanSkills, ToonflowAgentKey } from "@/utils/agent/skillsTools";
 import useTools from "@/agents/productionAgent/tools";
 import ResTool from "@/socket/resTool";
+import { toToolJsonSchema } from "@/utils/jsonSchema";
 import * as fs from "fs";
 import path from "path";
 
@@ -156,9 +157,9 @@ async function createSubAgent(parentCtx: AgentContext) {
     return fullResponse;
   }
 
-  const promptInput = z.object({
+  const promptInput = toToolJsonSchema<{ prompt: string }>(z.object({
     prompt: z.string().describe("交给子Agent的任务简约描述，100字以内"),
-  });
+  }));
 
   const projectInfo = await u.db("o_project").where("id", resTool.data.projectId).first();
   if (!projectInfo) throw new Error(`项目不存在，ID: ${resTool.data.projectId}`);

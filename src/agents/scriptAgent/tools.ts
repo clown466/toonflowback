@@ -3,6 +3,7 @@ import u from "@/utils";
 import { z } from "zod";
 import _ from "lodash";
 import ResTool from "@/socket/resTool";
+import { toToolJsonSchema } from "@/utils/jsonSchema";
 
 export const ScriptSchema = z.object({
   name: z.string().describe("剧本名称"),
@@ -33,9 +34,9 @@ export default (toolCpnfig: ToolConfig) => {
   const tools: Record<string, Tool> = {
     get_novel_events: tool({
       description: "获取章节事件",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ chapterIndexs: number[] }>(z.object({
         chapterIndexs: z.array(z.number()).describe("章节的编号"),
-      }),
+      })),
       execute: async ({ chapterIndexs }) => {
         console.log("[tools] get_novel_events", chapterIndexs);
         const thinking = msg.thinking("正在查询章节事件...");
@@ -54,9 +55,9 @@ export default (toolCpnfig: ToolConfig) => {
     }),
     get_planData: tool({
       description: "获取工作区数据",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ key: keyof planData }>(z.object({
         key: keySchema.describe("数据key"),
-      }),
+      })),
       execute: async ({ key }) => {
         console.log("[tools] get_planData", key);
         const thinking = msg.thinking(`正在获取${planDataKeyLabels[key]}工作区数据...`);
@@ -69,9 +70,9 @@ export default (toolCpnfig: ToolConfig) => {
     }),
     get_novel_text: tool({
       description: "获取小说章节原始文本内容",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ chapterIndex: string }>(z.object({
         chapterIndex: z.string().describe("章节编号"),
-      }),
+      })),
       execute: async ({ chapterIndex }) => {
         console.log("[tools] get_novel_text", "[tools] get_novel_text", chapterIndex);
         const thinking = msg.thinking(`正在获取小说章节原文...`);
@@ -85,9 +86,9 @@ export default (toolCpnfig: ToolConfig) => {
     }),
     get_script_content: tool({
       description: "获取剧本本内容",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ ids: string[] }>(z.object({
         ids: z.array(z.string()).describe("脚本id"),
-      }),
+      })),
       execute: async ({ ids }) => {
         console.log("[tools] get_script_content", "[tools] get_script_content", ids);
         const thinking = msg.thinking(`正在获取脚本内容...`);

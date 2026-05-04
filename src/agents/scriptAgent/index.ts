@@ -5,6 +5,7 @@ import u from "@/utils";
 import Memory from "@/utils/agent/memory";
 import useTools from "@/agents/scriptAgent/tools";
 import { getSkillContentForAgent } from "@/utils/agent/skillsTools";
+import { toToolJsonSchema } from "@/utils/jsonSchema";
 import ResTool from "@/socket/resTool";
 import * as fs from "fs";
 import path from "path";
@@ -134,9 +135,9 @@ function createSubAgent(parentCtx: AgentContext) {
     return fullResponse;
   }
 
-  const promptInput = z.object({
+  const promptInput = toToolJsonSchema<{ prompt: string }>(z.object({
     prompt: z.string().describe("交给子Agent的任务简约描述，100字以内"),
-  });
+  }));
 
   const run_sub_agent_storySkeleton = tool({
     description: "运行执行subAgent来完成故事骨架相关任务",

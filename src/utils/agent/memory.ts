@@ -4,6 +4,7 @@ import { getEmbedding, cosineSimilarity } from "./embedding";
 import type { memories as MemoryRow } from "@/types/database";
 import { tool } from "ai";
 import { z } from "zod";
+import { toToolJsonSchema } from "@/utils/jsonSchema";
 
 // ── 可调配置默认值 ──
 const DEFAULTS: {
@@ -201,9 +202,9 @@ class Memory {
     return {
       deepRetrieve: tool({
         description: "深度检索记忆：当你需要回忆与某个关键词相关的详细历史信息时使用此工具",
-        inputSchema: z.object({
+        inputSchema: toToolJsonSchema<{ keyword: string }>(z.object({
           keyword: z.string().describe("要检索的关键词"),
-        }),
+        })),
         execute: async ({ keyword }) => {
           const results = await this.deepRetrieve(keyword);
           if (results.length === 0) return { found: false, message: "未找到相关记忆" };

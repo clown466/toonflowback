@@ -5,6 +5,7 @@ import isPathInside from "is-path-inside";
 import getPath from "@/utils/getPath";
 import * as fs from "fs";
 import fg from "fast-glob";
+import { toToolJsonSchema } from "@/utils/jsonSchema";
 
 type SkillAttribution =
   //剧本Agent
@@ -257,9 +258,9 @@ export function createSkillTools(
   return {
     activate_skill: tool({
       description: `激活一个技能，加载其完整指令和捆绑资源列表到上下文。可用技能：${skillNames.join(", ")}`,
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ name: string }>(z.object({
         name: z.enum(skillNames as [string, ...string[]]).describe("要激活的技能名称"),
-      }),
+      })),
       execute: async ({ name }) => {
         if (activated.has(name)) {
           console.log(`⚡[主技能] ℹ️ 技能 "${name}" 已激活，跳过重复注入`);
@@ -294,9 +295,9 @@ export function createSkillTools(
     }),
     read_skill_file: tool({
       description: "读取已激活技能目录下的资源文件。传入 activate_skill 返回的 skill_resources 中的文件路径。",
-      inputSchema: z.object({
+      inputSchema: toToolJsonSchema<{ filePath: string }>(z.object({
         filePath: z.string().describe("资源文件的相对路径，来自 activate_skill 返回的 skill_resources"),
-      }),
+      })),
       execute: async ({ filePath }) => {
         const normalizedInputPath = toUnixPath(filePath).trim();
         if (!normalizedInputPath) {

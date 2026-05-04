@@ -46,19 +46,24 @@ export default router.post(
   async (req, res) => {
     const { id, modelName, model } = req.body;
 
-    const models = await u.db("o_vendorConfig").where("id", id).first("models");
+    const models = await u.db("o_vendorConfig").where("id", id).first("models", "hiddenModels");
     if (models?.models) {
       const existingModels = JSON.parse(models.models);
-      const modelIndex = existingModels.findIndex((m: any) => m.modelName !== modelName);
+      const hiddenModels = new Set<string>(JSON.parse(models.hiddenModels ?? "[]"));
+      const modelIndex = existingModels.findIndex((m: any) => m.modelName === modelName);
       if (modelIndex === -1) {
         existingModels.push(model);
+      } else {
+        existingModels[modelIndex] = model;
       }
-      existingModels[modelIndex] = model;
+      hiddenModels.delete(modelName);
+      hiddenModels.delete(model.modelName);
       await u
         .db("o_vendorConfig")
         .where("id", id)
         .update({
           models: JSON.stringify(existingModels),
+          hiddenModels: JSON.stringify([...hiddenModels]),
         });
     }
     res.status(200).send(success("更新成功"));

@@ -105,6 +105,7 @@ export default router.post(
       id: vendor.id,
       inputValues: JSON.stringify(vendor.inputValues ?? {}),
       models: JSON.stringify([]),
+      hiddenModels: JSON.stringify([]),
       enable: vendor.id == "toonflow" ? 1 : 0,
     });
     u.vendor.writeCode(vendor.id, tsCode);

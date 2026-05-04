@@ -108,6 +108,7 @@ export default async (knex: Knex): Promise<void> => {
   await addColumn("o_agentDeploy", "temperature", "integer");
   // 添加新字段
   await addColumn("o_agentDeploy", "maxOutputTokens", "integer");
+  await addColumn("o_vendorConfig", "hiddenModels", "text");
 
   const baseAgentList = [
     {
@@ -202,6 +203,12 @@ export default async (knex: Knex): Promise<void> => {
   await dropColumn("o_vendorConfig", "inputs");
   await dropColumn("o_vendorConfig", "createTime");
 
+  await db("o_vendorConfig")
+    .where((builder) => {
+      builder.whereNull("hiddenModels").orWhere("hiddenModels", "");
+    })
+    .update({ hiddenModels: "[]" });
+
   const getVendorVersion = (vendorId: string): number | null => {
     try {
       const version = u.vendor.getVendor(vendorId)?.version;
@@ -234,6 +241,7 @@ async function tempOnsert(tsCode: string) {
     id: vendor.id,
     inputValues: JSON.stringify(vendor.inputValues ?? {}),
     models: JSON.stringify([]),
+    hiddenModels: JSON.stringify([]),
     enable: vendor.id == "toonflow" ? 1 : 0,
   });
   u.vendor.writeCode(vendor.id, tsCode);

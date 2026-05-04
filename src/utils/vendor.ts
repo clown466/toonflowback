@@ -17,15 +17,17 @@ export function getCode(id: string): string {
 }
 
 export async function getModelList(id: string): Promise<Array<any>> {
-  const models = await u.db("o_vendorConfig").where("id", id).select("models").first();
+  const models = await u.db("o_vendorConfig").where("id", id).select("models", "hiddenModels").first();
   if (!models || !models.models) return [];
   const code = getCode(id);
   const jsCode = transform(code, { transforms: ["typescript"] }).code;
   const vendorData = u.vm(jsCode);
   if(!vendorData || !vendorData.vendor || !vendorData.vendor.models) return [];
+  const hiddenModels = new Set(JSON.parse(models.hiddenModels ?? "[]"));
   const combined = [...JSON.parse(JSON.stringify(vendorData.vendor.models)), ...JSON.parse(models?.models ?? "[]")];
   const map = new Map<string, any>();
   for (const m of combined) {
+    if (hiddenModels.has(m.modelName)) continue;
     map.set(m.modelName, m);
   }
   return [...map.values()];

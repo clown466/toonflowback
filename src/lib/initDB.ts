@@ -572,6 +572,7 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
         table.string("id").notNullable();
         table.text("inputValues"); // 输入项值 JSON
         table.text("models"); // 模型配置 JSON
+        table.text("hiddenModels"); // 用户隐藏的模板内置模型 JSON
         table.integer("enable"); //是否启用供应商
         table.primary(["id"]);
         table.unique(["id"]);
@@ -582,30 +583,35 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
             id: "toonflow",
             inputValues: "{}",
             models: "[]",
+            hiddenModels: "[]",
             enable: 0,
           },
           {
             id: "volcengine",
             inputValues: "{}",
             models: "[]",
+            hiddenModels: "[]",
             enable: 0,
           },
           {
             id: "minimax",
             inputValues: "{}",
             models: "[]",
+            hiddenModels: "[]",
             enable: 0,
           },
           {
             id: "openai",
             inputValues: "{}",
             models: "[]",
+            hiddenModels: "[]",
             enable: 0,
           },
           {
             id: "klingai",
             inputValues: "{}",
             models: "[]",
+            hiddenModels: "[]",
             enable: 0,
           },
           {

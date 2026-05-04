@@ -1,4 +1,4 @@
-// @db-hash 5364c2db0bf42b520761b813ce040489
+// @db-hash 00f3c6d67c363cdb7ea097a0e4a8cd80
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -23,7 +23,6 @@ export interface o_agentDeploy {
   'modelName'?: string | null;
   'name'?: string | null;
   'temperature'?: number | null;
-  'topP'?: number | null;
   'type'?: string | null;
   'vendorId'?: string | null;
 }
@@ -110,17 +109,6 @@ export interface o_novel {
   'projectId'?: number | null;
   'reel'?: string | null;
 }
-export interface o_outline {
-  'data'?: string | null;
-  'episode'?: number | null;
-  'id'?: number;
-  'projectId'?: number | null;
-}
-export interface o_outlineNovel {
-  'id'?: number;
-  'novelId'?: number | null;
-  'outlineId'?: number | null;
-}
 export interface o_project {
   'artStyle'?: string | null;
   'createTime'?: number | null;
@@ -137,12 +125,40 @@ export interface o_project {
   'videoModel'?: string | null;
   'videoRatio'?: string | null;
 }
+export interface o_projectConstraints {
+  'content': string;
+  'createdAt': number;
+  'projectId'?: number;
+  'sourceRef'?: string | null;
+  'sourceType': string;
+  'updatedAt': number;
+}
+export interface o_projectSkillBindings {
+  'createdAt': number;
+  'id'?: string;
+  'path': string;
+  'projectId': number;
+  'sourceType'?: string;
+  'updatedAt': number;
+}
 export interface o_prompt {
   'data'?: string | null;
   'id'?: number;
   'name'?: string | null;
   'type'?: string | null;
   'useData'?: string | null;
+}
+export interface o_roleFactCards {
+  'assetId'?: number | null;
+  'confidence'?: number;
+  'createdAt': number;
+  'facts': string;
+  'id'?: string;
+  'negativeFacts'?: string | null;
+  'projectId': number;
+  'roleName': string;
+  'sourceType': string;
+  'updatedAt': number;
 }
 export interface o_script {
   'content'?: string | null;
@@ -212,6 +228,7 @@ export interface o_user {
 }
 export interface o_vendorConfig {
   'enable'?: number | null;
+  'hiddenModels'?: string | null;
   'id'?: string;
   'inputValues'?: string | null;
   'models'?: string | null;
@@ -252,10 +269,11 @@ export interface DB {
   "o_imageFlow": o_imageFlow;
   "o_modelPrompt": o_modelPrompt;
   "o_novel": o_novel;
-  "o_outline": o_outline;
-  "o_outlineNovel": o_outlineNovel;
   "o_project": o_project;
+  "o_projectConstraints": o_projectConstraints;
+  "o_projectSkillBindings": o_projectSkillBindings;
   "o_prompt": o_prompt;
+  "o_roleFactCards": o_roleFactCards;
   "o_script": o_script;
   "o_scriptAssets": o_scriptAssets;
   "o_setting": o_setting;

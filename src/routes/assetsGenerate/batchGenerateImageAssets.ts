@@ -3,6 +3,7 @@ import { z } from "zod";
 import { error, success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
 import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
+import u from "@/utils";
 
 const router = express.Router();
 
@@ -33,7 +34,7 @@ export default router.post("/", validateFields(requestSchema), async (req, res) 
     const result = await submitAssetImageGeneration({ projectId, model, resolution, concurrentCount, skillId, userRequirement, items });
     return res.status(200).send(success(result));
   } catch (err) {
-    console.error("[batchGenerateImageAssets] request failed", err);
+    console.error("[batchGenerateImageAssets] request failed", u.error(err));
     return res.status(500).send(error(err instanceof Error ? err.message : String(err)));
   }
 });

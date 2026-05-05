@@ -3,8 +3,130 @@ import u from "@/utils";
 import { Namespace, Socket } from "socket.io";
 import * as agent from "@/agents/workspaceAgent/index";
 import ResTool from "@/socket/resTool";
-import { runNovelAssetExtractionFastPath, runProjectAssetImageGenerationFastPath, runProjectStoryboardClearFastPath, runProjectStoryboardDraftFastPath } from "@/agents/workspaceAgent/tools";
 import Memory from "@/utils/agent/memory";
+
+type WorkspaceCommandIntent = "storyboard_clear" | "storyboard_generation" | "asset_image_generation" | "asset_extraction";
+
+interface WorkspaceCommandPipeline {
+  loadProjectSnapshot?: (input: WorkspaceCommandPipelineInput) => Promise<unknown>;
+  createWorkspaceCommandPlan?: (input: WorkspaceCommandPlannerInput) => Promise<WorkspaceCommandPlan | null | undefined>;
+  executeWorkspaceCommandPlan?: (input: WorkspaceCommandExecutorInput) => Promise<unknown>;
+}
+
+interface WorkspaceCommandPipelineInput {
+  projectId?: number;
+  isolationKey: string;
+  text: string;
+  ctx: agent.AgentContext;
+}
+
+interface WorkspaceCommandPlannerInput extends WorkspaceCommandPipelineInput {
+  intent: WorkspaceCommandIntent;
+  snapshot?: unknown;
+}
+
+interface WorkspaceCommandExecutorInput extends WorkspaceCommandPipelineInput {
+  plan: WorkspaceCommandPlan;
+  snapshot?: unknown;
+}
+
+interface WorkspaceCommandPlan {
+  handled?: boolean;
+  intent?: WorkspaceCommandIntent;
+  command?: unknown;
+  commands?: unknown[];
+  action?: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
+interface SplitWorkspaceCommandSnapshotModule {
+  loadProjectSnapshot?: (projectId: number) => Promise<unknown>;
+}
+
+interface SplitWorkspaceCommandPlannerModule {
+  createWorkspaceCommandPlan?: (text: string, snapshot?: unknown) => Promise<WorkspaceCommandPlan | null | undefined> | WorkspaceCommandPlan | null | undefined;
+}
+
+interface SplitWorkspaceCommandExecutorModule {
+  executeWorkspaceCommandPlan?: (config: { resTool: ResTool; msg: agent.AgentContext["msg"] }, plan: WorkspaceCommandPlan) => Promise<unknown>;
+}
+
+let pipelineCache: WorkspaceCommandPipeline | null | undefined;
+
+function optionalRequire(moduleName: string): unknown {
+  try {
+    const runtimeRequire = eval("require") as (name: string) => unknown;
+    return runtimeRequire(moduleName);
+  } catch {
+    return null;
+  }
+}
+
+function loadWorkspaceCommandPipeline(): WorkspaceCommandPipeline | null {
+  if (pipelineCache !== undefined) return pipelineCache;
+
+  const candidates = [
+    "@/agents/workspaceAgent/commandPipeline",
+    "@/agents/workspaceAgent/commands",
+    "@/agents/workspaceAgent/command",
+    "@/agents/workspaceAgent/workspaceCommandPipeline",
+  ];
+  for (const moduleName of candidates) {
+    const mod = optionalRequire(moduleName) as WorkspaceCommandPipeline | { default?: WorkspaceCommandPipeline } | null;
+    const pipeline = (mod && "default" in mod && mod.default ? mod.default : mod) as WorkspaceCommandPipeline | null;
+    if (pipeline?.createWorkspaceCommandPlan && pipeline.executeWorkspaceCommandPlan) {
+      pipelineCache = pipeline;
+      return pipelineCache;
+    }
+  }
+
+  const snapshotModule = optionalRequire("@/agents/workspaceAgent/command/projectSnapshot") as SplitWorkspaceCommandSnapshotModule | null;
+  const plannerModule = optionalRequire("@/agents/workspaceAgent/command/planner") as SplitWorkspaceCommandPlannerModule | null;
+  const executorModule = optionalRequire("@/agents/workspaceAgent/command/executor") as SplitWorkspaceCommandExecutorModule | null;
+  if (plannerModule?.createWorkspaceCommandPlan && executorModule?.executeWorkspaceCommandPlan) {
+    pipelineCache = {
+      loadProjectSnapshot: async (input) => {
+        if (!snapshotModule?.loadProjectSnapshot || input.projectId == null) return undefined;
+        return snapshotModule.loadProjectSnapshot(input.projectId);
+      },
+      createWorkspaceCommandPlan: async (input) => plannerModule.createWorkspaceCommandPlan!(input.text, input.snapshot),
+      executeWorkspaceCommandPlan: async (input) => executorModule.executeWorkspaceCommandPlan!({ resTool: input.ctx.resTool, msg: input.ctx.msg }, input.plan),
+    };
+    return pipelineCache;
+  }
+
+  pipelineCache = null;
+  return pipelineCache;
+}
+
+export function getWorkspaceCommandCandidateIntent(content: string): WorkspaceCommandIntent | null {
+  const shouldFastClearStoryboards =
+    /(清空|清除|删除|删掉|移除|重置).{0,12}(分镜|镜头|storyboard)|(分镜|镜头|storyboard).{0,12}(清空|清除|删除|删掉|移除|重置)/i.test(content);
+  if (shouldFastClearStoryboards) return "storyboard_clear";
+
+  const shouldFastGenerateStoryboards =
+    /(分镜|镜头|storyboard|镜号|shot list)/i.test(content) &&
+    /(出|生成|做|创建|规划|拆|整理|帮我|开始|直接|一键|一句话|生产)/i.test(content);
+  if (shouldFastGenerateStoryboards) return "storyboard_generation";
+
+  const explicitAssetImageIntent =
+    /(资产|角色|场景|道具|参考图).*(出图|生图|生成.*图|批量.*图|图片)|(出图|生图|生成.*图).*(资产|角色|场景|道具|参考图)/i.test(content);
+  const genericBatchImageIntent =
+    /(批量|全部|所有|统一|帮我|开始|直接).{0,16}(出图|生图|生成.*图)|(出图|生图).{0,16}(批量|全部|所有|统一)/i.test(content) &&
+    !/(分镜|镜头|storyboard|视频)/i.test(content);
+  if (explicitAssetImageIntent || genericBatchImageIntent) return "asset_image_generation";
+
+  const shouldFastExtractAssets = /提取?资产|提资产|资产库|角色.*场景.*道具|塑角造景|准备资产/i.test(content);
+  if (shouldFastExtractAssets) return "asset_extraction";
+
+  return null;
+}
+
+function isExecutableWorkspaceCommandPlan(plan: WorkspaceCommandPlan | null | undefined): plan is WorkspaceCommandPlan {
+  if (!plan || plan.handled === false) return false;
+  return Boolean(plan.command || (Array.isArray(plan.commands) && plan.commands.length) || plan.action || plan.type || plan.intent);
+}
 
 function getFastPathMemoryContent(result: any): string | null {
   const message = result?.message ?? result?.result?.message;
@@ -62,15 +184,52 @@ export default (nsp: Namespace) => {
       callback?.({ success: true });
     });
 
-    async function runFastPathWithMemory<T>(content: string, userMessageTime: number, runner: () => Promise<T>): Promise<T> {
+    async function runCommandWithMemory<T>(content: string, userMessageTime: number, runner: () => Promise<T>): Promise<T> {
       const memory = new Memory("workspaceAgent", isolationKey);
       await memory.add("user", content, { createTime: userMessageTime });
       const result = await runner();
       const assistantContent = getFastPathMemoryContent(result);
       if (assistantContent) {
-        await memory.add("assistant:fastPath", assistantContent);
+        await memory.add("assistant:commandPipeline", assistantContent);
       }
       return result;
+    }
+
+    async function tryRunWorkspaceCommandPipeline(ctx: agent.AgentContext, intent: WorkspaceCommandIntent): Promise<boolean> {
+      const pipeline = loadWorkspaceCommandPipeline();
+      if (!pipeline?.createWorkspaceCommandPlan || !pipeline.executeWorkspaceCommandPlan) {
+        console.log("[workspaceAgent] workspace command pipeline 未加载，回退到大模型总控", { intent });
+        return false;
+      }
+
+      const projectId = Number(resTool.data.projectId);
+      const input: WorkspaceCommandPipelineInput = {
+        projectId: Number.isFinite(projectId) ? projectId : undefined,
+        isolationKey,
+        text: ctx.text,
+        ctx,
+      };
+      const snapshot = pipeline.loadProjectSnapshot ? await pipeline.loadProjectSnapshot(input) : undefined;
+      const plan = await pipeline.createWorkspaceCommandPlan({
+        ...input,
+        intent,
+        snapshot,
+      });
+      if (!isExecutableWorkspaceCommandPlan(plan)) {
+        console.log("[workspaceAgent] workspace command pipeline 未产出可执行计划，回退到大模型总控", { intent });
+        return false;
+      }
+
+      console.log("[workspaceAgent] workspace command pipeline 执行计划", { intent: plan.intent ?? intent, action: plan.action, type: plan.type });
+      const userMessageTime = ctx.userMessageTime ?? Date.now();
+      await runCommandWithMemory(ctx.text, userMessageTime, () =>
+        pipeline.executeWorkspaceCommandPlan!({
+          ...input,
+          plan,
+          snapshot,
+        }),
+      );
+      return true;
     }
 
     socket.on("chat", async (data: { content: string }) => {
@@ -90,42 +249,15 @@ export default (nsp: Namespace) => {
         msg,
         thinkConfig,
       };
-      const userMessageTime = ctx.userMessageTime ?? Date.now();
 
       try {
-        const shouldFastClearStoryboards =
-          /(清空|清除|删除|删掉|移除|重置).{0,12}(分镜|镜头|storyboard)|(分镜|镜头|storyboard).{0,12}(清空|清除|删除|删掉|移除|重置)/i.test(content);
-        if (shouldFastClearStoryboards) {
-          console.log("[workspaceAgent] 命中清空分镜快速路径");
-          await runFastPathWithMemory(content, userMessageTime, () => runProjectStoryboardClearFastPath({ resTool, msg }, { sourceText: content }));
-          return;
+        const commandIntent = getWorkspaceCommandCandidateIntent(content);
+        if (commandIntent) {
+          const handledByPipeline = await tryRunWorkspaceCommandPipeline(ctx, commandIntent);
+          if (handledByPipeline) return;
         }
 
-        const shouldFastGenerateStoryboards =
-          /(分镜|镜头|storyboard|镜号|shot list)/i.test(content) &&
-          /(出|生成|做|创建|规划|拆|整理|帮我|开始|直接|一键|一句话|生产)/i.test(content);
-        if (shouldFastGenerateStoryboards) {
-          console.log("[workspaceAgent] 命中生产分镜快速路径");
-          await runFastPathWithMemory(content, userMessageTime, () => runProjectStoryboardDraftFastPath({ resTool, msg }, { sourceText: content }));
-          return;
-        }
-
-        const explicitAssetImageIntent =
-          /(资产|角色|场景|道具|参考图).*(出图|生图|生成.*图|批量.*图|图片)|(出图|生图|生成.*图).*(资产|角色|场景|道具|参考图)/i.test(content);
-        const genericBatchImageIntent =
-          /(批量|全部|所有|统一|帮我|开始|直接).{0,16}(出图|生图|生成.*图)|(出图|生图).{0,16}(批量|全部|所有|统一)/i.test(content) &&
-          !/(分镜|镜头|storyboard|视频)/i.test(content);
-        const shouldFastGenerateAssetImages = explicitAssetImageIntent || genericBatchImageIntent;
-        if (shouldFastGenerateAssetImages) {
-          console.log("[workspaceAgent] 命中资产批量出图快速路径");
-          await runFastPathWithMemory(content, userMessageTime, () => runProjectAssetImageGenerationFastPath({ resTool, msg }, { sourceText: content }));
-          return;
-        }
-
-        const shouldFastExtractAssets = /提取?资产|提资产|资产库|角色.*场景.*道具|塑角造景|准备资产/i.test(content);
-        if (shouldFastExtractAssets) {
-          console.log("[workspaceAgent] 命中小说资产提取快速路径");
-          await runFastPathWithMemory(content, userMessageTime, () => runNovelAssetExtractionFastPath({ resTool, msg }));
+        if (currentController.signal.aborted) {
           return;
         }
         await agent.runDecisionAI(ctx);

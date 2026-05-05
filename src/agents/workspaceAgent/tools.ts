@@ -6,7 +6,7 @@ import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
 import { clearProjectStoryboards, generateProjectStoryboardDraft } from "@/services/storyboardDraftGeneration";
 import { toToolJsonSchema } from "@/utils/jsonSchema";
 
-interface ToolConfig {
+export interface ToolConfig {
   resTool: ResTool;
   toolsNames?: string[];
   msg: ReturnType<ResTool["newMessage"]>;
@@ -17,7 +17,7 @@ type AssetType = z.infer<typeof assetTypeSchema>;
 const generatableAssetTypeSchema = z.enum(["role", "scene", "tool"]);
 type GeneratableAssetType = z.infer<typeof generatableAssetTypeSchema>;
 
-interface ProjectAssetImageGenerationOptions {
+export interface ProjectAssetImageGenerationOptions {
   includeCompleted?: boolean;
   sourceText?: string;
   finalizeMessage?: boolean;
@@ -25,6 +25,7 @@ interface ProjectAssetImageGenerationOptions {
   limit?: number;
   assetIds?: number[];
   assetNames?: string[];
+  disableNaturalLanguageScopeParsing?: boolean;
 }
 
 const assetInputSchema = z.object({
@@ -367,9 +368,9 @@ function emitProjectAssetImageUpdate(resTool: ResTool, payload: Record<string, u
 export async function runProjectAssetImageGenerationFastPath(config: ToolConfig, options?: ProjectAssetImageGenerationOptions) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
-  const includeCompleted = options?.includeCompleted ?? shouldIncludeCompletedAssets(options?.sourceText ?? "");
+  const includeCompleted = options?.includeCompleted ?? (options?.disableNaturalLanguageScopeParsing ? false : shouldIncludeCompletedAssets(options?.sourceText ?? ""));
   const finalizeMessage = options?.finalizeMessage ?? true;
-  const parsedScope = parseAssetImageRequestScope(options?.sourceText);
+  const parsedScope = options?.disableNaturalLanguageScopeParsing ? {} : parseAssetImageRequestScope(options?.sourceText);
   const assetType = options?.assetType ?? parsedScope.assetType;
   const limit = normalizePositiveLimit(options?.limit) ?? parsedScope.limit;
   const assetIds = Array.from(new Set((options?.assetIds ?? []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));

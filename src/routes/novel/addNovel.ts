@@ -5,6 +5,12 @@ import { success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
 const router = express.Router();
 
+function nextAvailableChapterIndex(existingIndexes: Set<number>, startAfter: number) {
+  let next = Math.max(0, startAfter) + 1;
+  while (existingIndexes.has(next)) next += 1;
+  return next;
+}
+
 // 新增原文数据
 export default router.post(
   "/",
@@ -27,12 +33,13 @@ export default router.post(
     const existingChapterIndexes = new Set(
       (await u.db("o_novel").where("projectId", projectId).select("chapterIndex")).map((row: any) => Number(row.chapterIndex)).filter(Number.isFinite),
     );
-    const incomingIndexes = data.map((item: { index: number }) => Number(item.index)).filter((index: number) => Number.isFinite(index) && index > 0);
-    const shouldPreserveIncomingIndex = incomingIndexes.length > 0 && incomingIndexes.every((index: number) => !existingChapterIndexes.has(index));
 
     for (const item of data) {
       const requestedIndex = Number(item.index);
-      const chapterIndex = shouldPreserveIncomingIndex && Number.isFinite(requestedIndex) && requestedIndex > 0 ? requestedIndex : ++lastChapterIndex;
+      const chapterIndex =
+        Number.isFinite(requestedIndex) && requestedIndex > 0 && !existingChapterIndexes.has(requestedIndex)
+          ? requestedIndex
+          : nextAvailableChapterIndex(existingChapterIndexes, lastChapterIndex);
       const [id] = await u.db("o_novel").insert({
         projectId,
         chapterIndex,
@@ -44,6 +51,7 @@ export default router.post(
       });
       totalNovelId.push(id);
       lastChapterIndex = Math.max(lastChapterIndex, chapterIndex);
+      existingChapterIndexes.add(chapterIndex);
     }
     const chapterAllList = await u.db("o_novel").where("projectId", projectId).whereIn("id", totalNovelId);
     const novelClass = new u.cleanNovel();

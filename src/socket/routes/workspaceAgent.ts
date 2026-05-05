@@ -4,101 +4,12 @@ import { Namespace, Socket } from "socket.io";
 import * as agent from "@/agents/workspaceAgent/index";
 import ResTool from "@/socket/resTool";
 import Memory from "@/utils/agent/memory";
+import { executeWorkspaceCommandPlan } from "@/agents/workspaceAgent/command/executor";
+import { createWorkspaceCommandPlan } from "@/agents/workspaceAgent/command/planner";
+import { loadProjectSnapshot } from "@/agents/workspaceAgent/command/projectSnapshot";
+import type { WorkspaceCommandPlan } from "@/agents/workspaceAgent/command/planner";
 
 type WorkspaceCommandIntent = "storyboard_clear" | "storyboard_generation" | "asset_image_generation" | "asset_extraction";
-
-interface WorkspaceCommandPipeline {
-  loadProjectSnapshot?: (input: WorkspaceCommandPipelineInput) => Promise<unknown>;
-  createWorkspaceCommandPlan?: (input: WorkspaceCommandPlannerInput) => Promise<WorkspaceCommandPlan | null | undefined>;
-  executeWorkspaceCommandPlan?: (input: WorkspaceCommandExecutorInput) => Promise<unknown>;
-}
-
-interface WorkspaceCommandPipelineInput {
-  projectId?: number;
-  isolationKey: string;
-  text: string;
-  ctx: agent.AgentContext;
-}
-
-interface WorkspaceCommandPlannerInput extends WorkspaceCommandPipelineInput {
-  intent: WorkspaceCommandIntent;
-  snapshot?: unknown;
-}
-
-interface WorkspaceCommandExecutorInput extends WorkspaceCommandPipelineInput {
-  plan: WorkspaceCommandPlan;
-  snapshot?: unknown;
-}
-
-interface WorkspaceCommandPlan {
-  handled?: boolean;
-  intent?: WorkspaceCommandIntent;
-  command?: unknown;
-  commands?: unknown[];
-  action?: string;
-  type?: string;
-  [key: string]: unknown;
-}
-
-interface SplitWorkspaceCommandSnapshotModule {
-  loadProjectSnapshot?: (projectId: number) => Promise<unknown>;
-}
-
-interface SplitWorkspaceCommandPlannerModule {
-  createWorkspaceCommandPlan?: (text: string, snapshot?: unknown) => Promise<WorkspaceCommandPlan | null | undefined> | WorkspaceCommandPlan | null | undefined;
-}
-
-interface SplitWorkspaceCommandExecutorModule {
-  executeWorkspaceCommandPlan?: (config: { resTool: ResTool; msg: agent.AgentContext["msg"] }, plan: WorkspaceCommandPlan) => Promise<unknown>;
-}
-
-let pipelineCache: WorkspaceCommandPipeline | null | undefined;
-
-function optionalRequire(moduleName: string): unknown {
-  try {
-    const runtimeRequire = eval("require") as (name: string) => unknown;
-    return runtimeRequire(moduleName);
-  } catch {
-    return null;
-  }
-}
-
-function loadWorkspaceCommandPipeline(): WorkspaceCommandPipeline | null {
-  if (pipelineCache !== undefined) return pipelineCache;
-
-  const candidates = [
-    "@/agents/workspaceAgent/commandPipeline",
-    "@/agents/workspaceAgent/commands",
-    "@/agents/workspaceAgent/command",
-    "@/agents/workspaceAgent/workspaceCommandPipeline",
-  ];
-  for (const moduleName of candidates) {
-    const mod = optionalRequire(moduleName) as WorkspaceCommandPipeline | { default?: WorkspaceCommandPipeline } | null;
-    const pipeline = (mod && "default" in mod && mod.default ? mod.default : mod) as WorkspaceCommandPipeline | null;
-    if (pipeline?.createWorkspaceCommandPlan && pipeline.executeWorkspaceCommandPlan) {
-      pipelineCache = pipeline;
-      return pipelineCache;
-    }
-  }
-
-  const snapshotModule = optionalRequire("@/agents/workspaceAgent/command/projectSnapshot") as SplitWorkspaceCommandSnapshotModule | null;
-  const plannerModule = optionalRequire("@/agents/workspaceAgent/command/planner") as SplitWorkspaceCommandPlannerModule | null;
-  const executorModule = optionalRequire("@/agents/workspaceAgent/command/executor") as SplitWorkspaceCommandExecutorModule | null;
-  if (plannerModule?.createWorkspaceCommandPlan && executorModule?.executeWorkspaceCommandPlan) {
-    pipelineCache = {
-      loadProjectSnapshot: async (input) => {
-        if (!snapshotModule?.loadProjectSnapshot || input.projectId == null) return undefined;
-        return snapshotModule.loadProjectSnapshot(input.projectId);
-      },
-      createWorkspaceCommandPlan: async (input) => plannerModule.createWorkspaceCommandPlan!(input.text, input.snapshot),
-      executeWorkspaceCommandPlan: async (input) => executorModule.executeWorkspaceCommandPlan!({ resTool: input.ctx.resTool, msg: input.ctx.msg }, input.plan),
-    };
-    return pipelineCache;
-  }
-
-  pipelineCache = null;
-  return pipelineCache;
-}
 
 export function getWorkspaceCommandCandidateIntent(content: string): WorkspaceCommandIntent | null {
   const shouldFastClearStoryboards =
@@ -124,8 +35,7 @@ export function getWorkspaceCommandCandidateIntent(content: string): WorkspaceCo
 }
 
 function isExecutableWorkspaceCommandPlan(plan: WorkspaceCommandPlan | null | undefined): plan is WorkspaceCommandPlan {
-  if (!plan || plan.handled === false) return false;
-  return Boolean(plan.command || (Array.isArray(plan.commands) && plan.commands.length) || plan.action || plan.type || plan.intent);
+  return Boolean(plan?.intent);
 }
 
 function getFastPathMemoryContent(result: any): string | null {
@@ -196,39 +106,17 @@ export default (nsp: Namespace) => {
     }
 
     async function tryRunWorkspaceCommandPipeline(ctx: agent.AgentContext, intent: WorkspaceCommandIntent): Promise<boolean> {
-      const pipeline = loadWorkspaceCommandPipeline();
-      if (!pipeline?.createWorkspaceCommandPlan || !pipeline.executeWorkspaceCommandPlan) {
-        console.log("[workspaceAgent] workspace command pipeline 未加载，回退到大模型总控", { intent });
-        return false;
-      }
-
       const projectId = Number(resTool.data.projectId);
-      const input: WorkspaceCommandPipelineInput = {
-        projectId: Number.isFinite(projectId) ? projectId : undefined,
-        isolationKey,
-        text: ctx.text,
-        ctx,
-      };
-      const snapshot = pipeline.loadProjectSnapshot ? await pipeline.loadProjectSnapshot(input) : undefined;
-      const plan = await pipeline.createWorkspaceCommandPlan({
-        ...input,
-        intent,
-        snapshot,
-      });
+      const snapshot = Number.isFinite(projectId) ? await loadProjectSnapshot(projectId) : undefined;
+      const plan = await createWorkspaceCommandPlan(ctx.text, snapshot);
       if (!isExecutableWorkspaceCommandPlan(plan)) {
         console.log("[workspaceAgent] workspace command pipeline 未产出可执行计划，回退到大模型总控", { intent });
         return false;
       }
 
-      console.log("[workspaceAgent] workspace command pipeline 执行计划", { intent: plan.intent ?? intent, action: plan.action, type: plan.type });
+      console.log("[workspaceAgent] workspace command pipeline 执行计划", { intent: plan.intent, confirmationPolicy: plan.confirmationPolicy });
       const userMessageTime = ctx.userMessageTime ?? Date.now();
-      await runCommandWithMemory(ctx.text, userMessageTime, () =>
-        pipeline.executeWorkspaceCommandPlan!({
-          ...input,
-          plan,
-          snapshot,
-        }),
-      );
+      await runCommandWithMemory(ctx.text, userMessageTime, () => executeWorkspaceCommandPlan({ resTool: ctx.resTool, msg: ctx.msg }, plan));
       return true;
     }
 

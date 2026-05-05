@@ -66,21 +66,21 @@ async function main() {
     }
   }
 
-  const pipelineMock = {
-    loadProjectSnapshot: async (input) => ({ projectId: input.projectId, assets: [] }),
-    createWorkspaceCommandPlan: async (input) => {
-      plannerInput = input;
+  const snapshotMock = {
+    loadProjectSnapshot: async (projectId) => ({ projectId, assets: [] }),
+  };
+  const plannerMock = {
+    createWorkspaceCommandPlan: async (text, snapshot) => {
+      plannerInput = { text, snapshot };
       return {
-        intent: input.intent,
-        type: 'asset_image_generation',
-        command: {
-          kind: 'generate_asset_images',
-          scope: { assetType: 'scene', limit: 4 },
-        },
+        intent: 'asset_image_generation',
+        scope: { assetType: 'scene', limit: 4 },
       };
     },
-    executeWorkspaceCommandPlan: async (input) => {
-      executorInput = input;
+  };
+  const executorMock = {
+    executeWorkspaceCommandPlan: async (config, plan) => {
+      executorInput = { config, plan };
       return { handled: true, message: '已提交前 4 个场景图片生成任务。' };
     },
   };
@@ -104,7 +104,9 @@ async function main() {
     },
     '@/socket/resTool': ResToolMock,
     '@/utils/agent/memory': MemoryMock,
-    '@/agents/workspaceAgent/commandPipeline': pipelineMock,
+    '@/agents/workspaceAgent/command/projectSnapshot': snapshotMock,
+    '@/agents/workspaceAgent/command/planner': plannerMock,
+    '@/agents/workspaceAgent/command/executor': executorMock,
   });
 
   assert.strictEqual(route.getWorkspaceCommandCandidateIntent('尝试生成前4个场景图片'), 'asset_image_generation');
@@ -139,11 +141,13 @@ async function main() {
   await socketHandlers.chat({ content: '尝试生成前4个场景图片' });
 
   assert.ok(plannerInput, 'pipeline planner should be called');
-  assert.strictEqual(plannerInput.intent, 'asset_image_generation');
   assert.strictEqual(plannerInput.text, '尝试生成前4个场景图片');
-  assert.strictEqual(plannerInput.projectId, 123);
+  assert.strictEqual(plannerInput.snapshot.projectId, 123);
   assert.ok(executorInput, 'pipeline executor should be called');
-  assert.strictEqual(executorInput.plan.type, 'asset_image_generation');
+  assert.strictEqual(executorInput.plan.intent, 'asset_image_generation');
+  assert.strictEqual(executorInput.plan.scope.assetType, 'scene');
+  assert.strictEqual(executorInput.plan.scope.limit, 4);
+  assert.strictEqual(executorInput.config.resTool.data.projectId, 123);
   assert.strictEqual(decisionAICalled, false, 'handled pipeline command should not fall back to decision AI');
   assert.deepStrictEqual(
     memoryWrites.map((item) => item.role),

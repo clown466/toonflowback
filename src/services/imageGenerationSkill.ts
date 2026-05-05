@@ -34,6 +34,8 @@ export interface ImageGenerationPromptContext {
   };
   visualManual: string;
   userRequirement?: string | null;
+  timeEnvironmentContext?: string | null;
+  neutralAssetLighting?: string | null;
 }
 
 const SKILL_DIR = "image_generation_skills";

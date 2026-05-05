@@ -7,6 +7,7 @@ import {
   renderImageGenerationSkillPrompt,
   resolveImageGenerationSkill,
 } from "@/services/imageGenerationSkill";
+import { inferTimeEnvironment, buildNeutralAssetLightingText } from "@/services/timeEnvironmentInference";
 
 type AssetType = "role" | "scene" | "tool";
 
@@ -74,7 +75,15 @@ const assetTypeConfig: Record<AssetType, AssetTypeConfig> = {
   },
 };
 
-function buildPrompt(cfg: AssetTypeConfig, project: { artStyle?: string | null; type?: string | null; intro?: string | null }, name: string, prompt: string, visualManual: string, userRequirement?: string | null): string {
+function buildPrompt(
+  cfg: AssetTypeConfig,
+  project: { artStyle?: string | null; type?: string | null; intro?: string | null },
+  name: string,
+  prompt: string,
+  visualManual: string,
+  userRequirement?: string | null,
+  options?: { timeEnvironmentContext?: string | null; neutralAssetLighting?: string | null },
+): string {
   return `
     请根据以下参数生成${cfg.promptTitle}：
 
@@ -90,8 +99,22 @@ function buildPrompt(cfg: AssetTypeConfig, project: { artStyle?: string | null; 
     - 名称:${name},
     - 提示词:${prompt},
     - 用户额外要求:${userRequirement || "无"}
+    - 时间环境推理（仅场景标准图使用）:${options?.timeEnvironmentContext || "无"}
+    - 标准展示光约束（角色/道具标准图固定使用）:${options?.neutralAssetLighting || "无"}
 
     请严格按照系统规范生成${cfg.promptEnd}。
+  `;
+}
+
+function buildStandardAssetUserRequirement(userRequirement: string | null, neutralAssetLighting: string | null) {
+  if (!neutralAssetLighting) return userRequirement;
+  return `
+    ${userRequirement || "无"}
+
+    标准图约束：角色/道具标准图仅采纳外观、造型、材质、比例、构图等资产展示类要求；
+    使用中性标准展示光，不绑定剧情时间，不使用强烈环境色污染设定；
+    不绑定剧情时间，不继承雨夜、黄昏、夜晚、清晨、室内暖光等时间/天气/环境光设定；
+    ${neutralAssetLighting}
   `;
 }
 
@@ -203,9 +226,32 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
         const imagePath = `/${projectId}/${cfg.dir}/${uuidv4()}.jpg`;
         const assetType = item.type as ImageGenerationAssetType;
         const visualManual = getVisualManualForAssetType(project.artStyle, assetType);
+        const rawUserRequirement = item.userRequirement ?? input.userRequirement ?? null;
+        const neutralAssetLighting = assetType === "scene" ? null : buildNeutralAssetLightingText(assetType);
+        const effectiveUserRequirement = buildStandardAssetUserRequirement(rawUserRequirement, neutralAssetLighting);
+        const timeEnvironmentContext =
+          assetType === "scene"
+            ? inferTimeEnvironment({
+                project: {
+                  id: projectId,
+                  name: project.name,
+                  intro: project.intro,
+                  type: project.type,
+                  artStyle: project.artStyle,
+                },
+                asset: {
+                  id: item.id,
+                  type: assetType,
+                  name: item.name,
+                  describe: item.describe ?? null,
+                  prompt: item.prompt,
+                },
+                userRequirement: rawUserRequirement,
+              }).contextText
+            : null;
         const selectedSkill = await resolveImageGenerationSkill({
           skillId: item.skillId ?? input.skillId,
-          requestText: item.userRequirement ?? input.userRequirement,
+          requestText: rawUserRequirement,
           assetType,
         });
         if (selectedSkill) skillUsage.set(item.id, { id: selectedSkill.id, name: selectedSkill.name });
@@ -226,11 +272,16 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
             prompt: item.prompt,
           },
           visualManual,
-          userRequirement: item.userRequirement ?? input.userRequirement ?? null,
+          userRequirement: effectiveUserRequirement,
+          timeEnvironmentContext,
+          neutralAssetLighting,
         };
         const userPrompt = selectedSkill
           ? renderImageGenerationSkillPrompt(selectedSkill, promptContext)
-          : buildPrompt(cfg, project, item.name, item.prompt, visualManual, item.userRequirement ?? input.userRequirement);
+          : buildPrompt(cfg, project, item.name, item.prompt, visualManual, effectiveUserRequirement, {
+              timeEnvironmentContext,
+              neutralAssetLighting,
+            });
         const describe = `生成${cfg.label}图，名称：${item.name}，提示词：${item.prompt}`;
         const relatedObjects = { id: item.id, projectId, type: cfg.label, skillId: selectedSkill?.id ?? null, prompt: userPrompt.slice(0, 1200) };
 

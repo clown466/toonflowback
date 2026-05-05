@@ -14,6 +14,18 @@ interface ToolConfig {
 
 const assetTypeSchema = z.enum(["role", "scene", "tool", "other"]);
 type AssetType = z.infer<typeof assetTypeSchema>;
+const generatableAssetTypeSchema = z.enum(["role", "scene", "tool"]);
+type GeneratableAssetType = z.infer<typeof generatableAssetTypeSchema>;
+
+interface ProjectAssetImageGenerationOptions {
+  includeCompleted?: boolean;
+  sourceText?: string;
+  finalizeMessage?: boolean;
+  assetType?: GeneratableAssetType;
+  limit?: number;
+  assetIds?: number[];
+  assetNames?: string[];
+}
 
 const assetInputSchema = z.object({
   name: z.string().min(1).describe("资产名称"),
@@ -33,6 +45,82 @@ function pickCount(value: unknown): number {
 
 function nonEmpty(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function chineseNumberToArabic(value: string): number | null {
+  const text = value.trim();
+  if (/^\d+$/.test(text)) return Number(text);
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  };
+  if (text === "十") return 10;
+  const hundredParts = text.split("百");
+  let total = 0;
+  let rest = text;
+  if (hundredParts.length === 2) {
+    total += (digits[hundredParts[0]!] ?? 1) * 100;
+    rest = hundredParts[1]!;
+  }
+  const tenParts = rest.split("十");
+  if (tenParts.length === 2) {
+    total += (tenParts[0] ? digits[tenParts[0]] ?? 0 : 1) * 10;
+    total += tenParts[1] ? digits[tenParts[1]] ?? 0 : 0;
+    return total > 0 ? total : null;
+  }
+  if (rest.length === 1 && digits[rest] != null) return total + digits[rest];
+  return total > 0 ? total : null;
+}
+
+function normalizePositiveLimit(value: unknown): number | undefined {
+  const numberValue = typeof value === "string" ? chineseNumberToArabic(value) : Number(value);
+  if (!Number.isInteger(numberValue) || Number(numberValue) <= 0) return undefined;
+  return Math.min(Number(numberValue), 100);
+}
+
+function normalizeAssetName(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function parseAssetTypeFromText(text: string): GeneratableAssetType | undefined {
+  const matched: GeneratableAssetType[] = [];
+  if (/(角色|人物|主角|配角|character)/i.test(text)) matched.push("role");
+  if (/(场景|环境|地点|空间|scene|environment|location)/i.test(text)) matched.push("scene");
+  if (/(道具|物品|工具|prop|props)/i.test(text)) matched.push("tool");
+  return matched.length === 1 ? matched[0] : undefined;
+}
+
+function parseLimitFromText(text: string): number | undefined {
+  const numberToken = String.raw`(\d{1,3}|[零〇一二两三四五六七八九十百]{1,8})`;
+  const patterns = [
+    new RegExp(String.raw`前\s*${numberToken}\s*(?:个|张|幅|组)?\s*(?:角色|人物|场景|环境|道具|物品|资产|参考图|图片|图)`, "i"),
+    new RegExp(String.raw`(?:生成|提交|出|生|做)\s*前?\s*${numberToken}\s*(?:个|张|幅|组)?\s*(?:角色|人物|场景|环境|道具|物品|资产|参考图|图片|图)`, "i"),
+    new RegExp(String.raw`${numberToken}\s*(?:个|张|幅|组)\s*(?:角色|人物|场景|环境|道具|物品|资产|参考图|图片|图)`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const limit = normalizePositiveLimit(match?.[1]);
+    if (limit) return limit;
+  }
+  return undefined;
+}
+
+export function parseAssetImageRequestScope(sourceText?: string): Pick<ProjectAssetImageGenerationOptions, "assetType" | "limit"> {
+  const text = sourceText ?? "";
+  return {
+    assetType: parseAssetTypeFromText(text),
+    limit: parseLimitFromText(text),
+  };
 }
 
 function normalizeAssetKey(asset: Pick<AssetInput, "name" | "type">) {
@@ -253,6 +341,22 @@ function formatAssetNames(assets: Array<{ id: number; name: string }>, limit = 1
   return names.join("、");
 }
 
+function assetTypeLabel(type?: GeneratableAssetType) {
+  if (type === "role") return "角色";
+  if (type === "scene") return "场景";
+  if (type === "tool") return "道具";
+  return "资产";
+}
+
+function formatAssetImageScope(scope: { assetType?: GeneratableAssetType; limit?: number; assetIds?: number[]; assetNames?: string[] }) {
+  const parts: string[] = [];
+  if (scope.assetType) parts.push(assetTypeLabel(scope.assetType));
+  if (scope.limit) parts.push(`前 ${scope.limit} 个`);
+  if (scope.assetIds?.length) parts.push(`指定 ID ${scope.assetIds.join(", ")}`);
+  if (scope.assetNames?.length) parts.push(`指定名称 ${scope.assetNames.join("、")}`);
+  return parts.join("，");
+}
+
 function emitProjectAssetImageUpdate(resTool: ResTool, payload: Record<string, unknown>) {
   resTool.socket.emit("productionDataUpdated", {
     type: "asset_images",
@@ -260,11 +364,18 @@ function emitProjectAssetImageUpdate(resTool: ResTool, payload: Record<string, u
   });
 }
 
-export async function runProjectAssetImageGenerationFastPath(config: ToolConfig, options?: { includeCompleted?: boolean; sourceText?: string; finalizeMessage?: boolean }) {
+export async function runProjectAssetImageGenerationFastPath(config: ToolConfig, options?: ProjectAssetImageGenerationOptions) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
   const includeCompleted = options?.includeCompleted ?? shouldIncludeCompletedAssets(options?.sourceText ?? "");
   const finalizeMessage = options?.finalizeMessage ?? true;
+  const parsedScope = parseAssetImageRequestScope(options?.sourceText);
+  const assetType = options?.assetType ?? parsedScope.assetType;
+  const limit = normalizePositiveLimit(options?.limit) ?? parsedScope.limit;
+  const assetIds = Array.from(new Set((options?.assetIds ?? []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  const assetNames = Array.from(new Set((options?.assetNames ?? []).map((name) => nonEmpty(name)).filter((name): name is string => Boolean(name))));
+  const assetNameSet = new Set(assetNames.map(normalizeAssetName));
+  const scopeText = formatAssetImageScope({ assetType, limit, assetIds, assetNames });
   const thinking = msg.thinking("正在提交资产批量出图任务...");
 
   const project = await u.db("o_project").where("id", projectId).select("id", "imageModel", "imageQuality", "artStyle").first();
@@ -299,9 +410,16 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     .orderByRaw(`CASE o_assets.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
     .orderBy("o_assets.id", "asc");
 
-  const skippedCompleted = assets.filter((asset: any) => asset.imageState === "已完成");
-  const skippedGenerating = assets.filter((asset: any) => asset.imageState === "生成中");
-  const targetAssets = assets.filter((asset: any) => {
+  const scopedAssets = assets.filter((asset: any) => {
+    if (assetType && asset.type !== assetType) return false;
+    if (assetIds.length && !assetIds.includes(Number(asset.id))) return false;
+    if (assetNameSet.size && !assetNameSet.has(normalizeAssetName(asset.name))) return false;
+    return true;
+  });
+  const selectedAssets = limit ? scopedAssets.slice(0, limit) : scopedAssets;
+  const skippedCompleted = selectedAssets.filter((asset: any) => asset.imageState === "已完成");
+  const skippedGenerating = selectedAssets.filter((asset: any) => asset.imageState === "生成中");
+  const targetAssets = selectedAssets.filter((asset: any) => {
     if (asset.imageState === "生成中") return false;
     if (!includeCompleted && asset.imageState === "已完成") return false;
     return true;
@@ -316,6 +434,9 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
           projectId,
           includeCompleted,
           totalAssets: assets.length,
+          scope: scopeText || null,
+          scopedAssets: scopedAssets.length,
+          selectedAssets: selectedAssets.length,
           skippedCompleted: includeCompleted ? 0 : skippedCompleted.length,
           skippedGenerating: skippedGenerating.length,
           skippedNoPrompt: skippedNoPrompt.length,
@@ -330,6 +451,8 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
       const text = msg.text(
         [
           "当前没有可提交的资产出图任务。",
+          scopeText ? `已按范围筛选：${scopeText}；匹配 ${scopedAssets.length} 个，进入本次范围 ${selectedAssets.length} 个。` : "",
+          scopeText && selectedAssets.length === 0 ? "该范围内没有匹配到资产，请换一个范围或先提取资产。" : "",
           skippedGenerating.length ? `已有 ${skippedGenerating.length} 个资产正在生成中。` : "",
           !includeCompleted && skippedCompleted.length ? `已有 ${skippedCompleted.length} 个资产图已完成，本次默认保留不重绘。需要重绘时请说“重绘全部资产图”。` : "",
           skippedNoPrompt.length ? `有 ${skippedNoPrompt.length} 个资产缺少提示词/描述，已跳过。` : "",
@@ -387,6 +510,9 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
         imageQuality: project.imageQuality,
         aspectRatio: "16:9",
         includeCompleted,
+        scope: scopeText || null,
+        scopedAssets: scopedAssets.length,
+        selectedAssets: selectedAssets.length,
         submitted: result.submitted,
         skippedBySubmitGuard: result.skippedGenerating,
         skippedCompleted: includeCompleted ? 0 : skippedCompleted.length,
@@ -403,6 +529,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
 
   const lines = [
     `已提交 ${result.submitted} 个资产图生成任务，画幅固定 16:9。`,
+    scopeText ? `已按范围筛选：${scopeText}；匹配 ${scopedAssets.length} 个，进入本次范围 ${selectedAssets.length} 个。` : "",
     `模型：${project.imageModel}，质量：${project.imageQuality}，后台并发：1。`,
     validAssets.length ? `本次提交：${formatAssetNames(validAssets)}。` : "",
     !includeCompleted && skippedCompleted.length ? `已完成的 ${skippedCompleted.length} 个资产本次保留不重绘；需要全量重绘时说“重绘全部资产图”。` : "",
@@ -747,12 +874,22 @@ export function useNovelWorkflowTools(config: ToolConfig) {
       },
     }),
     batch_generate_project_asset_images: tool({
-      description: "直接提交当前项目资产库的角色/场景/道具参考图生成任务，后台异步生成，固定 16:9；用于用户明确要求资产出图、批量生图、生成参考图。",
-      inputSchema: toToolJsonSchema<{ includeCompleted?: boolean }>(z.object({
+      description: "直接提交当前项目资产库的角色/场景/道具参考图生成任务，后台异步生成，固定 16:9；用于用户明确要求资产出图、批量生图、生成参考图。必须严格遵守用户指定范围：例如“前4个场景图”必须传 assetType='scene' 且 limit=4；“只生成 Chloe”必须传 assetNames。",
+      inputSchema: toToolJsonSchema<{
+        includeCompleted?: boolean;
+        assetType?: GeneratableAssetType;
+        limit?: number;
+        assetIds?: number[];
+        assetNames?: string[];
+      }>(z.object({
         includeCompleted: z.boolean().optional().describe("是否连已完成图片的资产也重新提交；默认 false，只补缺图/失败图"),
+        assetType: generatableAssetTypeSchema.optional().describe("可选：只生成某类资产；用户说角色/场景/道具时必须填写"),
+        limit: z.number().int().positive().max(100).optional().describe("可选：最多提交多少个资产；用户说前 N 个/生成 N 张时必须填写"),
+        assetIds: z.array(z.number().int().positive()).optional().describe("可选：只生成指定资产 ID"),
+        assetNames: z.array(z.string().min(1)).optional().describe("可选：只生成指定资产名称，例如 Chloe"),
       })),
-      execute: async ({ includeCompleted }) => {
-        return runProjectAssetImageGenerationFastPath(config, { includeCompleted, finalizeMessage: false });
+      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames }) => {
+        return runProjectAssetImageGenerationFastPath(config, { includeCompleted, assetType, limit, assetIds, assetNames, finalizeMessage: false });
       },
     }),
     start_or_report_novel_event_analysis: tool({

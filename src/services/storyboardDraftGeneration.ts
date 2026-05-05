@@ -1,6 +1,6 @@
 import u from "@/utils";
 
-interface ProjectRow {
+export interface ProjectRow {
   id: number;
   name?: string | null;
   intro?: string | null;
@@ -10,7 +10,7 @@ interface ProjectRow {
   videoRatio?: string | null;
 }
 
-interface NovelRow {
+export interface NovelRow {
   id: number;
   chapterIndex?: number | null;
   chapter?: string | null;
@@ -19,7 +19,7 @@ interface NovelRow {
   eventState?: number | null;
 }
 
-interface ScriptRow {
+export interface ScriptRow {
   id: number;
   name?: string | null;
   content?: string | null;
@@ -27,7 +27,7 @@ interface ScriptRow {
   createTime?: number | null;
 }
 
-interface AssetRow {
+export interface AssetRow {
   id: number;
   name?: string | null;
   type?: string | null;
@@ -36,7 +36,7 @@ interface AssetRow {
   imageId?: number | null;
 }
 
-interface StoryboardDraftItem {
+export interface StoryboardDraftItem {
   index: number;
   duration: number;
   track: string;
@@ -71,6 +71,9 @@ export interface GenerateProjectStoryboardDraftResult {
   selectedChapterLabels: string[];
   storyboardTable: string;
   message: string;
+  usedSkillId?: string;
+  usedSkillName?: string;
+  fallbackReason?: string;
 }
 
 export interface ClearProjectStoryboardsOptions {
@@ -92,21 +95,21 @@ export interface ClearProjectStoryboardsResult {
 export const FLOVA_SCRIPT_NAME = "Flova 原文生产容器";
 const MAIN_TRACK_NAME = "主线分镜";
 
-function nonEmpty(value: unknown): string | undefined {
+export function nonEmpty(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function compactText(value: unknown, maxLength = 600) {
+export function compactText(value: unknown, maxLength = 600) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength - 1)}...`;
 }
 
-function cleanName(value: unknown) {
+export function cleanName(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function toUniquePositiveNumbers(values: unknown[]) {
+export function toUniquePositiveNumbers(values: unknown[]) {
   const result: number[] = [];
   for (const value of values) {
     const numberValue = Number(value);
@@ -248,7 +251,7 @@ function splitAssetAliases(asset: AssetRow) {
   return Array.from(new Set([normalizedName, ...parts].filter((alias) => alias.length >= 2)));
 }
 
-function parseEvent(event: string | null | undefined) {
+export function parseEvent(event: string | null | undefined) {
   const text = nonEmpty(event);
   if (!text) return { title: "", assetHint: "", summary: "" };
   const cells = text
@@ -311,13 +314,13 @@ function getProductionScriptName(novels: NovelRow[]) {
   return FLOVA_SCRIPT_NAME;
 }
 
-function formatChapterSelectionLabel(novel: NovelRow) {
+export function formatChapterSelectionLabel(novel: NovelRow) {
   const index = novel.chapterIndex ?? novel.id;
   const title = cleanName(novel.chapter);
   return title ? `${title}（项目内第${index}条）` : `项目内第${index}条`;
 }
 
-async function ensureProductionScript(project: ProjectRow, novels: NovelRow[], preferredScriptId?: number) {
+export async function ensureProductionScript(project: ProjectRow, novels: NovelRow[], preferredScriptId?: number) {
   const scriptRows = await u.db("o_script").where("projectId", project.id).select("id", "name", "content", "projectId", "createTime").orderBy("id", "asc");
   const scripts: ScriptRow[] = scriptRows.filter((script: { id?: number | null }): script is ScriptRow => typeof script.id === "number");
   const content = buildScriptContent(project, novels, scripts);
@@ -393,7 +396,7 @@ function buildSourceUnits(project: ProjectRow, novels: NovelRow[], scriptContent
   }));
 }
 
-function matchAssets(assets: AssetRow[], sourceText: string, maxCount = 7) {
+export function matchAssets(assets: AssetRow[], sourceText: string, maxCount = 7) {
   const normalizedSource = normalizeForMatch(sourceText);
   const matched = assets.filter((asset) => splitAssetAliases(asset).some((alias) => normalizedSource.includes(alias)));
   const byType = (type: string) => matched.filter((asset) => asset.type === type);
@@ -420,7 +423,7 @@ function matchAssets(assets: AssetRow[], sourceText: string, maxCount = 7) {
   return result.slice(0, maxCount);
 }
 
-function buildStoryboardPrompt(project: ProjectRow, videoDesc: string, assetNames: string[]) {
+export function buildStoryboardPrompt(project: ProjectRow, videoDesc: string, assetNames: string[]) {
   const style = [project.artStyle, project.directorManual, project.type].filter(Boolean).join(", ") || "cinematic animation";
   const ratio = project.videoRatio || "16:9";
   return [
@@ -471,7 +474,7 @@ function createDraftItems(project: ProjectRow, novels: NovelRow[], scriptContent
   return draft.slice(0, 30);
 }
 
-async function deleteStoryboards(scriptId: number, projectId: number) {
+export async function deleteStoryboards(scriptId: number, projectId: number) {
   const rows = await u.db("o_storyboard").where({ scriptId, projectId }).select("id", "trackId");
   const storyboardIds = rows.map((row: { id?: number | null }) => row.id).filter((id): id is number => typeof id === "number");
   if (!storyboardIds.length) return 0;
@@ -523,7 +526,7 @@ async function ensureTrack(projectId: number, scriptId: number, track: string, d
   return trackId;
 }
 
-async function insertDraftItems(projectId: number, scriptId: number, items: StoryboardDraftItem[], startIndex: number) {
+export async function insertDraftItems(projectId: number, scriptId: number, items: StoryboardDraftItem[], startIndex: number) {
   const trackDuration = items.reduce((sum, item) => sum + item.duration, 0);
   const trackId = await ensureTrack(projectId, scriptId, MAIN_TRACK_NAME, trackDuration);
   const storyboardIds: number[] = [];
@@ -561,7 +564,7 @@ async function insertDraftItems(projectId: number, scriptId: number, items: Stor
   return storyboardIds;
 }
 
-function buildStoryboardTable(items: StoryboardDraftItem[]) {
+export function buildStoryboardTable(items: StoryboardDraftItem[]) {
   const rows = ["| 镜号 | 时长 | 画面/动作 | 关联资产 |", "| --- | ---: | --- | --- |"];
   for (const item of items) {
     rows.push(`| ${item.index + 1} | ${item.duration}s | ${item.videoDesc.replace(/\|/g, "/")} | ${item.associateAssetsIds.join(", ") || "-"} |`);
@@ -569,7 +572,7 @@ function buildStoryboardTable(items: StoryboardDraftItem[]) {
   return rows.join("\n");
 }
 
-async function upsertProductionWorkData(projectId: number, scriptId: number, scriptContent: string, storyboardTable: string) {
+export async function upsertProductionWorkData(projectId: number, scriptId: number, scriptContent: string, storyboardTable: string) {
   const existing = await u.db("o_agentWorkData").where({ projectId, episodesId: scriptId, key: "productionAgent" }).first();
   let data: Record<string, any> = {};
   if (existing?.data) {
@@ -609,15 +612,15 @@ async function upsertProductionWorkData(projectId: number, scriptId: number, scr
   }
 }
 
-function shouldForce(sourceText?: string) {
+export function shouldForce(sourceText?: string) {
   return /重新|重做|覆盖|替换|清空|再生成|重建/i.test(sourceText ?? "");
 }
 
-function shouldAppend(sourceText?: string) {
+export function shouldAppend(sourceText?: string) {
   return /追加|补充|继续|接着/i.test(sourceText ?? "");
 }
 
-function selectStoryboardNovels(allNovels: NovelRow[], options: GenerateProjectStoryboardDraftOptions) {
+export function selectStoryboardNovels(allNovels: NovelRow[], options: GenerateProjectStoryboardDraftOptions) {
   if (!allNovels.length) return [];
 
   const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);

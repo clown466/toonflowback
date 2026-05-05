@@ -40,6 +40,7 @@ export interface WorkspacePlannerResolvedScope {
   onlyFailed?: boolean;
   chapterIndexes?: number[];
   chapterIds?: number[];
+  skillId?: string;
   chapterCandidates?: WorkspaceResolvedChapterCandidate[];
   missingInfo?: string[];
   confidence?: number;
@@ -68,6 +69,7 @@ export interface WorkspaceCommandScope {
   onlyFailed?: boolean;
   chapterIndexes?: number[];
   chapterIds?: number[];
+  skillId?: string;
   chapterCandidates?: WorkspaceResolvedChapterCandidate[];
   missingInfo?: Array<WorkspaceMissingInfo | string>;
   confidence?: number;
@@ -95,6 +97,7 @@ export interface WorkspaceCommandPlan {
     options: Record<string, unknown>;
   };
   sourceText: string;
+  userRequirement?: string;
   signals: string[];
 }
 
@@ -409,10 +412,12 @@ function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: Work
   const resolved = getResolvedScope(text, snapshot);
   const missingInfo = isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo;
   const chapters = resolveChapterCandidates(text, snapshot);
+  const skillId = text.match(/\bskillId\s*[:：=]\s*([a-zA-Z0-9_-]{1,80})\b/i)?.[1];
   const scopeBase: Omit<WorkspaceCommandScope, "summary"> = {
     kind: "chapter",
     chapterIndexes: chapters.chapterIndexes,
     chapterIds: chapters.chapterIds,
+    skillId,
     chapterCandidates: chapters.chapterCandidates,
     missingInfo,
     confidence: isWorkspaceResolvedScope(resolved) ? signal.confidence : resolved?.confidence ?? signal.confidence,
@@ -437,9 +442,12 @@ function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: Work
         preferredScriptId: snapshot?.currentScriptId,
         novelIds: chapters.chapterIds,
         chapterIndexes: chapters.chapterIndexes,
+        skillId,
+        userRequirement: text,
       },
     },
     sourceText: text,
+    userRequirement: text,
     signals: signal.signals,
   };
 }

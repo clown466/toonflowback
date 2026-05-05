@@ -3,7 +3,8 @@ import { z } from "zod";
 import ResTool from "@/socket/resTool";
 import u from "@/utils";
 import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
-import { clearProjectStoryboards, generateProjectStoryboardDraft } from "@/services/storyboardDraftGeneration";
+import { clearProjectStoryboards } from "@/services/storyboardDraftGeneration";
+import { generateProjectStoryboardWithSkill } from "@/services/storyboardSkillGeneration";
 import { toToolJsonSchema } from "@/utils/jsonSchema";
 
 export interface ToolConfig {
@@ -549,14 +550,16 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
 
 export async function runProjectStoryboardDraftFastPath(
   config: ToolConfig,
-  options?: { sourceText?: string; force?: boolean; append?: boolean; novelIds?: number[]; chapterIndexes?: number[] },
+  options?: { sourceText?: string; force?: boolean; append?: boolean; novelIds?: number[]; chapterIndexes?: number[]; skillId?: string; userRequirement?: string },
 ) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
   const thinking = msg.thinking("正在生成生产分镜草案...");
 
-  const result = await generateProjectStoryboardDraft(projectId, {
+  const result = await generateProjectStoryboardWithSkill(projectId, {
     sourceText: options?.sourceText,
+    userRequirement: options?.userRequirement,
+    skillId: options?.skillId,
     preferredScriptId: typeof resTool.data.scriptId === "number" ? resTool.data.scriptId : undefined,
     force: options?.force,
     append: options?.append,
@@ -577,6 +580,9 @@ export async function runProjectStoryboardDraftFastPath(
         appended: result.appended,
         selectedNovelIds: result.selectedNovelIds,
         selectedChapterIndexes: result.selectedChapterIndexes,
+        usedSkillId: result.usedSkillId,
+        usedSkillName: result.usedSkillName,
+        fallbackReason: result.fallbackReason,
         storyboardIds: result.storyboardIds,
       },
       null,
@@ -597,6 +603,8 @@ export async function runProjectStoryboardDraftFastPath(
 
   const lines = [
     result.message,
+    result.usedSkillName ? `分镜 Skill：${result.usedSkillName}。` : "",
+    result.fallbackReason ? `已回退旧模板生成器：${result.fallbackReason}。` : "",
     result.selectedChapterLabels.length ? `本次章节：${result.selectedChapterLabels.join("、")}。` : "",
     `已关联当前项目资产库，并写入 Flova 工作台/生产工作台可读取的数据。`,
     result.createdCount > 0 ? "现在可以在左侧分镜列表查看；需要分镜图片时点“生成全部”。" : "",

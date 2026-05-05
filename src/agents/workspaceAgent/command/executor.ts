@@ -18,6 +18,7 @@ export interface WorkspaceCommandScope extends AssetImageScope {
   append?: boolean;
   chapterIds?: number[];
   chapterIndexes?: number[];
+  skillId?: string;
 }
 
 export interface WorkspaceCommandPlan {
@@ -197,6 +198,8 @@ export async function executeWorkspaceCommandPlan(config: ToolConfig, plan: Work
         append: plan.scope?.append,
         novelIds: plan.scope?.chapterIds,
         chapterIndexes: plan.scope?.chapterIndexes,
+        skillId: plan.scope?.skillId,
+        userRequirement: plan.userRequirement ?? plan.sourceText,
       }),
     );
   }

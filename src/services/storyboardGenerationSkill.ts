@@ -62,12 +62,33 @@ function splitFrontMatter(content: string) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (!match) return { attrs: {} as Record<string, string>, body: content };
   const attrs: Record<string, string> = {};
-  for (const rawLine of match[1].split(/\r?\n/)) {
+  const lines = match[1].split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const rawLine = lines[i];
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
     const idx = line.indexOf(":");
     if (idx <= 0) continue;
-    attrs[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+
+    if (/^[>|][+-]?$/.test(value)) {
+      const blockLines: string[] = [];
+      for (i += 1; i < lines.length; i += 1) {
+        const next = lines[i];
+        if (next.trim() && !/^\s/.test(next) && next.includes(":")) {
+          i -= 1;
+          break;
+        }
+        blockLines.push(next.replace(/^\s{2}/, ""));
+      }
+      attrs[key] = value.startsWith("|")
+        ? blockLines.join("\n").trim()
+        : blockLines.map((item) => item.trim()).filter(Boolean).join(" ").trim();
+      continue;
+    }
+
+    attrs[key] = value;
   }
   return { attrs, body: content.slice(match[0].length) };
 }

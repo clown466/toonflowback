@@ -435,6 +435,8 @@ function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: Work
       options: {
         sourceText: text,
         preferredScriptId: snapshot?.currentScriptId,
+        novelIds: chapters.chapterIds,
+        chapterIndexes: chapters.chapterIndexes,
       },
     },
     sourceText: text,

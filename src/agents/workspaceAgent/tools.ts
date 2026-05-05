@@ -547,7 +547,10 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
   return { handled: true, message: lines.join("\n"), result };
 }
 
-export async function runProjectStoryboardDraftFastPath(config: ToolConfig, options?: { sourceText?: string; force?: boolean; append?: boolean }) {
+export async function runProjectStoryboardDraftFastPath(
+  config: ToolConfig,
+  options?: { sourceText?: string; force?: boolean; append?: boolean; novelIds?: number[]; chapterIndexes?: number[] },
+) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
   const thinking = msg.thinking("正在生成生产分镜草案...");
@@ -557,6 +560,8 @@ export async function runProjectStoryboardDraftFastPath(config: ToolConfig, opti
     preferredScriptId: typeof resTool.data.scriptId === "number" ? resTool.data.scriptId : undefined,
     force: options?.force,
     append: options?.append,
+    novelIds: options?.novelIds,
+    chapterIndexes: options?.chapterIndexes,
   });
 
   thinking.appendText(
@@ -592,7 +597,7 @@ export async function runProjectStoryboardDraftFastPath(config: ToolConfig, opti
 
   const lines = [
     result.message,
-    result.selectedChapterIndexes.length ? `本次章节：${result.selectedChapterIndexes.map((index) => `第${index}章`).join("、")}。` : "",
+    result.selectedChapterLabels.length ? `本次章节：${result.selectedChapterLabels.join("、")}。` : "",
     `已关联当前项目资产库，并写入 Flova 工作台/生产工作台可读取的数据。`,
     result.createdCount > 0 ? "现在可以在左侧分镜列表查看；需要分镜图片时点“生成全部”。" : "",
   ].filter(Boolean);

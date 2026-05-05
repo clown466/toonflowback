@@ -16,6 +16,8 @@ type AssetImageScope = Pick<ProjectAssetImageGenerationOptions, "assetType" | "l
 export interface WorkspaceCommandScope extends AssetImageScope {
   force?: boolean;
   append?: boolean;
+  chapterIds?: number[];
+  chapterIndexes?: number[];
 }
 
 export interface WorkspaceCommandPlan {
@@ -193,6 +195,8 @@ export async function executeWorkspaceCommandPlan(config: ToolConfig, plan: Work
         sourceText,
         force: plan.scope?.force,
         append: plan.scope?.append,
+        novelIds: plan.scope?.chapterIds,
+        chapterIndexes: plan.scope?.chapterIndexes,
       }),
     );
   }

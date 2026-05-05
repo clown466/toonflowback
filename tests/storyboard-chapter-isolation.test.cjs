@@ -164,6 +164,47 @@ async function main() {
   assert.strictEqual(await db('o_assets2Storyboard').count({ count: 'storyboardId' }).first().then((row) => Number(row.count)), 0);
   assert.strictEqual(await db('o_videoTrack').count({ count: 'id' }).first().then((row) => Number(row.count)), 0);
 
+  await db('o_project').insert({ id: 2, name: 'Imported Chapter Name Test', artStyle: 'anime', videoRatio: '16:9' });
+  await db('o_novel').insert([
+    {
+      id: 101,
+      projectId: 2,
+      chapterIndex: 1,
+      chapter: 'juben10',
+      chapterData: 'IMPORTED_JUBEN10_ONLY_TEXT detective studies the fruit market.',
+      event: '| juben10 | detective | IMPORTED_JUBEN10_EVENT_ONLY | strong | high | 45秒 | noir |',
+      eventState: 1,
+    },
+    {
+      id: 102,
+      projectId: 2,
+      chapterIndex: 2,
+      chapter: 'juben11',
+      chapterData: 'IMPORTED_JUBEN11_SHOULD_NOT_APPEAR rival enters the next chapter.',
+      event: '| juben11 | rival | IMPORTED_JUBEN11_EVENT_SHOULD_NOT_APPEAR | strong | high | 45秒 | noir |',
+      eventState: 1,
+    },
+  ]);
+
+  const importedResult = await service.generateProjectStoryboardDraft(2, {
+    sourceText: '推理出juben10的分镜',
+    force: true,
+  });
+
+  assert.deepStrictEqual(importedResult.selectedNovelIds, [101], 'juben10 should match the imported chapter name record');
+  assert.deepStrictEqual(importedResult.selectedChapterIndexes, [1], 'imported juben10 is project-internal row 1');
+  assert.deepStrictEqual(importedResult.selectedChapterLabels, ['juben10（项目内第1条）']);
+  assert.ok(importedResult.scriptName.includes('第1章 juben10'), 'script name should expose both internal index and original chapter name');
+
+  const importedScript = await db('o_script').where('id', importedResult.episodesId).first();
+  assert.ok(importedScript.content.includes('IMPORTED_JUBEN10_ONLY_TEXT'), 'script content should use imported juben10');
+  assert.ok(!importedScript.content.includes('IMPORTED_JUBEN11_SHOULD_NOT_APPEAR'), 'script content must not pull the next imported chapter');
+
+  const importedStoryboards = await db('o_storyboard').where('scriptId', importedResult.episodesId).orderBy('index');
+  const importedStoryboardText = importedStoryboards.map((row) => `${row.videoDesc}\n${row.prompt}`).join('\n');
+  assert.ok(importedStoryboardText.includes('IMPORTED_JUBEN10_EVENT_ONLY'), 'storyboards should use imported juben10 event');
+  assert.ok(!importedStoryboardText.includes('IMPORTED_JUBEN11_EVENT_SHOULD_NOT_APPEAR'), 'storyboards must not use imported juben11 event');
+
   await db.destroy();
   console.log('Storyboard chapter isolation checks passed');
 }

@@ -68,6 +68,7 @@ export interface GenerateProjectStoryboardDraftResult {
   appended: boolean;
   selectedNovelIds: number[];
   selectedChapterIndexes: number[];
+  selectedChapterLabels: string[];
   storyboardTable: string;
   message: string;
 }
@@ -197,6 +198,36 @@ export function parseStoryboardChapterIndexes(sourceText?: string) {
   return indexes;
 }
 
+function addParsedChapterNameToken(target: string[], value: string | undefined) {
+  const token = String(value ?? "").replace(/\s+/g, "").trim();
+  if (token && !target.some((item) => item.toLowerCase() === token.toLowerCase())) target.push(token);
+}
+
+function parseStoryboardChapterNameTokens(sourceText?: string) {
+  const text = sourceText ?? "";
+  const tokens: string[] = [];
+  const numberToken = String.raw`(\d{1,4})`;
+  const rangePattern = new RegExp(String.raw`\bjuben\s*${numberToken}\s*(?:-|~|—|到|至)\s*(?:juben\s*)?${numberToken}\b`, "gi");
+  for (const match of text.matchAll(rangePattern)) {
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    for (const index of expandRange(start, end)) addParsedChapterNameToken(tokens, `juben${index}`);
+  }
+
+  const jubenPattern = /\bjuben\s*(\d{1,4})\b/gi;
+  for (const match of text.matchAll(jubenPattern)) addParsedChapterNameToken(tokens, `juben${match[1]}`);
+
+  const namedPatterns = [
+    /(?:原始名|章节名|chapter)\s*[:：]?\s*["“']([^"”'\n，。；]+)["”']?/gi,
+    /(?:原始名|章节名)\s*[:：]?\s*([^\n，。；]+)/g,
+  ];
+  for (const pattern of namedPatterns) {
+    for (const match of text.matchAll(pattern)) addParsedChapterNameToken(tokens, match[1]);
+  }
+
+  return tokens;
+}
+
 function normalizeForMatch(value: unknown) {
   return String(value ?? "")
     .toLowerCase()
@@ -278,6 +309,12 @@ function getProductionScriptName(novels: NovelRow[]) {
     return `${FLOVA_SCRIPT_NAME} - ${label}`;
   }
   return FLOVA_SCRIPT_NAME;
+}
+
+function formatChapterSelectionLabel(novel: NovelRow) {
+  const index = novel.chapterIndex ?? novel.id;
+  const title = cleanName(novel.chapter);
+  return title ? `${title}（项目内第${index}条）` : `项目内第${index}条`;
 }
 
 async function ensureProductionScript(project: ProjectRow, novels: NovelRow[], preferredScriptId?: number) {
@@ -584,11 +621,24 @@ function selectStoryboardNovels(allNovels: NovelRow[], options: GenerateProjectS
   if (!allNovels.length) return [];
 
   const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);
+  const requestedChapterNameTokens = parseStoryboardChapterNameTokens(options.sourceText);
+  const normalizedChapterNameTokens = requestedChapterNameTokens.map((token) => normalizeForMatch(token)).filter(Boolean);
   const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(options.sourceText)]);
 
   let selected = allNovels;
   if (requestedNovelIds.length) {
     selected = allNovels.filter((novel) => requestedNovelIds.includes(novel.id));
+  } else if (normalizedChapterNameTokens.length) {
+    const exactMatches = allNovels.filter((novel) => {
+      const chapter = normalizeForMatch(novel.chapter);
+      return chapter && normalizedChapterNameTokens.includes(chapter);
+    });
+    selected = exactMatches.length
+      ? exactMatches
+      : allNovels.filter((novel) => {
+          const chapter = normalizeForMatch(novel.chapter);
+          return chapter && normalizedChapterNameTokens.some((token) => chapter.includes(token));
+        });
   } else if (requestedChapterIndexes.length) {
     selected = allNovels.filter((novel) => typeof novel.chapterIndex === "number" && requestedChapterIndexes.includes(novel.chapterIndex));
   } else {
@@ -698,9 +748,15 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
   ]);
   const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(options.sourceText)]);
   const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);
+  const requestedChapterNameTokens = parseStoryboardChapterNameTokens(options.sourceText);
   const novels = selectStoryboardNovels(allNovels, options);
-  if (allNovels.length && (requestedChapterIndexes.length || requestedNovelIds.length) && !novels.length) {
-    const requested = requestedChapterIndexes.length ? `章节 ${requestedChapterIndexes.join(", ")}` : `小说记录 ${requestedNovelIds.join(", ")}`;
+  if (allNovels.length && (requestedChapterIndexes.length || requestedNovelIds.length || requestedChapterNameTokens.length) && !novels.length) {
+    const requestedParts = [
+      requestedChapterNameTokens.length ? `原始章节名 ${requestedChapterNameTokens.join(", ")}` : "",
+      requestedChapterIndexes.length ? `内部章节 ${requestedChapterIndexes.join(", ")}` : "",
+      requestedNovelIds.length ? `小说记录 ${requestedNovelIds.join(", ")}` : "",
+    ].filter(Boolean);
+    const requested = requestedParts.join(" 或 ");
     throw new Error(`没有匹配到${requested}，已停止生成，避免把其他章节误写入分镜。`);
   }
 
@@ -726,6 +782,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
       appended: false,
       selectedNovelIds: novels.map((novel) => novel.id),
       selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
+      selectedChapterLabels: novels.map(formatChapterSelectionLabel),
       storyboardTable,
       message: `当前生产容器「${script.name ?? FLOVA_SCRIPT_NAME}」已有 ${existingCount} 个分镜，已切换到该章节剧集。需要覆盖重做时请说“重新生成分镜”。`,
     };
@@ -757,6 +814,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
     appended: append && existingCount > 0,
     selectedNovelIds: novels.map((novel) => novel.id),
     selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
+    selectedChapterLabels: novels.map(formatChapterSelectionLabel),
     storyboardTable,
     message: `${verb} ${storyboardIds.length} 个分镜，生产剧集为「${script.name ?? FLOVA_SCRIPT_NAME}」。已按单章节隔离处理，未把后续章节并入上下文。`,
   };

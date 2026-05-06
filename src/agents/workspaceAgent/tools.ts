@@ -764,6 +764,54 @@ export default function useTools(config: ToolConfig) {
         return result ?? "无数据";
       },
     }),
+    generate_project_storyboard_draft: tool({
+      description: "按小说章节/事件分析生成章节分镜表并写回 Flova 工作台。用户要求做分镜、重推分镜、重新推理分镜时使用；force=true 会先覆盖旧分镜再重建。",
+      inputSchema: toToolJsonSchema<{
+        sourceText?: string;
+        force?: boolean;
+        append?: boolean;
+        novelIds?: number[];
+        chapterIndexes?: number[];
+        skillId?: string;
+        userRequirement?: string;
+      }>(z.object({
+        sourceText: z.string().optional().describe("用户原始要求；用于解析章节名、juben10 等范围"),
+        force: z.boolean().optional().describe("是否覆盖旧分镜；用户说删除后重推、清空并重新推理、重新生成时必须为 true"),
+        append: z.boolean().optional().describe("是否追加分镜；默认 false"),
+        novelIds: z.array(z.number()).optional().describe("可选：只处理指定小说章节 ID"),
+        chapterIndexes: z.array(z.number()).optional().describe("可选：只处理指定项目内章节序号"),
+        skillId: z.string().optional().describe("可选：使用指定分镜 Skill"),
+        userRequirement: z.string().optional().describe("用户额外分镜要求"),
+      })),
+      execute: async (options) => runProjectStoryboardDraftFastPath(config, options),
+    }),
+    clear_project_storyboards: tool({
+      description: "清空当前项目或当前章节分镜工作区中的已有分镜。只在用户明确要求清空/删除分镜且不要求立刻重推时使用。",
+      inputSchema: toToolJsonSchema<{ sourceText?: string; chapterIndexes?: number[] }>(z.object({
+        sourceText: z.string().optional().describe("用户原始要求；用于匹配 juben10/章节名/第 N 条"),
+        chapterIndexes: z.array(z.number()).optional().describe("可选：只清空指定项目内章节序号"),
+      })),
+      execute: async ({ sourceText, chapterIndexes }) => runProjectStoryboardClearFastPath(config, {
+        sourceText: [sourceText, chapterIndexes?.length ? `第${chapterIndexes.join("、")}章` : ""].filter(Boolean).join(" "),
+      }),
+    }),
+    regenerate_project_storyboards: tool({
+      description: "一键执行“删除/覆盖旧分镜并重新推理写回”。用户说“确认删除并重新推理”“清空并重推”“覆盖重做分镜”时优先使用这个工具。",
+      inputSchema: toToolJsonSchema<{
+        sourceText?: string;
+        novelIds?: number[];
+        chapterIndexes?: number[];
+        skillId?: string;
+        userRequirement?: string;
+      }>(z.object({
+        sourceText: z.string().optional().describe("用户原始要求；用于匹配章节名、juben10 等范围"),
+        novelIds: z.array(z.number()).optional().describe("可选：只处理指定小说章节 ID"),
+        chapterIndexes: z.array(z.number()).optional().describe("可选：只处理指定项目内章节序号"),
+        skillId: z.string().optional().describe("可选：使用指定分镜 Skill"),
+        userRequirement: z.string().optional().describe("用户额外分镜要求"),
+      })),
+      execute: async (options) => runProjectStoryboardDraftFastPath(config, { ...options, force: true }),
+    }),
   };
 
   return toolsNames ? Object.fromEntries(Object.entries(tools).filter(([name]) => toolsNames.includes(name))) : tools;

@@ -105,7 +105,7 @@ function buildPreflightSummary(plan: WorkspaceCommandPlan): WorkspaceCommandPref
   }
 
   if (plan.intent === "storyboard_generation") {
-    const appendText = plan.scope?.append ? "追加写入" : "必要时替换/复用章节分镜工作区";
+    const appendText = plan.scope?.append ? "追加写入" : plan.scope?.force ? "清空旧分镜并重新写入" : "必要时替换/复用章节分镜工作区";
     const forceText = plan.scope?.force ? "强制重新生成" : "不强制重建已存在分镜";
     return {
       intent: plan.intent,

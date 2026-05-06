@@ -12,6 +12,11 @@ import type { WorkspaceCommandPlan } from "@/agents/workspaceAgent/command/plann
 type WorkspaceCommandIntent = "storyboard_clear" | "storyboard_generation" | "asset_image_generation" | "asset_extraction";
 
 export function getWorkspaceCommandCandidateIntent(content: string): WorkspaceCommandIntent | null {
+  const shouldFastRegenerateStoryboards =
+    /(确认|确定|执行|开始)?.{0,8}(删除|删掉|清空|清除|覆盖|重置).{0,12}(重新推理|重推|重新生成|重做|重建)/i.test(content) ||
+    /(重新推理|重推).{0,12}(分镜|镜头|storyboard)/i.test(content);
+  if (shouldFastRegenerateStoryboards) return "storyboard_generation";
+
   const shouldFastClearStoryboards =
     /(清空|清除|删除|删掉|移除|重置).{0,12}(分镜|镜头|storyboard)|(分镜|镜头|storyboard).{0,12}(清空|清除|删除|删掉|移除|重置)/i.test(content);
   if (shouldFastClearStoryboards) return "storyboard_clear";
@@ -85,10 +90,11 @@ export default (nsp: Namespace) => {
       thinlLevel: 0,
     };
 
-    socket.on("updateContext", (data: { isolationKey: string; projectId: number }, callback) => {
+    socket.on("updateContext", (data: { isolationKey: string; projectId: number; scriptId?: number | null }, callback) => {
       isolationKey = data.isolationKey;
       resTool = new ResTool(socket, {
         projectId: data.projectId,
+        scriptId: data.scriptId ?? undefined,
       });
       console.log("[workspaceAgent] 上下文已更新:", isolationKey);
       callback?.({ success: true });

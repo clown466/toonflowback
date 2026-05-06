@@ -38,6 +38,8 @@ export interface WorkspacePlannerResolvedScope {
   assetNames?: string[];
   includeCompleted?: boolean;
   onlyFailed?: boolean;
+  force?: boolean;
+  append?: boolean;
   chapterIndexes?: number[];
   chapterIds?: number[];
   skillId?: string;
@@ -67,6 +69,8 @@ export interface WorkspaceCommandScope {
   assetNames?: string[];
   includeCompleted?: boolean;
   onlyFailed?: boolean;
+  force?: boolean;
+  append?: boolean;
   chapterIndexes?: number[];
   chapterIds?: number[];
   skillId?: string;
@@ -159,6 +163,17 @@ function hasAny(text: string, patterns: RegExp[]) {
 }
 
 function detectIntent(text: string): IntentSignal | null {
+  const storyboardRegeneration =
+    /(确认|确定|执行|开始)?.{0,8}(删除|删掉|清空|清除|覆盖|重置).{0,12}(重新推理|重推|重新生成|重做|重建)/i.test(text) ||
+    /(重新推理|重推).{0,12}(分镜|镜头|storyboard)/i.test(text);
+  if (storyboardRegeneration) {
+    return {
+      intent: "storyboard_generation",
+      confidence: 0.92,
+      signals: ["legacy_regex:storyboard_regeneration"],
+    };
+  }
+
   const storyboardClear =
     /(清空|清除|删除|删掉|移除|重置).{0,12}(分镜|镜头|storyboard)|(分镜|镜头|storyboard).{0,12}(清空|清除|删除|删掉|移除|重置)/i.test(text);
   if (storyboardClear) {
@@ -413,11 +428,13 @@ function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: Work
   const missingInfo = isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo;
   const chapters = resolveChapterCandidates(text, snapshot);
   const skillId = text.match(/\bskillId\s*[:：=]\s*([a-zA-Z0-9_-]{1,80})\b/i)?.[1];
+  const force = /(重新|重做|覆盖|替换|清空|清除|删除|删掉|重置|再生成|重建|重新推理|重推)/i.test(text);
   const scopeBase: Omit<WorkspaceCommandScope, "summary"> = {
     kind: "chapter",
     chapterIndexes: chapters.chapterIndexes,
     chapterIds: chapters.chapterIds,
     skillId,
+    force,
     chapterCandidates: chapters.chapterCandidates,
     missingInfo,
     confidence: isWorkspaceResolvedScope(resolved) ? signal.confidence : resolved?.confidence ?? signal.confidence,
@@ -440,6 +457,7 @@ function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: Work
       options: {
         sourceText: text,
         preferredScriptId: snapshot?.currentScriptId,
+        force,
         novelIds: chapters.chapterIds,
         chapterIndexes: chapters.chapterIndexes,
         skillId,

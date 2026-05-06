@@ -28,10 +28,11 @@ async function cleanup() {
   await cleanup();
 
   const initialList = await listStoryboardGenerationSkills();
-  assert.ok(initialList.some((skill) => skill.path.startsWith("production_execution_storyboard")), "lists root storyboard skills");
-  assert.ok(initialList.some((skill) => skill.path.startsWith("production_skills/") && skill.path.includes("storyboard")), "lists production storyboard skills");
-  assert.ok(initialList.some((skill) => skill.path.startsWith("art_skills/") && skill.path.includes("/driector_skills/director_storyboard")), "lists art director storyboard skills");
-  assert.ok(initialList.some((skill) => skill.path.startsWith("story_skills/") && skill.path.includes("/driector_skills/director_storyboard")), "lists story director storyboard skills");
+  assert.ok(initialList.some((skill) => skill.path === "production_skills/storyboard_table_techniques.md"), "lists general storyboard table methods");
+  assert.ok(initialList.some((skill) => skill.path.startsWith("story_skills/") && skill.path.endsWith("/driector_skills/director_storyboard_table_narrative.md")), "lists story narrative storyboard methods");
+  assert.ok(!initialList.some((skill) => skill.path.startsWith("art_skills/")), "does not list art style storyboard skills");
+  assert.ok(!initialList.some((skill) => skill.path.includes("storyboard_prompt_techniques")), "does not list image prompt techniques");
+  assert.ok(!initialList.some((skill) => skill.path.startsWith("production_execution_storyboard")), "does not list internal execution agent skills");
   assert.ok(initialList.every((skill) => skill.content === undefined), "list returns metadata only");
 
   const content = `---

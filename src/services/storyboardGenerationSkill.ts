@@ -167,15 +167,10 @@ async function collectFiles(dir: string, predicate: (filePath: string) => boolea
 async function builtinSkillFiles() {
   const root = skillsRoot();
   const groups = await Promise.all([
-    collectFiles(root, (filePath) => path.dirname(filePath) === root && /^production_execution_storyboard.*\.md$/i.test(path.basename(filePath))),
-    collectFiles(path.join(root, "production_skills"), (filePath) => /storyboard.*\.md$/i.test(path.basename(filePath))),
-    collectFiles(path.join(root, "art_skills"), (filePath) => {
-      const relativePath = relativeSkillPath(filePath);
-      return /\/driector_skills\/director_storyboard.*\.md$/i.test(relativePath);
-    }),
+    collectFiles(path.join(root, "production_skills"), (filePath) => /^storyboard_table_techniques\.md$/i.test(path.basename(filePath))),
     collectFiles(path.join(root, "story_skills"), (filePath) => {
       const relativePath = relativeSkillPath(filePath);
-      return /\/driector_skills\/director_storyboard.*\.md$/i.test(relativePath);
+      return /\/driector_skills\/director_storyboard_table_narrative\.md$/i.test(relativePath);
     }),
   ]);
   return Array.from(new Set(groups.flat())).sort((a, b) => relativeSkillPath(a).localeCompare(relativeSkillPath(b)));

@@ -28,6 +28,7 @@ async function cleanup() {
   await cleanup();
 
   const initialList = await listStoryboardGenerationSkills();
+  assert.equal(initialList[0]?.path, "production_skills/storyboard_generation_method.md", "default storyboard method should be listed first");
   assert.ok(initialList.some((skill) => skill.path === "production_skills/storyboard_table_techniques.md"), "lists general storyboard table methods");
   assert.ok(initialList.some((skill) => skill.path.startsWith("story_skills/") && skill.path.endsWith("/driector_skills/director_storyboard_table_narrative.md")), "lists story narrative storyboard methods");
   assert.ok(!initialList.some((skill) => skill.path.startsWith("art_skills/")), "does not list art style storyboard skills");

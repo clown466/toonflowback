@@ -68,15 +68,24 @@ export interface GenerateProjectStoryboardWithSkillOptions extends GenerateProje
 
 const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
   id: "default_storyboard_text_generation",
-  name: "默认结构化分镜生成",
-  description: "基于选中章节和项目资产生成结构化分镜 JSON",
+  name: "Flova 结构化分镜生成方法",
+  description: "从章节事件推理分镜表，再逐行生成可生产镜头",
   content: [
-    "你是动画短剧分镜导演。请只基于给定的选中章节、项目设定、视觉手册/导演手册和资产库生成分镜。",
-    "不要引入未提供的后续章节正文或未来情节。",
-    "每个镜头必须能直接写入生产分镜，videoDesc 写画面动作，imagePrompt 写关键帧图像提示词。",
-    "associateAssetNames 只能填写资产库中已存在的名称。",
+    "# Flova 结构化分镜生成方法",
+    "你是动画短剧分镜导演。你的任务不是写知识总结，而是从选中章节推理出可生产的分镜表。",
+    "",
+    "固定流程：",
+    "1. 只读取 selectedChapters 中的 event 和 chapterData，禁止引用未选章节。",
+    "2. 先抽取事件节拍：地点、角色、动作目标、冲突/信息点、情绪变化、关键道具。",
+    "3. 按事件复杂度决定镜头数量：未指定数量时不要默认 3 个；标准章节通常 6-12 个。",
+    "4. 先生成 storyboardTable，字段为：镜号、叙事功能、时长、景别、运镜、场景、画面/动作、情绪、光影、台词/声音、关联资产。",
+    "5. 再把分镜表逐行转换为 shots，shots.length 必须等于 storyboardTable 数据行数。",
+    "",
+    "每条 shot 必须能直接写入生产分镜：videoDesc 写完整视频描述，imagePrompt 写关键帧图像提示词，associateAssetNames 只能填写资产库中已存在的名称。",
   ].join("\n"),
 };
+
+const BASE_STORYBOARD_METHOD_PROMPT = DEFAULT_STORYBOARD_SKILL.content;
 
 function fallback(projectId: number, options: GenerateProjectStoryboardWithSkillOptions, reason: string) {
   return generateProjectStoryboardDraft(projectId, options).then((result) => ({
@@ -92,11 +101,14 @@ async function resolveStoryboardSkill(skillId?: string, requestText?: string): P
       return await service.getStoryboardGenerationSkill(skillId);
     }
     if (typeof service.resolveStoryboardGenerationSkill === "function") {
-      return await service.resolveStoryboardGenerationSkill({ skillId, requestText });
+      const resolved = await service.resolveStoryboardGenerationSkill({ skillId, requestText });
+      if (resolved) return resolved;
     }
     if (typeof service.listStoryboardGenerationSkills === "function") {
       const skills = await service.listStoryboardGenerationSkills();
-      const selected = skillId ? skills.find((skill: any) => skill.id === skillId) : skills[0];
+      const selected = skillId
+        ? skills.find((skill: any) => skill.id === skillId)
+        : skills.find((skill: any) => skill.path === "production_skills/storyboard_generation_method.md" || skill.id === "production_skills__storyboard_generation_method") ?? skills[0];
       if (selected?.id && typeof service.getStoryboardGenerationSkill === "function") return await service.getStoryboardGenerationSkill(selected.id);
       if (selected?.content) return selected;
     }
@@ -309,6 +321,9 @@ function shouldRetryForShotCount(parsed: SkillStoryboardJson, planning?: Storybo
 async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: Record<string, any>, retryReason?: string) {
   const planning = context.storyboardPlanning as StoryboardPlanningHint | undefined;
   const prompt = [
+    BASE_STORYBOARD_METHOD_PROMPT,
+    "",
+    "选中的分镜方法 / 附加约束：",
     skill.content,
     "",
     "核心流程：",

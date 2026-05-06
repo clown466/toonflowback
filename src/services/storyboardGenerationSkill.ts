@@ -167,13 +167,22 @@ async function collectFiles(dir: string, predicate: (filePath: string) => boolea
 async function builtinSkillFiles() {
   const root = skillsRoot();
   const groups = await Promise.all([
-    collectFiles(path.join(root, "production_skills"), (filePath) => /^storyboard_table_techniques\.md$/i.test(path.basename(filePath))),
+    collectFiles(path.join(root, "production_skills"), (filePath) => /^storyboard_(?:generation_method|table_techniques)\.md$/i.test(path.basename(filePath))),
     collectFiles(path.join(root, "story_skills"), (filePath) => {
       const relativePath = relativeSkillPath(filePath);
       return /\/driector_skills\/director_storyboard_table_narrative\.md$/i.test(relativePath);
     }),
   ]);
-  return Array.from(new Set(groups.flat())).sort((a, b) => relativeSkillPath(a).localeCompare(relativeSkillPath(b)));
+  return Array.from(new Set(groups.flat())).sort((a, b) => {
+    const left = relativeSkillPath(a);
+    const right = relativeSkillPath(b);
+    const priority = (value: string) => {
+      if (value === "production_skills/storyboard_generation_method.md") return 0;
+      if (value === "production_skills/storyboard_table_techniques.md") return 1;
+      return 2;
+    };
+    return priority(left) - priority(right) || left.localeCompare(right);
+  });
 }
 
 async function userSkillFiles() {

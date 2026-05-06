@@ -101,7 +101,8 @@ function parseJsonArray(value: unknown): number[] {
 }
 
 function isRoleAsset(asset: AssetRow) {
-  return clean(asset.type).toLowerCase() === "role";
+  const type = clean(asset.type).toLowerCase();
+  return type === "role" || type === "character" || type === "角色";
 }
 
 export function buildChapterDirectorBoardPrompt(input: {
@@ -136,6 +137,13 @@ export function buildChapterDirectorBoardPrompt(input: {
       `description=${compact(asset.prompt || asset.describe, 360)}`,
     ].join(" | ");
   });
+  const roleLines = assets.filter(isRoleAsset).map((asset, index) => {
+    return [
+      `C${index + 1}`,
+      `name=${asset.name || "unnamed role"}`,
+      `symbol source=${compact(asset.prompt || asset.describe || (asset.filePath ? "attached role reference image; extract only symbolic identity markers" : ""), 520)}`,
+    ].join(" | ");
+  });
 
   return [
     "Create one professional cinematic chapter director board as a single wide 16:9 production planning sheet.",
@@ -147,17 +155,25 @@ export function buildChapterDirectorBoardPrompt(input: {
     "",
     "Required layout:",
     "1. Top black header bar: project title, chapter/workspace name, board number, covered shots, total estimated time, video aspect ratio, visual style keywords.",
-    "2. Left column: scene reference panel and character symbol legend. The character legend must use simple pencil icons, color dots, names, and C1/C2/C3 labels, not finished character portraits.",
-    "3. Center top: overhead blocking map, showing scene layout, character positions, camera positions, movement arrows, eye lines, and light direction.",
-    "4. Center bottom: sequential storyboard strip with 4-6 panels. Each panel must include shot number, time range, shot size, camera movement, and the core action.",
-    "5. Right column: simplified action-flow sketches from shot to shot, focusing on body position, direction, distance, and continuity.",
+    "2. Left column: colored scene reference panel and character symbol legend. The legend must use simple symbolic icons, strong color dots, readable names, and C1/C2/C3 labels, not finished character portraits.",
+    "3. Center top: colored overhead blocking map, showing scene layout, character positions, camera positions, movement arrows, eye lines, and light direction.",
+    "4. Center bottom: sequential storyboard strip with 4-6 colored panels. Each panel must include shot number, time range, shot size, camera movement, and the core action.",
+    "5. Right column: simplified colored action-flow sketches from shot to shot, focusing on body position, direction, distance, and continuity.",
     "6. Bottom strip: lighting, props, materials, color palette, and continuity notes.",
     "",
     "Visual style:",
-    "clean production storyboard sheet, thin black grid lines, white paper background, readable small labels, rough pencil storyboard sketches, practical director annotations, no UI, no watermark.",
-    "Characters in the blocking map, storyboard strip, and action-flow sketches must be simple pencil line figures or symbolic silhouettes only.",
+    "clean production storyboard sheet, thin black grid lines, light paper background, readable small labels, colored planning sketches, practical director annotations, no UI, no watermark.",
+    "Do not make a grayscale or mostly black-and-white board. The scene reference, blocking map, storyboard panels, action-flow panels, lighting notes, props, and palette must use clear color washes that match the story setting.",
+    "Characters in the blocking map, storyboard strip, and action-flow sketches must be simple colored line figures, symbolic silhouettes, or rough pencil figures with strong color identifiers only.",
     "Do not render polished faces, detailed costumes, skin/material textures, or final character art inside the storyboard/action panels.",
-    "Environment, props, camera arrows, and spatial notes may be more detailed; character bodies should remain schematic and low-identity.",
+    "Environment, props, camera arrows, lighting, and spatial notes may be more detailed and visibly colored; character bodies should remain schematic but must not become indistinguishable.",
+    "",
+    "Character readability rules:",
+    "Every character appearance in the blocking map, storyboard strip, and action-flow column must be labeled directly beside the figure with its C-number and name, for example C1 Chloe.",
+    "Use one stable high-contrast color marker per character across the whole board. Repeat that color on the legend, map marker, storyboard figure outline, and action-flow figure.",
+    "Give each character a distinct symbolic silhouette based on the role description: fruit/species hint, body scale, key prop, armor/clothing shorthand, weapon/tool icon, or hairstyle/hat symbol when relevant.",
+    "A character may be drawn schematically, but the viewer must be able to identify the character without reading long notes. Do not draw all characters as the same round body.",
+    "If a role reference image is provided, use it only to extract symbolic identifiers such as fruit type, color family, major outfit, weapon, and body scale. Do not copy the finished face or final rendering style.",
     "",
     "Consistency rules:",
     "Final character identity belongs to the separate role asset reference images used later in video generation, not to this director board.",
@@ -175,6 +191,9 @@ export function buildChapterDirectorBoardPrompt(input: {
     `project type: ${project.type || "short drama"}`,
     `visual style: ${compact([project.artStyle, project.directorManual].filter(Boolean).join("; "), 900) || "cinematic animation"}`,
     "",
+    "Character identity legend to follow:",
+    roleLines.length ? roleLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
+    "",
     "Reference assets:",
     assetLines.length ? assetLines.join("\n") : "No reference asset image is available. Use the storyboard descriptions only.",
     "",
@@ -184,7 +203,7 @@ export function buildChapterDirectorBoardPrompt(input: {
 }
 
 async function getAssetReferenceImages(assets: AssetRow[], maxCount = 12) {
-  const usableAssets = assets.filter((asset) => asset.filePath && !isRoleAsset(asset)).slice(0, maxCount);
+  const usableAssets = assets.filter((asset) => asset.filePath).slice(0, maxCount);
   const references = [];
   for (const asset of usableAssets) {
     try {

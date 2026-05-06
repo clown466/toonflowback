@@ -89,6 +89,17 @@ function safeJson(value: unknown) {
   }
 }
 
+function parseJsonArray(value: unknown): number[] {
+  if (Array.isArray(value)) return value.map(Number).filter((item) => Number.isFinite(item));
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(Number).filter((item) => Number.isFinite(item));
+  } catch {
+    return [];
+  }
+}
+
 function isRoleAsset(asset: AssetRow) {
   return clean(asset.type).toLowerCase() === "role";
 }
@@ -292,6 +303,55 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
   }
 
   return created;
+}
+
+export async function regenerateDirectorBoard(projectId: number, scriptId: number, boardId: number) {
+  const row = (await u.db("o_directorBoard").where({ id: boardId, projectId, scriptId }).first()) as DirectorBoardRow | undefined;
+  if (!row?.id) throw new Error("章节导演板不存在，无法重绘。");
+
+  const project = (await u.db("o_project").where("id", projectId).first()) as ProjectRow | undefined;
+  if (!project?.id) throw new Error("项目不存在，无法重绘章节导演板。");
+  const script = (await u.db("o_script").where({ id: scriptId, projectId }).first()) as ScriptRow | undefined;
+  if (!script?.id) throw new Error("章节工作区不存在，无法重绘章节导演板。");
+
+  const storyboardIds = parseJsonArray(row.storyboardIds);
+  if (!storyboardIds.length) throw new Error("该章节导演板缺少覆盖分镜信息，无法只重绘这一张。");
+
+  const storyboards = (await u
+    .db("o_storyboard")
+    .where({ projectId, scriptId })
+    .whereIn("id", storyboardIds)
+    .orderBy("index", "asc")
+    .select("id", "index", "prompt", "videoDesc", "duration", "filePath", "trackId")) as StoryboardRow[];
+  if (!storyboards.length) throw new Error("该章节导演板对应的分镜不存在，无法重绘。");
+
+  const totalBoardsRow = (await u.db("o_directorBoard").where({ projectId, scriptId }).count({ count: "id" }).first()) as { count?: number | string } | undefined;
+  const totalBoards = Math.max(1, Number(totalBoardsRow?.count || 1));
+  const boardIndex = Number.isFinite(Number(row.index)) ? Number(row.index) : 0;
+  const assets = await getStoryboardAssets(storyboards.map((item) => item.id));
+  const prompt = buildChapterDirectorBoardPrompt({
+    project,
+    script,
+    boardIndex,
+    totalBoards,
+    storyboards,
+    assets,
+  });
+  const model = clean(row.model || project.imageModel);
+  if (!model) throw new Error("项目未配置出图模型，无法重绘章节导演板。");
+
+  await u.db("o_directorBoard").where("id", boardId).update({
+    prompt,
+    filePath: null,
+    state: "生成中",
+    reason: "",
+    model,
+    assetIds: safeJson(assets.map((item) => item.id)),
+    updateTime: Date.now(),
+  });
+
+  void runDirectorBoardImageTask(boardId, { project, script, storyboards, assets, prompt, model });
+  return (await u.db("o_directorBoard").where("id", boardId).first()) as DirectorBoardRow;
 }
 
 export async function listDirectorBoards(projectId: number, scriptId: number) {

@@ -36,6 +36,8 @@ interface AssetRow {
   describe?: string | null;
   prompt?: string | null;
   filePath?: string | null;
+  roleFacts?: string | null;
+  negativeRoleFacts?: string | null;
 }
 
 interface DirectorBoardRow {
@@ -51,6 +53,13 @@ interface DirectorBoardRow {
   storyboardIds?: string | null;
   assetIds?: string | null;
   index?: number | null;
+}
+
+interface RoleFactCardRow {
+  assetId?: number | null;
+  roleName?: string | null;
+  facts?: string | null;
+  negativeFacts?: string | null;
 }
 
 export interface QueueDirectorBoardOptions {
@@ -105,6 +114,15 @@ function isRoleAsset(asset: AssetRow) {
   return type === "role" || type === "character" || type === "角色";
 }
 
+function isSceneAsset(asset: AssetRow) {
+  const type = clean(asset.type).toLowerCase();
+  return type === "scene" || type === "场景";
+}
+
+function nameKey(value: unknown) {
+  return clean(value).toLowerCase();
+}
+
 export function buildChapterDirectorBoardPrompt(input: {
   project: ProjectRow;
   script: ScriptRow;
@@ -141,7 +159,16 @@ export function buildChapterDirectorBoardPrompt(input: {
     return [
       `C${index + 1}`,
       `name=${asset.name || "unnamed role"}`,
-      `symbol source=${compact(asset.prompt || asset.describe || (asset.filePath ? "attached role reference image; extract only symbolic identity markers" : ""), 520)}`,
+      `authoritative facts=${compact(asset.roleFacts || asset.prompt || asset.describe || (asset.filePath ? "attached role reference image; extract only visible symbolic identity markers" : ""), 760)}`,
+      asset.negativeRoleFacts ? `negative facts=${compact(asset.negativeRoleFacts, 520)}` : "",
+    ].join(" | ");
+  });
+  const sceneLines = assets.filter(isSceneAsset).map((asset, index) => {
+    return [
+      `Scene ${index + 1}`,
+      `name=${asset.name || "unnamed scene"}`,
+      `reference=${asset.filePath ? "attached scene reference image is available" : "no image reference"}`,
+      `description=${compact(asset.prompt || asset.describe, 620)}`,
     ].join(" | ");
   });
 
@@ -177,9 +204,13 @@ export function buildChapterDirectorBoardPrompt(input: {
     "",
     "Consistency rules:",
     "Final character identity belongs to the separate role asset reference images used later in video generation, not to this director board.",
+    "Role fact cards are the highest authority for character species, fruit type, body color, fixed clothing, props, weapons, body scale, and forbidden misreadings.",
     "Represent each character by name label, C-number, color marker, fruit/species hint if relevant, body direction, pose, action, and emotion state.",
+    "Never replace a role's known fruit type or color with a nearby guess: do not turn lemon into lime, peach into strawberry, orange into peach, or any named character into a generic fruit.",
+    "If no role fact card exists but a role reference image is attached, inspect that reference image for the visible fruit species, dominant body color, major outfit, prop/weapon, and silhouette. Use those visible identifiers; do not guess a different fruit species from context.",
     "Do not invent or lock a new face, outfit, body material, or final character design on this board.",
     "Keep props and scene architecture consistent with the provided non-role reference images and asset descriptions.",
+    "Scene reference images are authoritative for environment architecture, color mood, lighting direction, entrances, tables, walls, props, and spatial feel. The overhead map and scene panel must adapt the referenced scene, not a generic location.",
     "Do not turn the board into a comic page. It must look like a practical director board for AI video production.",
     "Labels must be concise and readable. Avoid long paragraphs inside the image.",
     "",
@@ -193,6 +224,9 @@ export function buildChapterDirectorBoardPrompt(input: {
     "",
     "Character identity legend to follow:",
     roleLines.length ? roleLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
+    "",
+    "Scene references to follow:",
+    sceneLines.length ? sceneLines.join("\n") : "No scene asset is linked. Build a scene only from the storyboard descriptions.",
     "",
     "Reference assets:",
     assetLines.length ? assetLines.join("\n") : "No reference asset image is available. Use the storyboard descriptions only.",
@@ -215,7 +249,43 @@ async function getAssetReferenceImages(assets: AssetRow[], maxCount = 12) {
   return references;
 }
 
-async function getStoryboardAssets(storyboardIds: number[]) {
+async function attachRoleFactCards(projectId: number, assets: AssetRow[]) {
+  const roleAssets = assets.filter(isRoleAsset);
+  if (!roleAssets.length) return assets;
+  const assetIds = roleAssets.map((asset) => Number(asset.id)).filter((id) => Number.isFinite(id));
+  const roleNames = roleAssets.map((asset) => clean(asset.name)).filter(Boolean);
+  if (!assetIds.length && !roleNames.length) return assets;
+
+  const query = u.db("o_roleFactCards").where("projectId", projectId);
+  query.andWhere((builder: any) => {
+    if (assetIds.length) builder.whereIn("assetId", assetIds);
+    if (roleNames.length) {
+      if (assetIds.length) builder.orWhereIn("roleName", roleNames);
+      else builder.whereIn("roleName", roleNames);
+    }
+  });
+  const cards = (await query.select("assetId", "roleName", "facts", "negativeFacts")) as RoleFactCardRow[];
+  if (!cards.length) return assets;
+
+  const byAssetId = new Map<number, RoleFactCardRow>();
+  const byRoleName = new Map<string, RoleFactCardRow>();
+  for (const card of cards) {
+    if (card.assetId) byAssetId.set(Number(card.assetId), card);
+    if (card.roleName) byRoleName.set(nameKey(card.roleName), card);
+  }
+  return assets.map((asset) => {
+    if (!isRoleAsset(asset)) return asset;
+    const card = byAssetId.get(Number(asset.id)) || byRoleName.get(nameKey(asset.name));
+    if (!card) return asset;
+    return {
+      ...asset,
+      roleFacts: card.facts || asset.roleFacts,
+      negativeRoleFacts: card.negativeFacts || asset.negativeRoleFacts,
+    };
+  });
+}
+
+async function getStoryboardAssets(projectId: number, storyboardIds: number[]) {
   if (!storyboardIds.length) return [];
   const rows = await u
     .db("o_assets2Storyboard")
@@ -231,7 +301,7 @@ async function getStoryboardAssets(storyboardIds: number[]) {
     seen.add(row.id);
     result.push(row);
   }
-  return result;
+  return attachRoleFactCards(projectId, result);
 }
 
 async function runDirectorBoardImageTask(rowId: number, data: { project: ProjectRow; script: ScriptRow; storyboards: StoryboardRow[]; assets: AssetRow[]; prompt: string; model: string }) {
@@ -293,7 +363,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
 
   const created: DirectorBoardRow[] = [];
   for (const [boardIndex, chunk] of chunks.entries()) {
-    const assets = await getStoryboardAssets(chunk.map((item) => item.id));
+    const assets = await getStoryboardAssets(projectId, chunk.map((item) => item.id));
     const prompt = buildChapterDirectorBoardPrompt({
       project,
       script,
@@ -347,7 +417,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
   const totalBoardsRow = (await u.db("o_directorBoard").where({ projectId, scriptId }).count({ count: "id" }).first()) as { count?: number | string } | undefined;
   const totalBoards = Math.max(1, Number(totalBoardsRow?.count || 1));
   const boardIndex = Number.isFinite(Number(row.index)) ? Number(row.index) : 0;
-  const assets = await getStoryboardAssets(storyboards.map((item) => item.id));
+  const assets = await getStoryboardAssets(projectId, storyboards.map((item) => item.id));
   const prompt = buildChapterDirectorBoardPrompt({
     project,
     script,

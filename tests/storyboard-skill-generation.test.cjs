@@ -150,12 +150,17 @@ async function main() {
       db,
       Ai: {
         Text: (modelKey) => ({
-          invoke: async (input) => {
+          stream: async (input) => {
             capturedModelKeys.push(modelKey);
             capturedPrompt = input.prompt;
             capturedPrompts.push(input.prompt);
             const response = mockStoryboardResponses.shift();
-            return { text: typeof response === 'string' ? response : JSON.stringify(response) };
+            const text = typeof response === 'string' ? response : JSON.stringify(response);
+            return {
+              textStream: (async function* () {
+                yield text;
+              })(),
+            };
           },
         }),
       },

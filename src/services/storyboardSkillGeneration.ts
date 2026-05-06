@@ -610,8 +610,11 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "上下文 JSON:",
     JSON.stringify(context, null, 2),
   ].join("\n");
-  const result = await u.Ai.Text(STORYBOARD_MODEL_KEY).invoke({ prompt });
-  const text = (result as any)?.text ?? (result as any)?._output ?? "";
+  const { textStream } = await u.Ai.Text(STORYBOARD_MODEL_KEY).stream({ prompt });
+  let text = "";
+  for await (const chunk of textStream) {
+    text += chunk;
+  }
   if (!nonEmpty(text)) throw new Error("模型未返回文本");
   return parseStoryboardJson(String(text));
 }

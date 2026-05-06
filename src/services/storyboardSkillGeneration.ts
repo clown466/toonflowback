@@ -6,6 +6,9 @@ import {
   NovelRow,
   ProjectRow,
   StoryboardDraftItem,
+  assetDescription,
+  assetImageMarkdown,
+  buildStructuredVideoDesc,
   buildStoryboardPrompt,
   buildStoryboardTable,
   cleanName,
@@ -21,6 +24,7 @@ import {
   selectStoryboardNovels,
   shouldAppend,
   shouldForce,
+  summarizeReference,
   toPublicWorkspaceName,
   toUniquePositiveNumbers,
   upsertProductionWorkData,
@@ -41,13 +45,23 @@ interface SkillShot {
   imagePrompt: string;
   associateAssetNames: string[];
   shouldGenerateImage: boolean;
+  narrativeFunction?: string;
+  pictureDescription?: string;
+  role1?: string;
+  role1Description?: string;
+  role2?: string;
+  role2Description?: string;
+  reference?: string;
   scene?: string;
   shotSize?: string;
   cameraMove?: string;
   action?: string;
   emotion?: string;
   lighting?: string;
+  sound?: string;
+  dialogue?: string;
   beat?: string;
+  videoMotionPrompt?: string;
 }
 
 interface SkillStoryboardJson {
@@ -78,7 +92,7 @@ const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
     "1. 只读取 selectedChapters 中的 event 和 chapterData，禁止引用未选章节。",
     "2. 先抽取事件节拍：地点、角色、动作目标、冲突/信息点、情绪变化、关键道具。",
     "3. 按事件复杂度决定镜头数量：未指定数量时不要默认 3 个；标准章节通常 6-12 个。",
-    "4. 先生成 storyboardTable，字段为：镜号、叙事功能、时长、景别、运镜、场景、画面/动作、情绪、光影、台词/声音、关联资产。",
+    "4. 先生成 storyboardTable，字段固定为：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "5. 再把分镜表逐行转换为 shots，shots.length 必须等于 storyboardTable 数据行数。",
     "",
     "每条 shot 必须能直接写入生产分镜：videoDesc 写完整视频描述，imagePrompt 写关键帧图像提示词，associateAssetNames 只能填写资产库中已存在的名称。",
@@ -152,13 +166,23 @@ function parseStoryboardJson(text: string): SkillStoryboardJson {
         ? shot.associateAssetNames.map((name: unknown) => cleanName(name)).filter(Boolean)
         : [],
       shouldGenerateImage: shot.shouldGenerateImage == null ? true : Boolean(shot.shouldGenerateImage),
+      narrativeFunction: nonEmpty(shot.narrativeFunction) ?? nonEmpty(shot.function) ?? nonEmpty(shot.beat),
+      pictureDescription: nonEmpty(shot.pictureDescription) ?? nonEmpty(shot.description) ?? nonEmpty(shot.imageDescription),
+      role1: nonEmpty(shot.role1),
+      role1Description: nonEmpty(shot.role1Description),
+      role2: nonEmpty(shot.role2),
+      role2Description: nonEmpty(shot.role2Description),
+      reference: Array.isArray(shot.reference) ? shot.reference.map((item: unknown) => cleanName(item)).filter(Boolean).join("、") : nonEmpty(shot.reference),
       scene: nonEmpty(shot.scene),
       shotSize: nonEmpty(shot.shotSize),
       cameraMove: nonEmpty(shot.cameraMove),
       action: nonEmpty(shot.action),
       emotion: nonEmpty(shot.emotion),
       lighting: nonEmpty(shot.lighting),
+      sound: nonEmpty(shot.sound) ?? nonEmpty(shot.audio),
+      dialogue: nonEmpty(shot.dialogue) ?? nonEmpty(shot.lines),
       beat: nonEmpty(shot.beat),
+      videoMotionPrompt: nonEmpty(shot.videoMotionPrompt) ?? nonEmpty(shot.motionPrompt),
     };
   });
   return {
@@ -287,16 +311,47 @@ function toDraftItems(project: ProjectRow, parsed: SkillStoryboardJson, assets: 
     const ids = mapAssetNamesToIds(assets, shot.associateAssetNames);
     const associatedAssets = ids.length ? assets.filter((asset) => ids.includes(asset.id)) : matchAssets(assets, `${shot.videoDesc}\n${shot.imagePrompt}`, 7);
     const assetNames = associatedAssets.map((asset) => cleanName(asset.name)).filter(Boolean);
-    const prompt = shot.imagePrompt || buildStoryboardPrompt(project, shot.videoDesc, assetNames);
-    return {
+    const roleAssets = associatedAssets.filter((asset) => asset.type === "role");
+    const sceneAssets = associatedAssets.filter((asset) => asset.type === "scene");
+    const propAssets = associatedAssets.filter((asset) => asset.type === "tool");
+    const role1Asset = roleAssets.find((asset) => assetNameKey(asset.name) === assetNameKey(shot.role1)) ?? roleAssets[0];
+    const role2Asset = roleAssets.find((asset) => assetNameKey(asset.name) === assetNameKey(shot.role2)) ?? roleAssets.find((asset) => asset.id !== role1Asset?.id);
+    const scene = shot.scene ?? cleanName(sceneAssets[0]?.name);
+    const itemBase: StoryboardDraftItem = {
       index,
       duration: shot.duration,
       track: "主线分镜",
       videoDesc: shot.videoDesc,
-      prompt,
+      prompt: "",
       shouldGenerateImage: shot.shouldGenerateImage ? 1 : 0,
       associateAssetsIds: associatedAssets.map((asset) => asset.id),
       sourceTitle: shot.beat ?? shot.scene ?? `镜头 ${index + 1}`,
+      narrativeFunction: shot.narrativeFunction ?? shot.beat,
+      pictureDescription: shot.pictureDescription ?? shot.action ?? shot.videoDesc,
+      role1: shot.role1 ?? cleanName(role1Asset?.name),
+      role1Description: shot.role1Description ?? assetDescription(role1Asset),
+      role1Image: assetImageMarkdown(role1Asset),
+      role2: shot.role2 ?? cleanName(role2Asset?.name),
+      role2Description: shot.role2Description ?? assetDescription(role2Asset),
+      role2Image: assetImageMarkdown(role2Asset),
+      reference: shot.reference ?? summarizeReference([...sceneAssets, ...propAssets]),
+      shotSize: shot.shotSize,
+      cameraMove: shot.cameraMove,
+      action: shot.action,
+      emotion: shot.emotion,
+      scene,
+      lighting: shot.lighting,
+      sound: shot.sound,
+      dialogue: shot.dialogue ?? "无台词",
+      videoMotionPrompt: shot.videoMotionPrompt,
+    };
+    const videoDesc = shot.videoDesc || buildStructuredVideoDesc(itemBase);
+    const prompt = shot.imagePrompt || buildStoryboardPrompt(project, videoDesc, assetNames);
+    return {
+      ...itemBase,
+      videoDesc,
+      prompt,
+      videoMotionPrompt: itemBase.videoMotionPrompt ?? `${shot.shotSize ?? ""} ${shot.cameraMove ?? ""} ${shot.action ?? shot.videoDesc}`.trim(),
     };
   });
 }
@@ -331,6 +386,8 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "2. 先生成 storyboardTable，表中每一行代表一个真实分镜。",
     "3. 再按 storyboardTable 逐行生成 shots；shots.length 必须等于 storyboardTable 的数据行数。",
     "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
+    "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
+    "6. 角色图字段可先填空；系统会按 associateAssetNames 匹配资产库图片补齐显示。",
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",
@@ -346,13 +403,23 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
             imagePrompt: "关键帧图像提示词",
             associateAssetNames: ["资产名称"],
             shouldGenerateImage: true,
+            narrativeFunction: "定场/动作推进/情绪反应/信息揭示等",
+            pictureDescription: "表格里的画面描述",
+            role1: "画面中第一个主要角色名",
+            role1Description: "该角色在本镜的状态，不要违背资产图",
+            role2: "画面中第二个主要角色名，可空",
+            role2Description: "该角色在本镜的状态，可空",
+            reference: "场景/道具/参考资产名称",
             scene: "可选",
             shotSize: "可选",
             cameraMove: "可选",
             action: "可选",
             emotion: "可选",
             lighting: "可选",
+            sound: "环境音/动作音",
+            dialogue: "对白原文或无台词",
             beat: "可选",
+            videoMotionPrompt: "用于视频生成的运动提示词",
           },
         ],
       },
@@ -383,11 +450,12 @@ export async function generateProjectStoryboardWithSkill(
     u.db("o_novel").where("projectId", projectId).select("id", "chapterIndex", "chapter", "chapterData", "event", "eventState").orderBy("chapterIndex", "asc") as Promise<NovelRow[]>,
     u
       .db("o_assets")
-      .where("projectId", projectId)
-      .whereNull("assetsId")
-      .select("id", "name", "type", "describe", "prompt", "imageId")
-      .orderByRaw(`CASE type WHEN 'scene' THEN 1 WHEN 'role' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
-      .orderBy("id", "asc") as Promise<AssetRow[]>,
+      .leftJoin("o_image", "o_assets.imageId", "o_image.id")
+      .where("o_assets.projectId", projectId)
+      .whereNull("o_assets.assetsId")
+      .select("o_assets.id", "o_assets.name", "o_assets.type", "o_assets.describe", "o_assets.prompt", "o_assets.imageId", "o_image.filePath")
+      .orderByRaw(`CASE o_assets.type WHEN 'scene' THEN 1 WHEN 'role' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
+      .orderBy("o_assets.id", "asc") as Promise<AssetRow[]>,
   ]);
   const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(sourceText)]);
   const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);
@@ -451,7 +519,7 @@ export async function generateProjectStoryboardWithSkill(
   if (existingCount > 0 && force) removedCount = await deleteStoryboards(episodesId, projectId);
   const startIndex = append && existingCount > 0 ? existingCount : 0;
   const storyboardIds = await insertDraftItems(projectId, episodesId, draftItems, startIndex);
-  const storyboardTable = parsed.storyboardTable || buildStoryboardTable(draftItems);
+  const storyboardTable = buildStoryboardTable(draftItems);
   await upsertProductionWorkData(projectId, episodesId, scriptContent, storyboardTable);
 
   const verb = removedCount > 0 ? `已覆盖旧分镜 ${removedCount} 个，并使用分镜方法重新生成` : append && existingCount > 0 ? "已使用分镜方法追加生成" : "已使用分镜方法生成";

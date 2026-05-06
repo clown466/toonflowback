@@ -34,6 +34,7 @@ export interface AssetRow {
   describe?: string | null;
   prompt?: string | null;
   imageId?: number | null;
+  filePath?: string | null;
 }
 
 export interface StoryboardDraftItem {
@@ -45,6 +46,24 @@ export interface StoryboardDraftItem {
   shouldGenerateImage: number;
   associateAssetsIds: number[];
   sourceTitle: string;
+  narrativeFunction?: string;
+  pictureDescription?: string;
+  role1?: string;
+  role1Description?: string;
+  role1Image?: string;
+  role2?: string;
+  role2Description?: string;
+  role2Image?: string;
+  reference?: string;
+  shotSize?: string;
+  cameraMove?: string;
+  action?: string;
+  emotion?: string;
+  scene?: string;
+  lighting?: string;
+  sound?: string;
+  dialogue?: string;
+  videoMotionPrompt?: string;
 }
 
 export interface GenerateProjectStoryboardDraftOptions {
@@ -108,6 +127,59 @@ export function compactText(value: unknown, maxLength = 600) {
 
 export function cleanName(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function mdCell(value: unknown) {
+  const text = String(value ?? "").replace(/\r?\n/g, "<br>").replace(/\|/g, "/").trim();
+  return text || "-";
+}
+
+function listAssetNames(assets: AssetRow[]) {
+  return assets.map((asset) => cleanName(asset.name)).filter(Boolean);
+}
+
+export function assetDescription(asset?: AssetRow) {
+  return compactText(nonEmpty(asset?.prompt) ?? nonEmpty(asset?.describe) ?? nonEmpty(asset?.name) ?? "", 140);
+}
+
+function toOssUrl(filePath?: string | null) {
+  const raw = String(filePath ?? "").trim();
+  if (!raw) return "";
+  if (/^(https?:)?\/\//i.test(raw)) return raw;
+  if (/^\/(?:oss|smallImage)\//i.test(raw)) return raw;
+  return `/oss/${raw.replace(/^[/\\]+/, "")}`;
+}
+
+export function assetImageMarkdown(asset?: AssetRow) {
+  const url = toOssUrl(asset?.filePath);
+  if (!url) return "";
+  const alt = cleanName(asset?.name).replace(/[\]\[]/g, "");
+  return `![${alt || "asset"}](${url})`;
+}
+
+export function summarizeReference(assets: AssetRow[]) {
+  const names = listAssetNames(assets);
+  if (!names.length) return "";
+  return names.map((name) => `参考${name}`).join("、");
+}
+
+export function buildStructuredVideoDesc(item: StoryboardDraftItem) {
+  const assetIdText = item.associateAssetsIds.length ? item.associateAssetsIds.join("/") : "-";
+  const assetNameText = [item.role1, item.role2, item.reference].filter(Boolean).join("/") || "-";
+  return `（${[
+    item.pictureDescription || item.videoDesc,
+    item.scene || "未指定场景",
+    assetNameText,
+    `${item.duration}s`,
+    item.shotSize || "中景",
+    item.cameraMove || "静止",
+    item.action || item.pictureDescription || item.videoDesc,
+    item.emotion || "叙事推进",
+    item.lighting || "遵循项目视觉手册光影",
+    item.dialogue || "无台词",
+    item.sound || "环境音",
+    assetIdText,
+  ].map(mdCell).join("、")}）`;
 }
 
 export function toUniquePositiveNumbers(values: unknown[]) {
@@ -461,35 +533,69 @@ export function buildStoryboardPrompt(project: ProjectRow, videoDesc: string, as
 function createDraftItems(project: ProjectRow, novels: NovelRow[], scriptContent: string, assets: AssetRow[]) {
   const units = buildSourceUnits(project, novels, scriptContent).slice(0, 12);
   const shotsPerUnit = units.length >= 8 ? 2 : 3;
-  const cameras = ["宽幅建立镜头，交代地点和冲突", "中近景动作镜头，突出角色反应和推进", "特写/运动镜头，制造笑点、危险或转场"];
+  const cameraPlans = [
+    { shotSize: "远景/全景", cameraMove: "缓推建立", functionName: "定场与冲突建立" },
+    { shotSize: "中景/近景", cameraMove: "跟拍或推近", functionName: "动作推进" },
+    { shotSize: "特写/运动镜头", cameraMove: "快速切入或轻微摇移", functionName: "反应与转场" },
+  ];
   const draft: StoryboardDraftItem[] = [];
 
   for (const [unitIndex, unit] of units.entries()) {
     const associatedAssets = matchAssets(assets, `${unit.title}\n${unit.assetHint}\n${unit.summary}\n${unit.sourceText}`);
-    const assetNames = associatedAssets.map((asset) => cleanName(asset.name)).filter(Boolean);
+    const associatedAssetNames = associatedAssets.map((asset) => cleanName(asset.name)).filter(Boolean);
+    const roleAssets = associatedAssets.filter((asset) => asset.type === "role");
+    const sceneAssets = associatedAssets.filter((asset) => asset.type === "scene");
+    const propAssets = associatedAssets.filter((asset) => asset.type === "tool");
     const sourceTitle = unit.title || `段落 ${unitIndex + 1}`;
 
     for (let shotIndex = 0; shotIndex < shotsPerUnit; shotIndex++) {
       const index = draft.length;
-      const camera = cameras[shotIndex] ?? cameras[cameras.length - 1]!;
+      const cameraPlan = cameraPlans[shotIndex] ?? cameraPlans[cameraPlans.length - 1]!;
       const beat =
         shotIndex === 0
           ? `镜头${index + 1}：${sourceTitle}的开场，${unit.summary}`
           : shotIndex === 1
             ? `镜头${index + 1}：${sourceTitle}的核心动作推进，${unit.summary}`
             : `镜头${index + 1}：${sourceTitle}的结果反应和下一段转场，${unit.summary}`;
-      const videoDesc = `${beat}。镜头设计：${camera}。`;
-
-      draft.push({
+      const role1 = roleAssets[0];
+      const role2 = roleAssets[1];
+      const scene = cleanName(sceneAssets[0]?.name) || sourceTitle;
+      const sceneAndPropNames = listAssetNames([...sceneAssets, ...propAssets]);
+      const reference = sceneAndPropNames.length ? sceneAndPropNames : listAssetNames(associatedAssets);
+      const duration = shotIndex === 1 ? 5 : 4;
+      const itemBase: StoryboardDraftItem = {
         index,
-        duration: shotIndex === 1 ? 5 : 4,
+        duration,
         track: MAIN_TRACK_NAME,
-        videoDesc,
-        prompt: buildStoryboardPrompt(project, videoDesc, assetNames),
+        videoDesc: "",
+        prompt: "",
         shouldGenerateImage: 1,
         associateAssetsIds: associatedAssets.map((asset) => asset.id),
         sourceTitle,
-      });
+        narrativeFunction: cameraPlan.functionName,
+        pictureDescription: beat,
+        role1: cleanName(role1?.name),
+        role1Description: assetDescription(role1),
+        role1Image: assetImageMarkdown(role1),
+        role2: cleanName(role2?.name),
+        role2Description: assetDescription(role2),
+        role2Image: assetImageMarkdown(role2),
+        reference: reference.join("、"),
+        shotSize: cameraPlan.shotSize,
+        cameraMove: cameraPlan.cameraMove,
+        action: `${beat}｜朝向：按角色关系保持连续`,
+        emotion: shotIndex === 0 ? "紧张铺垫" : shotIndex === 1 ? "动作推进" : "反应收束",
+        scene,
+        lighting: "遵循项目视觉手册，突出主体与冲突",
+        sound: shotIndex === 1 ? "动作音 + 环境音" : "环境音",
+        dialogue: "无台词",
+      };
+      const videoDesc = buildStructuredVideoDesc(itemBase);
+      itemBase.videoDesc = videoDesc;
+      itemBase.prompt = buildStoryboardPrompt(project, videoDesc, associatedAssetNames);
+      itemBase.videoMotionPrompt = `${cameraPlan.shotSize}，${cameraPlan.cameraMove}，${beat}，${itemBase.lighting}，${itemBase.sound}`;
+
+      draft.push(itemBase);
     }
   }
 
@@ -587,9 +693,32 @@ export async function insertDraftItems(projectId: number, scriptId: number, item
 }
 
 export function buildStoryboardTable(items: StoryboardDraftItem[]) {
-  const rows = ["| 镜号 | 时长 | 画面/动作 | 关联资产 |", "| --- | ---: | --- | --- |"];
+  const rows = [
+    "| 镜号 | 时长 | 画面描述 | 角色1 | 角色描述1 | 角色图1 | 角色2 | 角色描述2 | 角色图2 | 参考 | 景别 | 角色动作 | 情绪 | 场景标签 | 光影氛围 | 音效 | 对白 | 分镜提示词 | 视频运动提示词 |",
+    "| --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+  ];
   for (const item of items) {
-    rows.push(`| ${item.index + 1} | ${item.duration}s | ${item.videoDesc.replace(/\|/g, "/")} | ${item.associateAssetsIds.join(", ") || "-"} |`);
+    rows.push(`| ${[
+      item.index + 1,
+      `${item.duration}s`,
+      item.pictureDescription || item.videoDesc,
+      item.role1,
+      item.role1Description,
+      item.role1Image,
+      item.role2,
+      item.role2Description,
+      item.role2Image,
+      item.reference || (item.associateAssetsIds.length ? `资产ID ${item.associateAssetsIds.join(", ")}` : ""),
+      item.shotSize,
+      item.action,
+      item.emotion,
+      item.scene,
+      item.lighting,
+      item.sound,
+      item.dialogue || "无台词",
+      item.prompt,
+      item.videoMotionPrompt || item.videoDesc,
+    ].map(mdCell).join(" | ")} |`);
   }
   return rows.join("\n");
 }
@@ -765,11 +894,12 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
     u.db("o_novel").where("projectId", projectId).select("id", "chapterIndex", "chapter", "chapterData", "event", "eventState").orderBy("chapterIndex", "asc") as Promise<NovelRow[]>,
     u
       .db("o_assets")
-      .where("projectId", projectId)
-      .whereNull("assetsId")
-      .select("id", "name", "type", "describe", "prompt", "imageId")
-      .orderByRaw(`CASE type WHEN 'scene' THEN 1 WHEN 'role' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
-      .orderBy("id", "asc") as Promise<AssetRow[]>,
+      .leftJoin("o_image", "o_assets.imageId", "o_image.id")
+      .where("o_assets.projectId", projectId)
+      .whereNull("o_assets.assetsId")
+      .select("o_assets.id", "o_assets.name", "o_assets.type", "o_assets.describe", "o_assets.prompt", "o_assets.imageId", "o_image.filePath")
+      .orderByRaw(`CASE o_assets.type WHEN 'scene' THEN 1 WHEN 'role' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
+      .orderBy("o_assets.id", "asc") as Promise<AssetRow[]>,
   ]);
   const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(options.sourceText)]);
   const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);

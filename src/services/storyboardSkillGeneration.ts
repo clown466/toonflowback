@@ -55,6 +55,12 @@ interface SkillStoryboardJson {
   shots: SkillShot[];
 }
 
+interface StoryboardPlanningHint {
+  explicitShotCount?: number;
+  estimatedMinimumShots: number;
+  eventCount: number;
+}
+
 export interface GenerateProjectStoryboardWithSkillOptions extends GenerateProjectStoryboardDraftOptions {
   skillId?: string;
   userRequirement?: string;
@@ -149,6 +155,64 @@ function parseStoryboardJson(text: string): SkillStoryboardJson {
   };
 }
 
+function parseSimpleCount(value: string) {
+  if (/^\d+$/.test(value)) return Number(value);
+  const digits: Record<string, number> = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  };
+  if (value === "十") return 10;
+  const tenIndex = value.indexOf("十");
+  if (tenIndex >= 0) {
+    const left = value.slice(0, tenIndex);
+    const right = value.slice(tenIndex + 1);
+    return (left ? digits[left] ?? 0 : 1) * 10 + (right ? digits[right] ?? 0 : 0);
+  }
+  return digits[value] ?? 0;
+}
+
+function parseRequestedShotCount(text?: string | null) {
+  if (!text) return undefined;
+  const match = text.match(/(?:前\s*)?([一二两三四五六七八九十\d]{1,3})\s*(?:个|张|条)?\s*(?:分镜|镜头|场景|画面|shots?|scenes?)/i);
+  if (!match?.[1]) return undefined;
+  const count = parseSimpleCount(match[1]);
+  return Number.isFinite(count) && count > 0 && count <= 40 ? count : undefined;
+}
+
+function countEventRows(event?: string | null) {
+  if (!event) return 0;
+  const rows = event
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^[-|:\s]+$/.test(line) && !/事件|角色|章节|chapter|---/.test(line));
+  return rows.length;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): StoryboardPlanningHint {
+  const explicitShotCount = parseRequestedShotCount(sourceText);
+  const eventCount = novels.reduce((sum, novel) => sum + countEventRows(novel.event), 0);
+  const textLength = novels.reduce((sum, novel) => sum + String(novel.chapterData ?? "").length, 0);
+  const estimatedMinimumShots = explicitShotCount ?? clamp(Math.max(4, eventCount * 2, Math.ceil(textLength / 700)), 4, 16);
+  return {
+    explicitShotCount,
+    estimatedMinimumShots,
+    eventCount,
+  };
+}
+
 function assetNameKey(value: unknown) {
   return cleanName(value).toLowerCase();
 }
@@ -173,6 +237,7 @@ function mapAssetNamesToIds(assets: AssetRow[], names: string[]) {
 }
 
 function buildModelContext(project: ProjectRow, novels: NovelRow[], assets: AssetRow[], scriptContent: string, userRequirement?: string) {
+  const planning = buildPlanningHint(novels, userRequirement);
   const selectedChapters = novels.map((novel) => ({
     id: novel.id,
     chapterIndex: novel.chapterIndex,
@@ -201,6 +266,7 @@ function buildModelContext(project: ProjectRow, novels: NovelRow[], assets: Asse
       prompt: compactText(asset.prompt, 240),
     })),
     userRequirement,
+    storyboardPlanning: planning,
   };
 }
 
@@ -223,9 +289,35 @@ function toDraftItems(project: ProjectRow, parsed: SkillStoryboardJson, assets: 
   });
 }
 
-async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: Record<string, any>) {
+function storyboardCountInstruction(planning?: StoryboardPlanningHint) {
+  if (planning?.explicitShotCount) {
+    return `用户明确要求数量：必须输出 ${planning.explicitShotCount} 个分镜；storyboardTable 数据行数和 shots.length 都必须等于 ${planning.explicitShotCount}。`;
+  }
+  return [
+    `用户未明确限定数量：不要默认生成 3 个分镜，也不要为了省事只生成 3 个。`,
+    `请先按章节事件拆分完整分镜表，再由分镜表逐行生成 shots。当前建议不少于 ${planning?.estimatedMinimumShots ?? 4} 个分镜；除非原文极短，否则单章通常应为 6-12 个分镜。`,
+    `如果只返回 3 个分镜，会被视为拆镜不足。`,
+  ].join("\n");
+}
+
+function shouldRetryForShotCount(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint) {
+  const count = parsed.shots.length;
+  if (planning?.explicitShotCount) return count !== planning.explicitShotCount;
+  return (planning?.estimatedMinimumShots ?? 4) > 3 && count <= 3;
+}
+
+async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: Record<string, any>, retryReason?: string) {
+  const planning = context.storyboardPlanning as StoryboardPlanningHint | undefined;
   const prompt = [
     skill.content,
+    "",
+    "核心流程：",
+    "1. 先阅读 selectedChapters 中的 event 和 chapterData，只处理这些章节。",
+    "2. 先生成 storyboardTable，表中每一行代表一个真实分镜。",
+    "3. 再按 storyboardTable 逐行生成 shots；shots.length 必须等于 storyboardTable 的数据行数。",
+    "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
+    storyboardCountInstruction(planning),
+    retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",
     "输出要求：只返回 JSON，不要 Markdown，不要解释。",
     "JSON schema:",
@@ -321,10 +413,20 @@ export async function generateProjectStoryboardWithSkill(
   if (!skill) return fallback(projectId, { ...options, sourceText, force, append }, "没有可用分镜 Skill");
 
   let parsed: SkillStoryboardJson;
+  const modelContext = buildModelContext(project, novels, assets, scriptContent, options.userRequirement ?? sourceText);
+  const planning = modelContext.storyboardPlanning as StoryboardPlanningHint;
   try {
-    parsed = await invokeStoryboardModel(skill, buildModelContext(project, novels, assets, scriptContent, options.userRequirement ?? sourceText));
+    parsed = await invokeStoryboardModel(skill, modelContext);
+    if (shouldRetryForShotCount(parsed, planning)) {
+      const expected = planning.explicitShotCount ? `用户要求 ${planning.explicitShotCount} 个，你返回了 ${parsed.shots.length} 个` : `未限定数量时不应只返回 ${parsed.shots.length} 个，建议不少于 ${planning.estimatedMinimumShots} 个`;
+      parsed = await invokeStoryboardModel(skill, modelContext, expected);
+    }
   } catch (error) {
     return fallback(projectId, { ...options, sourceText, force, append }, error instanceof Error ? error.message : "模型生成失败");
+  }
+
+  if (planning.explicitShotCount && parsed.shots.length > planning.explicitShotCount) {
+    parsed = { ...parsed, shots: parsed.shots.slice(0, planning.explicitShotCount), storyboardTable: "" };
   }
 
   const draftItems = toDraftItems(project, parsed, assets);
@@ -337,7 +439,7 @@ export async function generateProjectStoryboardWithSkill(
   const storyboardTable = parsed.storyboardTable || buildStoryboardTable(draftItems);
   await upsertProductionWorkData(projectId, episodesId, scriptContent, storyboardTable);
 
-  const verb = removedCount > 0 ? `已覆盖旧分镜 ${removedCount} 个，并使用分镜 Skill 重新生成` : append && existingCount > 0 ? "已使用分镜 Skill 追加生成" : "已使用分镜 Skill 生成";
+  const verb = removedCount > 0 ? `已覆盖旧分镜 ${removedCount} 个，并使用分镜方法重新生成` : append && existingCount > 0 ? "已使用分镜方法追加生成" : "已使用分镜方法生成";
   return {
     projectId,
     episodesId,

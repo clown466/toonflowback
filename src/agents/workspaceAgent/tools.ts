@@ -601,11 +601,19 @@ export async function runProjectStoryboardDraftFastPath(
     storyboardIds: result.storyboardIds,
   });
 
+  const tableRows = result.storyboardTable
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && line.includes("|") && !/^\|\s*-/.test(line));
+  const tableDataRows = Math.max(0, tableRows.length - 1);
+  const tablePreview = tableRows.slice(0, 5).join("\n");
   const lines = [
     result.message,
-    result.usedSkillName ? `分镜 Skill：${result.usedSkillName}。` : "",
+    result.usedSkillName ? `分镜方法：${result.usedSkillName}。` : "",
     result.fallbackReason ? `已回退旧模板生成器：${result.fallbackReason}。` : "",
     result.selectedChapterLabels.length ? `本次章节：${result.selectedChapterLabels.join("、")}。` : "",
+    tableDataRows > 0 ? `分镜表已生成 ${tableDataRows} 行并写入生产工作数据。` : "",
+    tablePreview ? `分镜表预览：\n${tablePreview}` : "",
     `已关联当前项目资产库，并写入 Flova 工作台/生产工作台可读取的数据。`,
     result.createdCount > 0 ? "现在可以在左侧分镜列表查看；需要分镜图片时点“生成全部”。" : "",
   ].filter(Boolean);

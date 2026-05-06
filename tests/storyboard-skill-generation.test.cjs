@@ -186,6 +186,9 @@ async function main() {
   assert.ok(capturedPrompt.includes('SELECTED_EVENT_ONLY'), 'selected chapter event should reach model');
   assert.ok(!capturedPrompt.includes('FUTURE_CHAPTER_MUST_NOT_REACH_MODEL'), 'future chapter body must not reach model');
   assert.ok(!capturedPrompt.includes('FUTURE_EVENT_MUST_NOT_REACH_MODEL'), 'future chapter event must not reach model');
+  assert.ok(capturedPrompt.includes('先生成 storyboardTable'), 'prompt should require storyboard table first');
+  assert.ok(capturedPrompt.includes('不要默认生成 3 个分镜'), 'prompt should prevent lazy three-shot output');
+  assert.ok(capturedPrompt.includes('shots.length 必须等于 storyboardTable 的数据行数'), 'prompt should keep table and shots aligned');
 
   const storyboards = await db('o_storyboard').where({ projectId: 1, scriptId: result.episodesId }).orderBy('index');
   assert.strictEqual(storyboards.length, 1);

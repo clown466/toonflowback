@@ -5,7 +5,8 @@ const router = express.Router();
 
 export default router.post("/", async (req, res) => {
   const allData = await u.db("o_agentDeploy").leftJoin("o_vendorConfig", "o_vendorConfig.id", "o_agentDeploy.vendorId").select("o_agentDeploy.*");
-  const qrdinaryData = allData.filter((item: any) => !item.key?.includes(":"));
-  const advancedData = allData.filter((item: any) => item.key?.includes(":"));
+  const visibleData = allData.filter((item: any) => !String(item.key ?? "").startsWith("scriptAgent"));
+  const qrdinaryData = visibleData.filter((item: any) => !item.key?.includes(":"));
+  const advancedData = visibleData.filter((item: any) => item.key?.includes(":"));
   res.status(200).send(success({ qrdinaryData, advancedData }));
 });

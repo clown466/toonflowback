@@ -3,7 +3,7 @@ import u from "@/utils";
 import { z } from "zod";
 import { success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
-import { FLOVA_SCRIPT_NAME } from "@/services/storyboardDraftGeneration";
+import { FLOVA_SCRIPT_NAME, LEGACY_FLOVA_SCRIPT_NAME, toPublicWorkspaceName } from "@/services/storyboardDraftGeneration";
 const router = express.Router();
 
 export default router.post(
@@ -18,7 +18,11 @@ export default router.post(
     let query = u.db("o_script").where("projectId", projectId).select("*");
     if (!includeFlovaProductionContainer) {
       query = query.andWhere((builder) => {
-        builder.whereNull("name").orWhere("name", "not like", `${FLOVA_SCRIPT_NAME}%`);
+        builder
+          .whereNull("name")
+          .orWhere((inner) => {
+            inner.where("name", "not like", `${FLOVA_SCRIPT_NAME}%`).andWhere("name", "not like", `${LEGACY_FLOVA_SCRIPT_NAME}%`);
+          });
       });
     }
     if (name) {
@@ -44,7 +48,7 @@ export default router.post(
     });
     const returnData = data.map((i) => ({
       id: i.id,
-      name: i.name,
+      name: toPublicWorkspaceName(i.name),
       content: i.content,
       extractState: i.extractState,
       errorReason: i.errorReason,

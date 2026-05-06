@@ -1,7 +1,6 @@
 import u from "@/utils";
 import {
   AssetRow,
-  FLOVA_SCRIPT_NAME,
   GenerateProjectStoryboardDraftOptions,
   GenerateProjectStoryboardDraftResult,
   NovelRow,
@@ -22,6 +21,7 @@ import {
   selectStoryboardNovels,
   shouldAppend,
   shouldForce,
+  toPublicWorkspaceName,
   toUniquePositiveNumbers,
   upsertProductionWorkData,
 } from "@/services/storyboardDraftGeneration";
@@ -409,7 +409,7 @@ export async function generateProjectStoryboardWithSkill(
     return {
       projectId,
       episodesId,
-      scriptName: script.name ?? FLOVA_SCRIPT_NAME,
+      scriptName: toPublicWorkspaceName(script.name),
       scriptCreated,
       storyboardIds: existingRows.map((row: { id?: number | null }) => Number(row.id)).filter(Boolean),
       createdCount: 0,
@@ -420,7 +420,7 @@ export async function generateProjectStoryboardWithSkill(
       selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
       selectedChapterLabels: novels.map(formatChapterSelectionLabel),
       storyboardTable,
-      message: `当前生产容器「${script.name ?? FLOVA_SCRIPT_NAME}」已有 ${existingCount} 个分镜，已切换到该章节剧集。需要覆盖重做时请说“重新生成分镜”。`,
+      message: `当前章节分镜工作区「${toPublicWorkspaceName(script.name)}」已有 ${existingCount} 个分镜，已切换到该章节。需要覆盖重做时请说“重新生成分镜”。`,
     };
   }
 
@@ -458,7 +458,7 @@ export async function generateProjectStoryboardWithSkill(
   return {
     projectId,
     episodesId,
-    scriptName: script.name ?? FLOVA_SCRIPT_NAME,
+    scriptName: toPublicWorkspaceName(script.name),
     scriptCreated,
     storyboardIds,
     createdCount: storyboardIds.length,
@@ -471,6 +471,6 @@ export async function generateProjectStoryboardWithSkill(
     storyboardTable,
     usedSkillId: skill.id,
     usedSkillName: skill.name,
-    message: `${verb} ${storyboardIds.length} 个分镜，生产剧集为「${script.name ?? FLOVA_SCRIPT_NAME}」。已按单章节隔离处理，未把后续章节并入上下文。`,
+    message: `${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。`,
   };
 }

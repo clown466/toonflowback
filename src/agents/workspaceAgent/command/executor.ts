@@ -105,28 +105,28 @@ function buildPreflightSummary(plan: WorkspaceCommandPlan): WorkspaceCommandPref
   }
 
   if (plan.intent === "storyboard_generation") {
-    const appendText = plan.scope?.append ? "追加写入" : "必要时替换/复用现有生产容器";
+    const appendText = plan.scope?.append ? "追加写入" : "必要时替换/复用章节分镜工作区";
     const forceText = plan.scope?.force ? "强制重新生成" : "不强制重建已存在分镜";
     return {
       intent: plan.intent,
-      scopeText: "当前项目生产分镜草案",
-      quantityText: "由小说/生产容器匹配结果决定",
+      scopeText: "当前项目章节分镜草案",
+      quantityText: "由小说章节匹配结果决定",
       includeCompleted: false,
       redraw: Boolean(plan.scope?.force),
       confirmationPolicy,
-      message: `预检：生成当前项目生产分镜草案；范围：${appendText}；数量：由项目数据决定；${forceText}`,
+      message: `预检：生成当前项目章节分镜草案；范围：${appendText}；数量：由项目数据决定；${forceText}`,
     };
   }
 
   if (plan.intent === "storyboard_clear") {
     return {
       intent: plan.intent,
-      scopeText: "当前项目生产分镜",
-      quantityText: "由当前生产分镜数量决定",
+      scopeText: "当前项目章节分镜",
+      quantityText: "由当前章节分镜数量决定",
       includeCompleted: false,
       redraw: false,
       confirmationPolicy,
-      message: "预检：清空当前项目生产分镜；数量：由当前生产分镜数量决定；不涉及重绘",
+      message: "预检：清空当前项目章节分镜；数量：由当前章节分镜数量决定；不涉及重绘",
     };
   }
 

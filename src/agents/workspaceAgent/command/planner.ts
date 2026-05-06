@@ -427,7 +427,7 @@ function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: Work
     summary: isWorkspaceResolvedScope(resolved) ? summarizeScope(scopeBase) : resolved?.summary ?? summarizeScope(scopeBase),
   };
   const confirmationPolicy: WorkspaceCommandConfirmationPolicy = missingInfo?.length ? "missingInfo" : "auto";
-  const preflightMessage = `准备按${scope.summary}生成生产分镜草案。`;
+  const preflightMessage = `准备按${scope.summary}生成章节分镜草案。`;
 
   return {
     intent: "storyboard_generation",
@@ -468,7 +468,7 @@ function buildStoryboardClearPlan(text: string, signal: IntentSignal, snapshot?:
     ...scopeBase,
     summary: isWorkspaceResolvedScope(resolved) ? summarizeScope(scopeBase) : resolved?.summary ?? summarizeScope(scopeBase),
   };
-  const preflightMessage = `准备清空${scope.summary}。该操作会删除生产分镜，执行前应确认。`;
+  const preflightMessage = `准备清空${scope.summary}。该操作会删除章节分镜，执行前应确认。`;
 
   return {
     intent: "storyboard_clear",

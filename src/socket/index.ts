@@ -1,12 +1,10 @@
 import { Server } from "socket.io";
 import productionAgent from "./routes/productionAgent";
-import scriptAgent from "./routes/scriptAgent";
 import workspaceAgent from "./routes/workspaceAgent";
 
 export default (io: Server) => {
   const routes: Record<string, (nsp: ReturnType<Server["of"]>) => void> = {
     productionAgent,
-    scriptAgent,
     workspaceAgent,
   };
 

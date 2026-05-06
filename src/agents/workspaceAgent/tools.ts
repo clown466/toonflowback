@@ -3,7 +3,7 @@ import { z } from "zod";
 import ResTool from "@/socket/resTool";
 import u from "@/utils";
 import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
-import { clearProjectStoryboards } from "@/services/storyboardDraftGeneration";
+import { clearProjectStoryboards, toPublicWorkspaceName } from "@/services/storyboardDraftGeneration";
 import { generateProjectStoryboardWithSkill } from "@/services/storyboardSkillGeneration";
 import { toToolJsonSchema } from "@/utils/jsonSchema";
 
@@ -589,7 +589,7 @@ export async function runProjectStoryboardDraftFastPath(
       2,
     ),
   );
-  thinking.updateTitle(result.createdCount > 0 ? "分镜草案已写入生产工作台" : "已有分镜，已切换生产工作台");
+  thinking.updateTitle(result.createdCount > 0 ? "分镜草案已写入章节工作区" : "已有分镜，已切换章节工作区");
   thinking.complete();
 
   resTool.socket.emit("productionDataUpdated", {
@@ -612,9 +612,9 @@ export async function runProjectStoryboardDraftFastPath(
     result.usedSkillName ? `分镜方法：${result.usedSkillName}。` : "",
     result.fallbackReason ? `已回退旧模板生成器：${result.fallbackReason}。` : "",
     result.selectedChapterLabels.length ? `本次章节：${result.selectedChapterLabels.join("、")}。` : "",
-    tableDataRows > 0 ? `分镜表已生成 ${tableDataRows} 行并写入生产工作数据。` : "",
+    tableDataRows > 0 ? `分镜表已生成 ${tableDataRows} 行并写入章节工作区数据。` : "",
     tablePreview ? `分镜表预览：\n${tablePreview}` : "",
-    `已关联当前项目资产库，并写入 Flova 工作台/生产工作台可读取的数据。`,
+    `已关联当前项目资产库，并写入 Flova 工作台可读取的数据。`,
     result.createdCount > 0 ? "现在可以在左侧分镜列表查看；需要分镜图片时点“生成全部”。" : "",
   ].filter(Boolean);
   const text = msg.text(lines.join("\n"));
@@ -627,7 +627,7 @@ export async function runProjectStoryboardDraftFastPath(
 export async function runProjectStoryboardClearFastPath(config: ToolConfig, options?: { sourceText?: string }) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
-  const thinking = msg.thinking("正在清空生产分镜...");
+  const thinking = msg.thinking("正在清空章节分镜...");
 
   const result = await clearProjectStoryboards(projectId, {
     sourceText: options?.sourceText,
@@ -648,7 +648,7 @@ export async function runProjectStoryboardClearFastPath(config: ToolConfig, opti
       2,
     ),
   );
-  thinking.updateTitle(result.cleared ? "分镜已清空" : result.needsSelection ? "需要指定生产容器" : "没有可清空的分镜");
+  thinking.updateTitle(result.cleared ? "分镜已清空" : result.needsSelection ? "需要指定章节分镜工作区" : "没有可清空的分镜");
   thinking.complete();
 
   if (result.cleared) {
@@ -674,7 +674,7 @@ export default function useTools(config: ToolConfig) {
 
   const tools: Record<string, Tool> = {
     get_project_overview: tool({
-      description: "获取当前项目的基础信息、小说章节数、资产数和剧本数，适用于项目级总控判断下一步。",
+      description: "获取当前项目的基础信息、小说章节数、资产数和章节分镜工作区数，适用于项目级总控判断下一步。",
       inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
       execute: async () => {
         const thinking = msg.thinking("正在获取项目概览...");
@@ -686,11 +686,11 @@ export default function useTools(config: ToolConfig) {
           u.db("o_script").where("projectId", projectId).select("id", "name", "content", "extractState", "createTime").orderBy("id", "asc"),
         ]);
         const novelContents = new Map(novelRows.map((novel: any) => [String(novel.chapterData ?? "").trim(), novel]));
-        const scripts = scriptRows.map((script: any) => {
+        const workspaces = scriptRows.map((script: any) => {
           const matchedNovel = novelContents.get(String(script.content ?? "").trim()) as any;
           return {
             id: script.id,
-            name: script.name,
+            name: toPublicWorkspaceName(script.name),
             extractState: script.extractState,
             createTime: script.createTime,
             contentMatchesNovelChapter: matchedNovel ? { id: matchedNovel.id, chapterIndex: matchedNovel.chapterIndex, chapter: matchedNovel.chapter } : null,
@@ -705,10 +705,10 @@ export default function useTools(config: ToolConfig) {
           novels: novelRows.map((novel: any) => ({ id: novel.id, chapter: novel.chapter, chapterIndex: novel.chapterIndex, eventState: novel.eventState })),
           assetCount: Object.values(assetCounts).reduce((sum, value) => sum + value, 0),
           assetCounts,
-          scriptCount: scripts.length,
-          scripts,
+          workspaceCount: workspaces.length,
+          workspaces,
           expectedEpisodeCountFromNovels: novelRows.length,
-          note: `assetCount 只统计当前项目未删除/未挂父级 assetsId 的资产；contentMatchesNovelChapter 表示该剧本内容与小说原文章节相同，可能是导入原文遗留记录，不等于用户单独上传/编写剧本。若小说章节数大于剧本记录数，应按小说章节规划集数：${novelRows.length}章≈${novelRows.length}集；不要把单条剧本记录误判为全项目只有1集。`,
+          note: `assetCount 只统计当前项目未删除/未挂父级 assetsId 的资产；workspaces 是内部章节分镜工作区，不是改编剧本。若小说章节数大于工作区记录数，应按小说章节规划集数：${novelRows.length}章≈${novelRows.length}集。`,
         };
 
         thinking.appendText(JSON.stringify(result, null, 2));
@@ -718,15 +718,16 @@ export default function useTools(config: ToolConfig) {
       },
     }),
     list_project_scripts: tool({
-      description: "列出当前项目已有剧本，供项目级总控决定是否需要转交编剧或生产流程。",
+      description: "兼容旧工具名：列出当前项目已有章节分镜工作区。返回的是内部工作区记录，不是改编剧本。",
       inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
       execute: async () => {
-        const thinking = msg.thinking("正在获取项目剧本列表...");
+        const thinking = msg.thinking("正在获取章节分镜工作区列表...");
         const scripts = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "errorReason", "createTime");
-        thinking.appendText(JSON.stringify(scripts, null, 2));
-        thinking.updateTitle("项目剧本列表获取完成");
+        const workspaces = scripts.map((script: any) => ({ ...script, name: toPublicWorkspaceName(script.name) }));
+        thinking.appendText(JSON.stringify(workspaces, null, 2));
+        thinking.updateTitle("章节分镜工作区列表获取完成");
         thinking.complete();
-        return scripts;
+        return workspaces;
       },
     }),
     get_project_plan_data: tool({

@@ -8,7 +8,7 @@ const router = express.Router();
 export default router.post(
   "/",
   validateFields({
-    key: z.enum(["scriptAgent", "productionAgent"]),
+    key: z.enum(["productionAgent"]),
   }),
   async (req, res) => {
     const { key } = req.body;

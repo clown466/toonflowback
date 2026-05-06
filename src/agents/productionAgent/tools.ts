@@ -44,9 +44,9 @@ const posterItemSchema = z.object({
   image: z.string().describe("海报图片路径"),
 });
 export const flowDataSchema = z.object({
-  script: z.string().describe("剧本内容"),
-  scriptPlan: z.string().describe("拍摄计划"),
-  assets: z.array(assetItemSchema).describe("衍生资产"),
+  script: z.string().describe("章节内容"),
+  scriptPlan: z.string().describe("导演规划"),
+  assets: z.array(assetItemSchema).describe("资产库"),
   storyboardTable: z.string().describe("分镜表"),
   storyboard: z.array(storyboardSchema).describe("分镜面板"),
 });

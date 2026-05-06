@@ -28,11 +28,6 @@ export default router.post(
         prompt: "1+1等于几？,请直接回答2，不要解释",
       });
       if (resText.text) {
-        await u.db("o_agentDeploy").where("key", "scriptAgent").update({
-          model: "claude-sonnet-4-6",
-          modelName: "toonflow:claude-sonnet-4-6",
-          vendorId: "toonflow",
-        });
         await u.db("o_agentDeploy").where("key", "productionAgent").update({
           model: "claude-sonnet-4-6",
           modelName: "toonflow:claude-sonnet-4-6",

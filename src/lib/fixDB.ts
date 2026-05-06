@@ -114,7 +114,7 @@ export default async (knex: Knex): Promise<void> => {
     {
       key: "workspaceAgent",
       name: "项目总控Agent",
-      desc: "项目级总控，负责小说到资产库、剧本、生产流程的整体调度",
+      desc: "项目级总控，负责小说到资产库、分镜和视频生产流程的整体调度",
     },
   ];
   for (const agent of baseAgentList) {
@@ -135,11 +135,6 @@ export default async (knex: Knex): Promise<void> => {
   //添加数据高级配置
   const advancedAgentList = [
     { key: "workspaceAgent:decisionAgent", name: "项目总控Agent:决策层", desc: "项目级决策层" },
-    { key: "scriptAgent:decisionAgent", name: "剧本Agent:决策层", desc: "决策层" },
-    { key: "scriptAgent:supervisionAgent", name: "剧本Agent:监督层", desc: "监督层" },
-    { key: "scriptAgent:storySkeletonAgent", name: "剧本Agent:故事骨架", desc: "故事骨架生成" },
-    { key: "scriptAgent:adaptationStrategyAgent", name: "剧本Agent:改编策略", desc: "改编策略生成" },
-    { key: "scriptAgent:scriptAgent", name: "剧本Agent:剧本生成", desc: "剧本生成" },
     { key: "productionAgent:decisionAgent", name: "生产Agent:决策层", desc: "决策层" },
     { key: "productionAgent:supervisionAgent", name: "生产Agent:监督层", desc: "监督层" },
     { key: "productionAgent:deriveAssetsAgent", name: "生产Agent:衍生资产", desc: "衍生资产" },

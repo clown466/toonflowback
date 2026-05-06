@@ -92,7 +92,8 @@ export interface ClearProjectStoryboardsResult {
   message: string;
 }
 
-export const FLOVA_SCRIPT_NAME = "Flova 原文生产容器";
+export const LEGACY_FLOVA_SCRIPT_NAME = "Flova 原文生产容器";
+export const FLOVA_SCRIPT_NAME = "Flova 小说章节工作区";
 const MAIN_TRACK_NAME = "主线分镜";
 
 export function nonEmpty(value: unknown): string | undefined {
@@ -281,9 +282,9 @@ function buildScriptContent(project: ProjectRow, novels: NovelRow[], fallbackScr
       .join("\n\n");
   }
 
-  const scriptContent = fallbackScripts.map((script) => `${script.name ?? "未命名剧本"}\n${script.content ?? ""}`).join("\n\n").trim();
+  const scriptContent = fallbackScripts.map((script) => `${toPublicWorkspaceName(script.name ?? "未命名分镜工作区")}\n${script.content ?? ""}`).join("\n\n").trim();
   if (scriptContent) return scriptContent;
-  return [project.name, project.type, project.intro].filter(Boolean).join("\n") || "Flova 自动创建的生产容器";
+  return [project.name, project.type, project.intro].filter(Boolean).join("\n") || "Flova 自动创建的小说章节工作区";
 }
 
 async function linkProjectAssetsToScript(projectId: number, scriptId: number) {
@@ -314,6 +315,21 @@ function getProductionScriptName(novels: NovelRow[]) {
   return FLOVA_SCRIPT_NAME;
 }
 
+function getLegacyProductionScriptName(novels: NovelRow[]) {
+  if (novels.length === 1) return `${LEGACY_FLOVA_SCRIPT_NAME} - ${formatChapterLabel(novels[0]!)}`;
+  if (novels.length > 1) {
+    const indexes = novels.map((novel) => novel.chapterIndex ?? novel.id).filter((index): index is number => typeof index === "number");
+    const label = indexes.length ? `第${indexes[0]}-${indexes[indexes.length - 1]}章` : `${novels.length}章`;
+    return `${LEGACY_FLOVA_SCRIPT_NAME} - ${label}`;
+  }
+  return LEGACY_FLOVA_SCRIPT_NAME;
+}
+
+export function toPublicWorkspaceName(name: string | null | undefined) {
+  const value = String(name ?? FLOVA_SCRIPT_NAME).trim() || FLOVA_SCRIPT_NAME;
+  return value.replace(LEGACY_FLOVA_SCRIPT_NAME, FLOVA_SCRIPT_NAME);
+}
+
 export function formatChapterSelectionLabel(novel: NovelRow) {
   const index = novel.chapterIndex ?? novel.id;
   const title = cleanName(novel.chapter);
@@ -325,18 +341,24 @@ export async function ensureProductionScript(project: ProjectRow, novels: NovelR
   const scripts: ScriptRow[] = scriptRows.filter((script: { id?: number | null }): script is ScriptRow => typeof script.id === "number");
   const content = buildScriptContent(project, novels, scripts);
   const targetScriptName = getProductionScriptName(novels);
+  const legacyTargetScriptName = getLegacyProductionScriptName(novels);
 
   if (preferredScriptId) {
     const preferred = scripts.find((script) => script.id === preferredScriptId);
-    if (preferred && (!novels.length || preferred.name === targetScriptName)) {
+    if (preferred && (!novels.length || preferred.name === targetScriptName || preferred.name === legacyTargetScriptName)) {
+      if (preferred.name === legacyTargetScriptName) {
+        await u.db("o_script").where("id", preferred.id).update({ name: targetScriptName });
+        preferred.name = targetScriptName;
+      }
       await linkProjectAssetsToScript(project.id, preferred.id);
       return { script: preferred, created: false, content };
     }
   }
 
-  const flovaScript = scripts.find((script) => script.name === targetScriptName);
+  const flovaScript = scripts.find((script) => script.name === targetScriptName || script.name === legacyTargetScriptName);
   if (flovaScript) {
     const update: Partial<ScriptRow> = {};
+    if (flovaScript.name === legacyTargetScriptName) update.name = targetScriptName;
     if (content && content !== flovaScript.content) update.content = content;
     if (Object.keys(update).length > 0) await u.db("o_script").where("id", flovaScript.id).update(update);
     await linkProjectAssetsToScript(project.id, flovaScript.id);
@@ -670,7 +692,7 @@ async function getProjectScriptsWithStoryboardCounts(projectId: number) {
 
   return rows.map((row: any) => ({
     id: Number(row.id),
-    name: String(row.name ?? "未命名生产容器"),
+    name: toPublicWorkspaceName(row.name ?? "未命名分镜工作区"),
     projectId: Number(row.projectId),
     storyboardCount: Number(row.storyboardCount ?? 0),
   }));
@@ -699,7 +721,7 @@ export async function clearProjectStoryboards(projectId: number, options: ClearP
       targetScripts: scriptsWithStoryboards,
       needsSelection: scriptsWithStoryboards.length > 1,
       message: scriptsWithStoryboards.length
-        ? `没有匹配到要清空的生产容器。当前有分镜的容器：${scriptsWithStoryboards.map((script) => `${script.name}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`
+        ? `没有匹配到要清空的章节分镜工作区。当前有分镜的工作区：${scriptsWithStoryboards.map((script) => `${toPublicWorkspaceName(script.name)}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`
         : "当前项目没有可清空的分镜。",
     };
   }
@@ -712,7 +734,7 @@ export async function clearProjectStoryboards(projectId: number, options: ClearP
       remainingCount: scriptsWithStoryboards.reduce((sum, script) => sum + script.storyboardCount, 0),
       targetScripts,
       needsSelection: true,
-      message: `当前有多个生产容器含分镜，请指定要清空的容器：${targetScripts.map((script) => `${script.name}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`,
+      message: `当前有多个章节分镜工作区含分镜，请指定要清空的章节：${targetScripts.map((script) => `${toPublicWorkspaceName(script.name)}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`,
     };
   }
 
@@ -731,7 +753,7 @@ export async function clearProjectStoryboards(projectId: number, options: ClearP
     remainingCount,
     targetScripts,
     needsSelection: false,
-    message: `已清空 ${targetScripts.map((script) => `「${script.name}」`).join("、")} 的 ${deletedCount} 条分镜。`,
+    message: `已清空 ${targetScripts.map((script) => `「${toPublicWorkspaceName(script.name)}」`).join("、")} 的 ${deletedCount} 条分镜。`,
   };
 }
 
@@ -776,7 +798,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
     return {
       projectId,
       episodesId,
-      scriptName: script.name ?? FLOVA_SCRIPT_NAME,
+      scriptName: toPublicWorkspaceName(script.name),
       scriptCreated,
       storyboardIds: existingRows.map((row: { id?: number | null }) => Number(row.id)).filter(Boolean),
       createdCount: 0,
@@ -787,7 +809,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
       selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
       selectedChapterLabels: novels.map(formatChapterSelectionLabel),
       storyboardTable,
-      message: `当前生产容器「${script.name ?? FLOVA_SCRIPT_NAME}」已有 ${existingCount} 个分镜，已切换到该章节剧集。需要覆盖重做时请说“重新生成分镜”。`,
+      message: `当前章节分镜工作区「${toPublicWorkspaceName(script.name)}」已有 ${existingCount} 个分镜，已切换到该章节。需要覆盖重做时请说“重新生成分镜”。`,
     };
   }
 
@@ -798,7 +820,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
 
   const startIndex = append && existingCount > 0 ? existingCount : 0;
   const draftItems = createDraftItems(project, novels, scriptContent, assets);
-  if (!draftItems.length) throw new Error("当前项目缺少可用于生成分镜的小说、剧本或项目简介。");
+  if (!draftItems.length) throw new Error("当前项目缺少可用于生成分镜的小说章节、事件分析或项目简介。");
 
   const storyboardIds = await insertDraftItems(projectId, episodesId, draftItems, startIndex);
   const storyboardTable = buildStoryboardTable(draftItems);
@@ -808,7 +830,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
   return {
     projectId,
     episodesId,
-    scriptName: script.name ?? FLOVA_SCRIPT_NAME,
+    scriptName: toPublicWorkspaceName(script.name),
     scriptCreated,
     storyboardIds,
     createdCount: storyboardIds.length,
@@ -819,6 +841,6 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
     selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
     selectedChapterLabels: novels.map(formatChapterSelectionLabel),
     storyboardTable,
-    message: `${verb} ${storyboardIds.length} 个分镜，生产剧集为「${script.name ?? FLOVA_SCRIPT_NAME}」。已按单章节隔离处理，未把后续章节并入上下文。`,
+    message: `${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。`,
   };
 }

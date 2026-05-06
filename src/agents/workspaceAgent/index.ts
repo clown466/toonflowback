@@ -11,6 +11,7 @@ import {
   WORKSPACE_DOMAIN_AGENT_IDS,
   WorkspaceDomainAgentId,
 } from "@/agents/workspaceAgent/orchestrationRegistry";
+import { toPublicWorkspaceName } from "@/services/storyboardDraftGeneration";
 import ResTool from "@/socket/resTool";
 import { toToolJsonSchema } from "@/utils/jsonSchema";
 import * as fs from "fs";
@@ -72,7 +73,7 @@ export async function runDecisionAI(ctx: AgentContext) {
   const prompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "workspaceAgent:decisionAgent");
 
   const projectId = resTool.data.projectId;
-  const [projectData, novels, assetRows, scripts] = await Promise.all([
+  const [projectData, novels, assetRows, workspaceRows] = await Promise.all([
     u.db("o_project").where("id", projectId).first(),
     u.db("o_novel").where("projectId", projectId).select("id", "chapter", "chapterIndex", "eventState", "event", "chapterData").orderBy("chapterIndex", "asc"),
     u.db("o_assets").where("projectId", projectId).whereNull("assetsId").select("type").count({ count: "id" }).groupBy("type"),
@@ -80,12 +81,12 @@ export async function runDecisionAI(ctx: AgentContext) {
   ]);
 
   const novelContents = new Map((novels as any[]).map((novel) => [String(novel.chapterData ?? "").trim(), novel]));
-  const scriptSummaries = (scripts as any[]).map((script) => {
-    const matchedNovel = novelContents.get(String(script.content ?? "").trim());
+  const workspaceSummaries = (workspaceRows as any[]).map((workspace) => {
+    const matchedNovel = novelContents.get(String(workspace.content ?? "").trim());
     return {
-      id: script.id,
-      name: script.name ?? "未命名",
-      extractState: script.extractState,
+      id: workspace.id,
+      name: toPublicWorkspaceName(workspace.name ?? "未命名分镜工作区"),
+      extractState: workspace.extractState,
       matchedNovelChapter: matchedNovel ? `第${matchedNovel.chapterIndex}章 ${matchedNovel.chapter ?? ""}`.trim() : null,
     };
   });
@@ -94,13 +95,13 @@ export async function runDecisionAI(ctx: AgentContext) {
 
   const mem = buildMemPrompt(await memory.get(text));
   const importedChapterEpisodeHint =
-    (novels as any[]).length > scriptSummaries.length
-      ? `按当前导入形态，应优先按小说章节规划集数：${(novels as any[]).length} 章≈${(novels as any[]).length} 集；剧本表只有 ${scriptSummaries.length} 条记录，不代表项目只有 ${scriptSummaries.length} 集。`
+    (novels as any[]).length > workspaceSummaries.length
+      ? `按当前导入形态，应优先按小说章节规划集数：${(novels as any[]).length} 章≈${(novels as any[]).length} 集；内部章节工作区只有 ${workspaceSummaries.length} 条记录，不代表项目只有 ${workspaceSummaries.length} 集。`
       : "";
-  const hasDirectStoryboardIntent = /不(?:想|要).*剧本|跳过.*剧本|忽略.*剧本|不要.*改编|直接.*(?:Seedance|分镜|镜头)|Seedance.*分镜/i.test(text);
   const projectInfo = [
     "## 当前数据库项目级上下文（最高优先级）",
-    "注意：如果 Memory/历史摘要里的剧本数、资产数、章节状态和本段冲突，必须以本段实时数据库状态为准。",
+    "注意：如果 Memory/历史摘要里的工作区数、资产数、章节状态和本段冲突，必须以本段实时数据库状态为准。",
+    "产品路径固定为：小说 -> 资产 -> 分镜表 -> 分镜图 -> 视频。当前项目不使用“改编剧本”步骤，不要建议用户生成、确认或管理改编剧本。",
     `projectId：${projectId}`,
     `项目名称：${projectData?.name ?? "未知"}`,
     `小说类型：${projectData?.type ?? "未知"}`,
@@ -113,10 +114,9 @@ export async function runDecisionAI(ctx: AgentContext) {
     "章节称呼规则：不要无条件跟随用户口误；若用户说第N章但原始名不是第N章，必须说“项目内第N条/原始名xxx”，不能断言原文有第N章。",
     importedChapterEpisodeHint,
     `项目资产数：${Object.values(assetSummary).reduce((sum, value) => sum + value, 0)}（角色${assetSummary.role}，场景${assetSummary.scene}，道具${assetSummary.tool}，其他${assetSummary.other}）`,
-    `剧本表记录数：${scriptSummaries.length}`,
-    `剧本表记录：${scriptSummaries.map((script) => `${script.id}:${script.name}${script.matchedNovelChapter ? `（内容与${script.matchedNovelChapter}原文相同，可能不是用户另写剧本；不要把它当成全项目唯一剧本/唯一集数）` : ""}`).join("；") || "无"}`,
-    "沟通要求：用户没要求走剧本时，不要把剧本当成必经步骤；可直接围绕小说导入条目/事件分析/资产库推进。旧生产表的 scriptId/episodesId 只是工作区键/生产容器，不等于必须先创作正式剧本。",
-    hasDirectStoryboardIntent ? "当前用户命中“跳过正式剧本、直接分镜/Seedance”意图：禁止调用编剧子能力，禁止说必须生成剧本；如果需要工作区键，只能说明可创建/使用原文生产容器，内容来自小说原文或事件摘要。" : "",
+    `内部章节分镜工作区记录数：${workspaceSummaries.length}`,
+    `内部章节分镜工作区记录：${workspaceSummaries.map((workspace) => `${workspace.id}:${workspace.name}${workspace.matchedNovelChapter ? `（内容与${workspace.matchedNovelChapter}原文相同，是章节工作区，不是改编剧本）` : ""}`).join("；") || "无"}`,
+    "沟通要求：不要把内部 o_script/scriptId/episodesId 说成剧本或生产容器；对用户只说小说章节、资产库、分镜表、分镜图、视频。需要保存分镜时自动创建或复用章节分镜工作区。",
   ].filter(Boolean).join("\n");
 
   const { fullStream } = await u.Ai.Text("workspaceAgent:decisionAgent", ctx.thinkConfig.think, ctx.thinkConfig.thinlLevel).stream({
@@ -195,57 +195,12 @@ async function createSubAgent(parentCtx: AgentContext) {
   }
 
   const promptInput = toToolJsonSchema<{ prompt: string }>(z.object({
-    prompt: z.string().describe("交给子Agent的项目级任务简约描述，100字以内；不要包含虚构的 scriptId"),
+    prompt: z.string().describe("交给子控的项目级任务简约描述，100字以内"),
   }));
 
-  async function delegateScriptAgent(prompt: string) {
-    const skill = path.join(u.getPath("skills"), "script_agent_decision.md");
-    const systemPrompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "scriptAgent:decisionAgent");
-    const [projectData, novelData, scriptList] = await Promise.all([
-      u.db("o_project").where("id", resTool.data.projectId).first(),
-      u.db("o_novel").where("projectId", resTool.data.projectId).select("chapterIndex"),
-      u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime"),
-    ]);
-
-    const projectInfo = [
-      "## 项目级编剧上下文",
-      `projectId：${resTool.data.projectId}`,
-      `小说名称：${projectData?.name ?? "未知"}`,
-      `小说类型：${projectData?.type ?? "未知"}`,
-      `小说简介：${projectData?.intro ?? "无"}`,
-      `目标画风：${projectData?.artStyle ?? "无"}`,
-      `视频画幅：${projectData?.videoRatio ?? "16:9"}`,
-      `章节数量：${novelData.length}章`,
-      `已有剧本：${scriptList.map((s: any) => `${s.id}:${s.name ?? "未命名"}`).join("，") || "无"}`,
-    ].join("\n");
-
-    return runAgent({
-      key: "scriptAgent:decisionAgent",
-      prompt,
-      system: systemPrompt,
-      name: "编剧总控",
-      memoryKey: "assistant:delegation:scriptAgent",
-      messages: [
-        { role: "assistant", content: projectInfo },
-        { role: "user", content: prompt },
-      ],
-    });
-  }
-
   async function delegateProductionAgent(prompt: string) {
-    const scripts = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime");
+    const workspaces = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime");
     const scriptId = resTool.data.scriptId;
-    const needsScript = /分镜| storyboard|storyboard|导演|拍摄|视频|生产|生成视频|镜头/i.test(prompt);
-
-    if (!scriptId && needsScript) {
-      return {
-        status: "workspace_key_required",
-        projectId: resTool.data.projectId,
-        message:
-          "旧生产工作台的分镜/导演计划/视频生产数据当前仍需要一个 scriptId/episodesId 作为工作区键。这个键只是生产容器，不等于必须生成正式改编剧本；若用户要求跳过剧本，应创建或选择一个‘小说原文/事件摘要生产容器’，内容来自小说原文或事件摘要，再继续分镜。",
-        scripts,
-      };
-    }
 
     const skill = path.join(u.getPath("skills"), "production_agent_decision.md");
     const systemPrompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "productionAgent:decisionAgent");
@@ -262,11 +217,12 @@ async function createSubAgent(parentCtx: AgentContext) {
     const productionContext = [
       "## 项目级生产上下文",
       `projectId：${resTool.data.projectId}`,
-      `scriptId：${scriptId ?? "未指定"}`,
+      `当前章节分镜工作区ID：${scriptId ?? "未指定，必要时由工具按小说章节自动创建或复用"}`,
       `项目名称：${projectData?.name ?? "未知"}`,
       `目标画风：${projectData?.artStyle ?? "无"}`,
       `资产库：${JSON.stringify(assets).slice(0, 12000)}`,
-      `可用剧本：${scripts.map((s: any) => `${s.id}:${s.name ?? "未命名"}`).join("，") || "无"}`,
+      `已有章节分镜工作区：${workspaces.map((s: any) => `${s.id}:${toPublicWorkspaceName(s.name ?? "未命名分镜工作区")}`).join("，") || "无"}`,
+      "本项目不走改编剧本步骤；生产流程必须使用小说章节/事件分析、项目资产库、分镜表、分镜图、视频。",
     ].join("\n");
 
     return runAgent({
@@ -311,7 +267,6 @@ async function createSubAgent(parentCtx: AgentContext) {
   }
 
   async function delegateDomainAgent(agentId: WorkspaceDomainAgentId, prompt: string) {
-    if (agentId === "script") return delegateScriptAgent(prompt);
     if (agentId === "production") return delegateProductionAgent(prompt);
     return buildAssetReferencePlan(prompt);
   }
@@ -339,15 +294,9 @@ async function createSubAgent(parentCtx: AgentContext) {
     description: "统一转交给领域子控。优先使用这个工具，而不是直接调用具体旧工具；叶子子 Agent 和 skills 由领域子控自行调度。",
     inputSchema: toToolJsonSchema<{ agentId: WorkspaceDomainAgentId; prompt: string }>(z.object({
       agentId: z.enum(WORKSPACE_DOMAIN_AGENT_IDS).describe("要转交的领域子控"),
-      prompt: z.string().describe("交给领域子控的项目级任务描述，100字以内；不要包含虚构的 scriptId"),
+      prompt: z.string().describe("交给领域子控的项目级任务描述，100字以内"),
     })),
     execute: async ({ agentId, prompt }) => delegateDomainAgent(agentId, prompt),
-  });
-
-  const run_script_agent_for_project = tool({
-    description: "兼容旧提示词：项目级转交编剧决策 Agent。新流程优先调用 delegate_agent(agentId='script')。",
-    inputSchema: promptInput,
-    execute: async ({ prompt }) => delegateScriptAgent(prompt),
   });
 
   const run_production_agent_for_assets = tool({
@@ -368,7 +317,6 @@ async function createSubAgent(parentCtx: AgentContext) {
     list_available_agents,
     list_available_skills,
     delegate_agent,
-    run_script_agent_for_project,
     run_production_agent_for_assets,
     run_asset_reference_generation_plan,
   };

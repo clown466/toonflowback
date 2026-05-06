@@ -4,7 +4,7 @@ import u from "@/utils";
 import { parseFrontmatter, scanSkills } from "@/utils/agent/skillsTools";
 import { listImageGenerationSkills } from "@/services/imageGenerationSkill";
 
-export const WORKSPACE_DOMAIN_AGENT_IDS = ["script", "production", "asset_reference_planner"] as const;
+export const WORKSPACE_DOMAIN_AGENT_IDS = ["production", "asset_reference_planner"] as const;
 export type WorkspaceDomainAgentId = (typeof WORKSPACE_DOMAIN_AGENT_IDS)[number];
 
 export interface WorkspaceDomainAgentCatalogItem {
@@ -31,21 +31,11 @@ export interface WorkspaceSkillCatalogItem {
 export function getWorkspaceDomainAgentCatalog(): WorkspaceDomainAgentCatalogItem[] {
   return [
     {
-      id: "script",
-      name: "编剧总控",
-      role: "负责故事骨架、改编策略、剧本生成和编剧监督。",
-      delegateWhen: ["用户明确要求写剧本、改编剧本、整理故事骨架、制定改编策略。"],
-      doNotUseWhen: ["用户明确要求跳过正式剧本，直接做资产、分镜、Seedance 脚本分镜或生产准备。"],
-      childAgents: ["storySkeletonAgent", "adaptationStrategyAgent", "scriptAgent", "supervisionAgent"],
-      canWriteData: true,
-      riskLevel: "write",
-    },
-    {
       id: "production",
       name: "生产总控",
-      role: "负责已有素材/生产容器下的衍生资产、导演规划、分镜表、分镜面板和生产监督。",
-      delegateWhen: ["用户要求分镜、导演规划、生产面板、视频制作准备、衍生资产或已有剧本后的制作流程。"],
-      doNotUseWhen: ["项目还没有小说/资产/生产容器且用户只是询问状态。", "用户只要求上传、编辑或查看普通项目资料。"],
+      role: "负责小说章节到分镜表、分镜图、视频制作准备的生产流程，并使用项目资产库保持视觉一致。",
+      delegateWhen: ["用户要求分镜、导演规划、分镜表、分镜图、视频制作准备、衍生资产或制作流程。"],
+      doNotUseWhen: ["项目还没有小说和资产且用户只是询问状态。", "用户只要求上传、编辑或查看普通项目资料。"],
       childAgents: ["deriveAssetsAgent", "generateAssetsAgent", "directorPlanAgent", "storyboardGenAgent", "storyboardPanelAgent", "storyboardTableAgent", "supervisionAgent"],
       canWriteData: true,
       riskLevel: "cost",

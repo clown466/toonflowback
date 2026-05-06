@@ -1,4 +1,4 @@
-// @db-hash 7033a684fe15c9e912d3cb5c70a60afe
+// @db-hash 07926dd4f2df8b12832f971ec8d86597
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -70,6 +70,7 @@ export interface o_directorBoard {
   'assetIds'?: string | null;
   'createTime'?: number | null;
   'filePath'?: string | null;
+  'flowId'?: number | null;
   'id'?: number;
   'index'?: number | null;
   'model'?: string | null;

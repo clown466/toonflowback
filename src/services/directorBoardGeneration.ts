@@ -47,6 +47,7 @@ interface DirectorBoardRow {
   name?: string | null;
   prompt?: string | null;
   filePath?: string | null;
+  flowId?: number | null;
   state?: string | null;
   reason?: string | null;
   model?: string | null;

@@ -72,6 +72,9 @@ interface SkillStoryboardJson {
 interface StoryboardPlanningHint {
   explicitShotCount?: number;
   estimatedMinimumShots: number;
+  estimatedMinimumDuration: number;
+  sourceDialogueSeconds: number;
+  sourceDialogueText: string;
   eventCount: number;
 }
 
@@ -100,6 +103,14 @@ const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
 };
 
 const BASE_STORYBOARD_METHOD_PROMPT = DEFAULT_STORYBOARD_SKILL.content;
+const MAX_STORYBOARD_SHOTS = 40;
+const MAX_VIDEO_SHOT_DURATION = 15;
+const ENGLISH_NORMAL_WORDS_PER_SECOND = 2.5;
+const ENGLISH_FAST_WORDS_PER_SECOND = 3;
+const ENGLISH_SLOW_WORDS_PER_SECOND = 2;
+const CJK_NORMAL_CHARS_PER_SECOND = 3;
+const CJK_FAST_CHARS_PER_SECOND = 4;
+const CJK_SLOW_CHARS_PER_SECOND = 2;
 
 function fallback(projectId: number, options: GenerateProjectStoryboardWithSkillOptions, reason: string) {
   return generateProjectStoryboardDraft(projectId, options).then((result) => ({
@@ -159,7 +170,7 @@ function parseStoryboardJson(text: string): SkillStoryboardJson {
     if (!imagePrompt) throw new Error(`第 ${index + 1} 个镜头缺少 imagePrompt`);
     const duration = Number(shot.duration);
     return {
-      duration: Number.isFinite(duration) && duration > 0 ? Math.min(Math.max(Math.round(duration), 1), 30) : 4,
+      duration: Number.isFinite(duration) && duration > 0 ? Math.min(Math.max(Math.round(duration), 1), MAX_VIDEO_SHOT_DURATION) : 4,
       videoDesc,
       imagePrompt,
       associateAssetNames: Array.isArray(shot.associateAssetNames)
@@ -187,7 +198,7 @@ function parseStoryboardJson(text: string): SkillStoryboardJson {
   });
   return {
     storyboardTable: nonEmpty(parsed.storyboardTable) ?? "",
-    shots: normalizedShots.slice(0, 40),
+    shots: normalizedShots.slice(0, MAX_STORYBOARD_SHOTS),
   };
 }
 
@@ -237,14 +248,106 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function uniqueTextParts(parts: string[]) {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    const text = part.replace(/\s+/g, " ").trim();
+    if (!text || seen.has(text.toLowerCase())) continue;
+    seen.add(text.toLowerCase());
+    result.push(text);
+  }
+  return result;
+}
+
+function stripSpeakerLabels(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*[-*]?\s*[\w\u4e00-\u9fa5 .'"’‘-]{1,36}\s*[:：]\s*/, "").trim())
+    .join("\n");
+}
+
+function isNoDialogueText(text: string) {
+  return /^(?:无台词|无对白|无|none|no dialogue|no lines|n\/a|-)+$/i.test(text.replace(/\s+/g, " ").trim());
+}
+
+function extractDialogueFromSource(text: string) {
+  const source = String(text ?? "");
+  const parts: string[] = [];
+  const quotePatterns = [
+    /[「『“]([^「」『』“”]{2,800})[」』”]/g,
+    /"([^"\n]{2,800})"/g,
+  ];
+  for (const pattern of quotePatterns) {
+    for (const match of source.matchAll(pattern)) {
+      const value = stripSpeakerLabels(match[1] ?? "").trim();
+      if (value && !isNoDialogueText(value)) parts.push(value);
+    }
+  }
+
+  for (const line of source.split(/\r?\n/)) {
+    const match = line.match(/^\s*[-*]?\s*[\w\u4e00-\u9fa5 .'"’‘-]{1,36}\s*[:：]\s*(.{2,800})$/);
+    if (!match?.[1]) continue;
+    const value = match[1].trim();
+    if (value && !isNoDialogueText(value) && !/^\|?\s*(?:事件|角色|章节|chapter|scene|shot|镜号)\b/i.test(value)) parts.push(value);
+  }
+
+  return uniqueTextParts(parts).join("\n");
+}
+
+function getSpeechRates(emotion?: string | null) {
+  const text = String(emotion ?? "").toLowerCase();
+  if (/怒|急|吼|喊|争吵|惊慌|慌乱|panic|angry|furious|shout|yell|argue|urgent/.test(text)) {
+    return { englishWordsPerSecond: ENGLISH_FAST_WORDS_PER_SECOND, cjkCharsPerSecond: CJK_FAST_CHARS_PER_SECOND };
+  }
+  if (/悲|哭|低语|虚弱|临终|沉思|哽咽|sad|whisper|weak|dying|cry|soft/.test(text)) {
+    return { englishWordsPerSecond: ENGLISH_SLOW_WORDS_PER_SECOND, cjkCharsPerSecond: CJK_SLOW_CHARS_PER_SECOND };
+  }
+  return { englishWordsPerSecond: ENGLISH_NORMAL_WORDS_PER_SECOND, cjkCharsPerSecond: CJK_NORMAL_CHARS_PER_SECOND };
+}
+
+function estimateSpeechDurationSeconds(text: string, emotion?: string | null) {
+  const dialogue = stripSpeakerLabels(String(text ?? "").replace(/\([^)]*\)/g, " ").replace(/（[^）]*）/g, " ")).trim();
+  if (!dialogue || isNoDialogueText(dialogue)) return 0;
+  const englishWords = dialogue.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)?/g)?.length ?? 0;
+  const cjkChars = dialogue.match(/[\u3400-\u9fff]/g)?.length ?? 0;
+  if (!englishWords && !cjkChars) return 0;
+  const punctuationCount = dialogue.match(/[,.!?;:，。！？；：…]+/g)?.length ?? 0;
+  const rates = getSpeechRates(emotion);
+  const spokenSeconds = englishWords / rates.englishWordsPerSecond + cjkChars / rates.cjkCharsPerSecond;
+  const pauseSeconds = Math.min(punctuationCount * 0.35, 4);
+  return Math.ceil(spokenSeconds + pauseSeconds + 1);
+}
+
+function extractShotDialogueText(shot: SkillShot) {
+  const dialogue = nonEmpty(shot.dialogue);
+  if (dialogue && !isNoDialogueText(dialogue)) return dialogue;
+  return "";
+}
+
+function getSourceDialogue(novels: NovelRow[]) {
+  const text = novels
+    .map((novel) => [novel.event, novel.chapterData].filter(Boolean).join("\n"))
+    .filter(Boolean)
+    .join("\n\n");
+  return extractDialogueFromSource(text);
+}
+
 function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): StoryboardPlanningHint {
   const explicitShotCount = parseRequestedShotCount(sourceText);
   const eventCount = novels.reduce((sum, novel) => sum + countEventRows(novel.event), 0);
   const textLength = novels.reduce((sum, novel) => sum + String(novel.chapterData ?? "").length, 0);
-  const estimatedMinimumShots = explicitShotCount ?? clamp(Math.max(4, eventCount * 2, Math.ceil(textLength / 700)), 4, 16);
+  const sourceDialogueText = getSourceDialogue(novels);
+  const sourceDialogueSeconds = estimateSpeechDurationSeconds(sourceDialogueText);
+  const dialogueShotFloor = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds / 8) : 0;
+  const estimatedMinimumShots = explicitShotCount ?? clamp(Math.max(4, eventCount * 2, Math.ceil(textLength / 700), dialogueShotFloor), 4, 16);
+  const estimatedMinimumDuration = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds * 0.9) : 0;
   return {
     explicitShotCount,
     estimatedMinimumShots,
+    estimatedMinimumDuration,
+    sourceDialogueSeconds,
+    sourceDialogueText: compactText(sourceDialogueText, 1000),
     eventCount,
   };
 }
@@ -356,6 +459,36 @@ function toDraftItems(project: ProjectRow, parsed: SkillStoryboardJson, assets: 
   });
 }
 
+function normalizeStoryboardTimings(parsed: SkillStoryboardJson): SkillStoryboardJson {
+  return {
+    ...parsed,
+    shots: parsed.shots.map((shot) => {
+      const dialogueDuration = estimateSpeechDurationSeconds(extractShotDialogueText(shot), shot.emotion);
+      const duration = Math.min(Math.max(shot.duration, dialogueDuration || 1), MAX_VIDEO_SHOT_DURATION);
+      return { ...shot, duration };
+    }),
+  };
+}
+
+function getTotalDuration(parsed: SkillStoryboardJson) {
+  return parsed.shots.reduce((sum, shot) => sum + shot.duration, 0);
+}
+
+function getOutputDialogueSeconds(parsed: SkillStoryboardJson) {
+  const text = parsed.shots.map(extractShotDialogueText).filter(Boolean).join("\n");
+  return estimateSpeechDurationSeconds(text);
+}
+
+function findOversizedDialogueShot(parsed: SkillStoryboardJson) {
+  for (const [index, shot] of parsed.shots.entries()) {
+    const dialogueDuration = estimateSpeechDurationSeconds(extractShotDialogueText(shot), shot.emotion);
+    if (dialogueDuration > MAX_VIDEO_SHOT_DURATION) {
+      return { index: index + 1, dialogueDuration };
+    }
+  }
+  return null;
+}
+
 function storyboardCountInstruction(planning?: StoryboardPlanningHint) {
   if (planning?.explicitShotCount) {
     return `用户明确要求数量：必须输出 ${planning.explicitShotCount} 个分镜；storyboardTable 数据行数和 shots.length 都必须等于 ${planning.explicitShotCount}。`;
@@ -367,10 +500,28 @@ function storyboardCountInstruction(planning?: StoryboardPlanningHint) {
   ].join("\n");
 }
 
-function shouldRetryForShotCount(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint) {
+function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint) {
   const count = parsed.shots.length;
-  if (planning?.explicitShotCount) return count !== planning.explicitShotCount;
-  return (planning?.estimatedMinimumShots ?? 4) > 3 && count <= 3;
+  if (planning?.explicitShotCount && count !== planning.explicitShotCount) return `用户要求 ${planning.explicitShotCount} 个分镜，你返回了 ${count} 个`;
+
+  if (!planning?.explicitShotCount && count < (planning?.estimatedMinimumShots ?? 4)) {
+    return `分镜拆分不足：当前 ${count} 个，按事件和对白长度建议不少于 ${planning?.estimatedMinimumShots ?? 4} 个`;
+  }
+
+  const oversized = findOversizedDialogueShot(parsed);
+  if (oversized) {
+    return `第 ${oversized.index} 镜对白预计需要 ${oversized.dialogueDuration}s，超过单条视频镜头 ${MAX_VIDEO_SHOT_DURATION}s 上限，必须把对白拆到多个镜头`;
+  }
+
+  if (planning?.estimatedMinimumDuration && getTotalDuration(parsed) < planning.estimatedMinimumDuration) {
+    return `总时长过短：当前 ${getTotalDuration(parsed)}s，选中章节对白至少需要约 ${planning.estimatedMinimumDuration}s`;
+  }
+
+  if (planning?.sourceDialogueSeconds && planning.sourceDialogueSeconds >= 8 && getOutputDialogueSeconds(parsed) < planning.sourceDialogueSeconds * 0.6) {
+    return `输出对白覆盖不足：选中章节对白约 ${planning.sourceDialogueSeconds}s，但分镜对白字段明显缺失，必须保留原文对白`;
+  }
+
+  return "";
 }
 
 async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: Record<string, any>, retryReason?: string) {
@@ -388,6 +539,8 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
     "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "6. 角色图字段可先填空；系统会按 associateAssetNames 匹配资产库图片补齐显示。",
+    `7. 含对白镜头必须按可听懂语速估算时长：英文正常约 2-2.5 words/sec，短剧急促对白也不应超过约 3 words/sec；中文正常约 3 字/秒。每条视频镜头 duration 不超过 ${MAX_VIDEO_SHOT_DURATION}s，超出必须拆成多镜头。`,
+    planning?.sourceDialogueSeconds ? `8. 当前选中章节原文对白预计至少需要约 ${planning.sourceDialogueSeconds}s；总分镜时长不能明显低于这个值，且对白必须进入 dialogue 字段。` : "",
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",
@@ -495,18 +648,26 @@ export async function generateProjectStoryboardWithSkill(
   const skill = await resolveStoryboardSkill(options.skillId, sourceText);
   if (!skill) return fallback(projectId, { ...options, sourceText, force, append }, "没有可用分镜 Skill");
 
-  let parsed: SkillStoryboardJson;
-  const modelContext = buildModelContext(project, novels, assets, scriptContent, options.userRequirement ?? sourceText);
+  let parsed: SkillStoryboardJson | undefined;
+  const requestText = [sourceText, options.userRequirement].filter(Boolean).join("\n");
+  const modelContext = buildModelContext(project, novels, assets, scriptContent, requestText);
   const planning = modelContext.storyboardPlanning as StoryboardPlanningHint;
   try {
-    parsed = await invokeStoryboardModel(skill, modelContext);
-    if (shouldRetryForShotCount(parsed, planning)) {
-      const expected = planning.explicitShotCount ? `用户要求 ${planning.explicitShotCount} 个，你返回了 ${parsed.shots.length} 个` : `未限定数量时不应只返回 ${parsed.shots.length} 个，建议不少于 ${planning.estimatedMinimumShots} 个`;
-      parsed = await invokeStoryboardModel(skill, modelContext, expected);
+    let retryReason = "";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, retryReason || undefined));
+      const qualityReason = validateStoryboardQuality(parsed, planning);
+      if (!qualityReason) break;
+      retryReason = qualityReason;
+      if (attempt === 2) throw new Error(`模型分镜质量不合格：${qualityReason}`);
     }
   } catch (error) {
-    return fallback(projectId, { ...options, sourceText, force, append }, error instanceof Error ? error.message : "模型生成失败");
+    const message = error instanceof Error ? error.message : "模型生成失败";
+    if (message.startsWith("模型分镜质量不合格")) throw new Error(message);
+    return fallback(projectId, { ...options, sourceText, force, append }, message);
   }
+
+  if (!parsed) return fallback(projectId, { ...options, sourceText, force, append }, "模型未生成可用分镜");
 
   if (planning.explicitShotCount && parsed.shots.length > planning.explicitShotCount) {
     parsed = { ...parsed, shots: parsed.shots.slice(0, planning.explicitShotCount), storyboardTable: "" };

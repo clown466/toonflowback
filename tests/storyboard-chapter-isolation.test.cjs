@@ -61,6 +61,10 @@ async function createSchema(db) {
     table.integer('assetsId');
     table.integer('projectId');
   });
+  await db.schema.createTable('o_image', (table) => {
+    table.increments('id').primary();
+    table.text('filePath');
+  });
   await db.schema.createTable('o_scriptAssets', (table) => {
     table.integer('scriptId');
     table.integer('assetId');

@@ -61,6 +61,10 @@ async function createSchema(db) {
     table.integer('assetsId');
     table.integer('projectId');
   });
+  await db.schema.createTable('o_image', (table) => {
+    table.increments('id').primary();
+    table.text('filePath');
+  });
   await db.schema.createTable('o_scriptAssets', (table) => {
     table.integer('scriptId');
     table.integer('assetId');
@@ -138,6 +142,8 @@ async function main() {
   ]);
 
   let capturedPrompt = '';
+  let capturedPrompts = [];
+  let mockStoryboardResponses = [];
   const service = loadTsModule('src/services/storyboardSkillGeneration.ts', {
     '@/utils': {
       db,
@@ -145,35 +151,39 @@ async function main() {
         Text: () => ({
           invoke: async (input) => {
             capturedPrompt = input.prompt;
-            return {
-              text: JSON.stringify({
-                storyboardTable: '| 镜号 | 时长 | 画面/动作 | 关联资产 |\\n| --- | ---: | --- | --- |\\n| 1 | 5s | SELECTED_EVENT_ONLY opening | hero, blue room |',
-                shots: [
-                  {
-                    duration: 5,
-                    videoDesc: 'SELECTED_EVENT_ONLY opening shot',
-                    imagePrompt: 'hero in blue room, cinematic keyframe',
-                    associateAssetNames: ['hero', 'blue room'],
-                    shouldGenerateImage: true,
-                    scene: 'blue room',
-                    shotSize: 'wide',
-                    cameraMove: 'slow push',
-                    action: 'hero enters',
-                    emotion: 'tense',
-                    lighting: 'cool',
-                    beat: 'opening',
-                  },
-                ],
-              }),
-            };
+            capturedPrompts.push(input.prompt);
+            const response = mockStoryboardResponses.shift();
+            return { text: typeof response === 'string' ? response : JSON.stringify(response) };
           },
         }),
       },
     },
   });
 
+  mockStoryboardResponses = [
+    {
+      storyboardTable: '| 镜号 | 时长 | 画面/动作 | 关联资产 |\\n| --- | ---: | --- | --- |\\n| 1 | 5s | SELECTED_EVENT_ONLY opening | hero, blue room |',
+      shots: [
+        {
+          duration: 5,
+          videoDesc: 'SELECTED_EVENT_ONLY opening shot',
+          imagePrompt: 'hero in blue room, cinematic keyframe',
+          associateAssetNames: ['hero', 'blue room'],
+          shouldGenerateImage: true,
+          scene: 'blue room',
+          shotSize: 'wide',
+          cameraMove: 'slow push',
+          action: 'hero enters',
+          emotion: 'tense',
+          lighting: 'cool',
+          beat: 'opening',
+        },
+      ],
+    },
+  ];
+
   const result = await service.generateProjectStoryboardWithSkill(1, {
-    sourceText: '请针对 juben10 生成分镜',
+    sourceText: '请针对 juben10 生成1个分镜',
     force: true,
     skillId: 'cinematic_skill',
     userRequirement: '更紧张',
@@ -187,9 +197,9 @@ async function main() {
   assert.ok(!capturedPrompt.includes('FUTURE_CHAPTER_MUST_NOT_REACH_MODEL'), 'future chapter body must not reach model');
   assert.ok(!capturedPrompt.includes('FUTURE_EVENT_MUST_NOT_REACH_MODEL'), 'future chapter event must not reach model');
   assert.ok(capturedPrompt.includes('固定流程'), 'prompt should include the base storyboard method');
-  assert.ok(capturedPrompt.includes('叙事功能'), 'prompt should include the storyboard table template fields');
+  assert.ok(capturedPrompt.includes('narrativeFunction'), 'prompt should include the storyboard table template fields');
   assert.ok(capturedPrompt.includes('先生成 storyboardTable'), 'prompt should require storyboard table first');
-  assert.ok(capturedPrompt.includes('不要默认生成 3 个分镜'), 'prompt should prevent lazy three-shot output');
+  assert.ok(capturedPrompt.includes('用户明确要求数量'), 'prompt should respect explicit shot count');
   assert.ok(capturedPrompt.includes('shots.length 必须等于 storyboardTable 的数据行数'), 'prompt should keep table and shots aligned');
 
   const storyboards = await db('o_storyboard').where({ projectId: 1, scriptId: result.episodesId }).orderBy('index');
@@ -200,6 +210,113 @@ async function main() {
 
   const links = await db('o_assets2Storyboard').where({ storyboardId: storyboards[0].id }).orderBy('assetId');
   assert.deepStrictEqual(links.map((row) => row.assetId), [1, 2]);
+
+  await db('o_project').insert({
+    id: 2,
+    name: 'Dialogue Timing',
+    intro: 'Project intro',
+    artStyle: 'animated short drama',
+    directorManual: 'Keep dialogue playable',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 20,
+    projectId: 2,
+    chapterIndex: 10,
+    chapter: 'juben10',
+    chapterData:
+      'Chloe says, "Listen, we cannot keep pretending this plan is safe. The guards already know our faces, the east gate is locked, and if we wait until sunrise every person in this room gets dragged into the street."',
+    event: '| juben10 | Chloe, safehouse | Chloe warns the team that the plan is collapsing |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 11, projectId: 2, name: 'Chloe', type: 'role', describe: 'leader', prompt: 'Chloe prompt' },
+    { id: 12, projectId: 2, name: 'safehouse', type: 'scene', describe: 'hideout', prompt: 'safehouse prompt' },
+  ]);
+
+  capturedPrompts = [];
+  mockStoryboardResponses = [
+    {
+      storyboardTable: '| 镜号 | 时长 | 画面 |\\n| --- | ---: | --- |\\n| 1 | 4s | Chloe speaks |\\n| 2 | 4s | Team listens |\\n| 3 | 5s | Chloe finishes |',
+      shots: [
+        {
+          duration: 4,
+          videoDesc: 'Chloe begins warning the team.',
+          imagePrompt: 'Chloe in safehouse',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: 'Chloe: Listen, we cannot keep pretending this plan is safe.',
+        },
+        {
+          duration: 4,
+          videoDesc: 'The team reacts.',
+          imagePrompt: 'tense team in safehouse',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: 'Chloe: The guards already know our faces, the east gate is locked.',
+        },
+        {
+          duration: 5,
+          videoDesc: 'Chloe delivers the final warning.',
+          imagePrompt: 'Chloe final warning',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: 'Chloe: If we wait until sunrise every person in this room gets dragged into the street.',
+        },
+      ],
+    },
+    {
+      storyboardTable: '| 镜号 | 时长 | 画面 |\\n| --- | ---: | --- |\\n| 1 | 3s | Setup |\\n| 2 | 4s | Warning starts |\\n| 3 | 4s | Guard risk |\\n| 4 | 4s | Gate risk |\\n| 5 | 4s | Sunrise threat |',
+      shots: [
+        {
+          duration: 3,
+          videoDesc: 'Safehouse tension before Chloe speaks.',
+          imagePrompt: 'safehouse tense opening',
+          associateAssetNames: ['safehouse'],
+          dialogue: '无台词',
+        },
+        {
+          duration: 2,
+          videoDesc: 'Chloe tells the team the plan is unsafe.',
+          imagePrompt: 'Chloe warning close shot',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: 'Chloe: Listen, we cannot keep pretending this plan is safe.',
+        },
+        {
+          duration: 2,
+          videoDesc: 'Chloe explains the guards know their faces.',
+          imagePrompt: 'Chloe tense medium shot',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: 'Chloe: The guards already know our faces.',
+        },
+        {
+          duration: 2,
+          videoDesc: 'The east gate problem lands on the team.',
+          imagePrompt: 'team reacting in safehouse',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: 'Chloe: The east gate is locked.',
+        },
+        {
+          duration: 2,
+          videoDesc: 'Chloe finishes with the sunrise threat.',
+          imagePrompt: 'Chloe final warning dramatic light',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: 'Chloe: If we wait until sunrise every person in this room gets dragged into the street.',
+        },
+      ],
+    },
+  ];
+
+  const dialogueResult = await service.generateProjectStoryboardWithSkill(2, {
+    sourceText: '请针对 juben10 重新生成分镜',
+    force: true,
+  });
+
+  assert.strictEqual(dialogueResult.createdCount, 5, 'dialogue-heavy chapter should retry instead of accepting three shots');
+  assert.strictEqual(capturedPrompts.length, 2, 'bad low-count/short-duration output should trigger one retry');
+  assert.ok(capturedPrompts[1].includes('上一次输出不合格'), 'retry prompt should explain the quality failure');
+
+  const dialogueStoryboards = await db('o_storyboard').where({ projectId: 2, scriptId: dialogueResult.episodesId }).orderBy('index');
+  assert.strictEqual(dialogueStoryboards.length, 5);
+  const totalDuration = dialogueStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
+  assert.ok(totalDuration >= 20, `normalized total duration should be dialogue-aware, got ${totalDuration}s`);
 
   await db.destroy();
   console.log('Storyboard skill generation checks passed');

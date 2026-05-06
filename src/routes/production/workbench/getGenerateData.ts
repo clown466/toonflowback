@@ -15,6 +15,7 @@ interface TrackMedia {
   src: string;
   id?: number;
   sources?: string;
+  type?: string;
   fileType: "image" | "video" | "audio";
   videoDesc?: string;
   prompt?: string;
@@ -155,12 +156,13 @@ export default router.post(
             seenAssetIds.add(a.id);
             return true;
           });
-          const hasImageAssetData = uniqueAssets.filter((i) => i.src);
+          const assetPriority: Record<string, number> = { role: 0, scene: 1, tool: 2 };
+          const sortAssetMedia = (a: TrackMedia, b: TrackMedia) => (assetPriority[a.type || ""] ?? 3) - (assetPriority[b.type || ""] ?? 3);
+          const hasImageAssetData = uniqueAssets.filter((i) => i.src).sort(sortAssetMedia);
           const notHasImageAssetData = uniqueAssets.filter((i) => !i.src);
 
           if (directorBoardMedias.length) {
-            const remainingReferenceSlots = Math.max(0, 9 - directorBoardMedias.length);
-            return [...directorBoardMedias, ...hasImageAssetData.slice(0, remainingReferenceSlots), ...notHasImageAssetData];
+            return [...hasImageAssetData, ...directorBoardMedias, ...notHasImageAssetData];
           }
 
           return [...hasImageAssetData, ...storyboardMedias, ...notHasImageAssetData];

@@ -89,6 +89,10 @@ function safeJson(value: unknown) {
   }
 }
 
+function isRoleAsset(asset: AssetRow) {
+  return clean(asset.type).toLowerCase() === "role";
+}
+
 export function buildChapterDirectorBoardPrompt(input: {
   project: ProjectRow;
   script: ScriptRow;
@@ -127,22 +131,28 @@ export function buildChapterDirectorBoardPrompt(input: {
     "This image is NOT the final video frame. It is a director planning board for video-generation reference.",
     "",
     "Primary goal:",
-    "Show spatial continuity, camera blocking, character positions, face/state consistency, scene layout, shot order, and lighting continuity across multiple video clips.",
+    "Show spatial continuity, camera blocking, character positions, pose/state continuity, scene layout, shot order, and lighting continuity across multiple video clips.",
+    "This board is a layout and blocking reference only. It is NOT a character identity reference for the final video.",
     "",
     "Required layout:",
     "1. Top black header bar: project title, chapter/workspace name, board number, covered shots, total estimated time, video aspect ratio, visual style keywords.",
-    "2. Left column: scene reference panel and character lineup panel based on the provided reference images.",
+    "2. Left column: scene reference panel and character symbol legend. The character legend must use simple pencil icons, color dots, names, and C1/C2/C3 labels, not finished character portraits.",
     "3. Center top: overhead blocking map, showing scene layout, character positions, camera positions, movement arrows, eye lines, and light direction.",
     "4. Center bottom: sequential storyboard strip with 4-6 panels. Each panel must include shot number, time range, shot size, camera movement, and the core action.",
     "5. Right column: simplified action-flow sketches from shot to shot, focusing on body position, direction, distance, and continuity.",
     "6. Bottom strip: lighting, props, materials, color palette, and continuity notes.",
     "",
     "Visual style:",
-    "clean production storyboard sheet, thin black grid lines, white paper background, readable small labels, cinematic storyboard sketches mixed with rendered reference thumbnails, practical director annotations, no UI, no watermark.",
+    "clean production storyboard sheet, thin black grid lines, white paper background, readable small labels, rough pencil storyboard sketches, practical director annotations, no UI, no watermark.",
+    "Characters in the blocking map, storyboard strip, and action-flow sketches must be simple pencil line figures or symbolic silhouettes only.",
+    "Do not render polished faces, detailed costumes, skin/material textures, or final character art inside the storyboard/action panels.",
+    "Environment, props, camera arrows, and spatial notes may be more detailed; character bodies should remain schematic and low-identity.",
     "",
     "Consistency rules:",
-    "Use the provided character and scene reference images as identity anchors.",
-    "Do not redesign characters. Keep faces, body type, costumes, props, and scene architecture consistent.",
+    "Final character identity belongs to the separate role asset reference images used later in video generation, not to this director board.",
+    "Represent each character by name label, C-number, color marker, fruit/species hint if relevant, body direction, pose, action, and emotion state.",
+    "Do not invent or lock a new face, outfit, body material, or final character design on this board.",
+    "Keep props and scene architecture consistent with the provided non-role reference images and asset descriptions.",
     "Do not turn the board into a comic page. It must look like a practical director board for AI video production.",
     "Labels must be concise and readable. Avoid long paragraphs inside the image.",
     "",
@@ -163,7 +173,7 @@ export function buildChapterDirectorBoardPrompt(input: {
 }
 
 async function getAssetReferenceImages(assets: AssetRow[], maxCount = 12) {
-  const usableAssets = assets.filter((asset) => asset.filePath).slice(0, maxCount);
+  const usableAssets = assets.filter((asset) => asset.filePath && !isRoleAsset(asset)).slice(0, maxCount);
   const references = [];
   for (const asset of usableAssets) {
     try {

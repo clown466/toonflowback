@@ -290,6 +290,7 @@ export async function listDirectorBoards(projectId: number, scriptId: number) {
     rows.map(async (row) => ({
       ...row,
       src: row.filePath ? await u.oss.getSmallImageUrl(row.filePath) : "",
+      previewSrc: row.filePath ? await u.oss.getFileUrl(row.filePath) : "",
     })),
   );
 }

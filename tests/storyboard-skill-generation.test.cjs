@@ -212,6 +212,74 @@ async function main() {
   assert.deepStrictEqual(links.map((row) => row.assetId), [1, 2]);
 
   await db('o_project').insert({
+    id: 3,
+    name: 'Invalid Model Output',
+    intro: 'Project intro',
+    artStyle: 'animated thriller',
+    directorManual: 'Use clear beats',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 30,
+    projectId: 3,
+    chapterIndex: 1,
+    chapter: 'juben10',
+    chapterData: 'Chloe crosses the market and sees the warning sign.',
+    event: '| juben10 | Chloe, market | Chloe notices danger |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 21, projectId: 3, name: 'Chloe', type: 'role', describe: 'lead', prompt: 'Chloe prompt' },
+    { id: 22, projectId: 3, name: 'market', type: 'scene', describe: 'market', prompt: 'market prompt' },
+  ]);
+
+  capturedPrompts = [];
+  mockStoryboardResponses = ['not json'];
+  await assert.rejects(
+    () =>
+      service.generateProjectStoryboardWithSkill(3, {
+        sourceText: '请针对 juben10 重新生成分镜',
+        force: true,
+      }),
+    (error) => {
+      assert.ok(String(error.message).includes('结构化分镜生成失败'), error.message);
+      assert.ok(String(error.message).includes('已停止写入'), error.message);
+      return true;
+    },
+  );
+  assert.strictEqual(capturedPrompts.length, 1, 'structured path should still call the model once');
+  const invalidStoryboards = await db('o_storyboard').where({ projectId: 3 });
+  assert.strictEqual(invalidStoryboards.length, 0, 'invalid model output must not write fallback storyboards');
+
+  await db('o_project').insert({
+    id: 4,
+    name: 'Explicit Quick Draft',
+    intro: 'Project intro',
+    artStyle: 'animated thriller',
+    directorManual: 'Use clear beats',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 40,
+    projectId: 4,
+    chapterIndex: 1,
+    chapter: 'juben10',
+    chapterData: 'Chloe enters the old station.',
+    event: '| juben10 | Chloe, station | Chloe enters the station |',
+    eventState: 1,
+  });
+
+  capturedPrompts = [];
+  mockStoryboardResponses = [];
+  const quickDraftResult = await service.generateProjectStoryboardWithSkill(4, {
+    sourceText: '请针对 juben10 生成快速草稿',
+    force: true,
+  });
+  assert.strictEqual(quickDraftResult.createdCount, 3, 'explicit quick draft should keep the old three-shot draft path');
+  assert.ok(String(quickDraftResult.fallbackReason).includes('快速草稿'));
+  assert.strictEqual(capturedPrompts.length, 0, 'explicit quick draft should not call the structured model');
+
+  await db('o_project').insert({
     id: 2,
     name: 'Dialogue Timing',
     intro: 'Project intro',

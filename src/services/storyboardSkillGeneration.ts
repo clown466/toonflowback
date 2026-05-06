@@ -119,6 +119,10 @@ function fallback(projectId: number, options: GenerateProjectStoryboardWithSkill
   }));
 }
 
+function stopStructuredStoryboardWrite(reason: string): never {
+  throw new Error(`结构化分镜生成失败：${reason}。已停止写入，避免生成三段式模板分镜。需要低保真占位稿时，请明确使用“快速草稿”。`);
+}
+
 async function resolveStoryboardSkill(skillId?: string, requestText?: string): Promise<StoryboardGenerationSkill | null> {
   try {
     const service = require("@/services/storyboardGenerationSkill");
@@ -646,7 +650,7 @@ export async function generateProjectStoryboardWithSkill(
   }
 
   const skill = await resolveStoryboardSkill(options.skillId, sourceText);
-  if (!skill) return fallback(projectId, { ...options, sourceText, force, append }, "没有可用分镜 Skill");
+  if (!skill) stopStructuredStoryboardWrite("没有可用分镜 Skill");
 
   let parsed: SkillStoryboardJson | undefined;
   const requestText = [sourceText, options.userRequirement].filter(Boolean).join("\n");
@@ -664,17 +668,17 @@ export async function generateProjectStoryboardWithSkill(
   } catch (error) {
     const message = error instanceof Error ? error.message : "模型生成失败";
     if (message.startsWith("模型分镜质量不合格")) throw new Error(message);
-    return fallback(projectId, { ...options, sourceText, force, append }, message);
+    stopStructuredStoryboardWrite(message);
   }
 
-  if (!parsed) return fallback(projectId, { ...options, sourceText, force, append }, "模型未生成可用分镜");
+  if (!parsed) stopStructuredStoryboardWrite("模型未生成可用分镜");
 
   if (planning.explicitShotCount && parsed.shots.length > planning.explicitShotCount) {
     parsed = { ...parsed, shots: parsed.shots.slice(0, planning.explicitShotCount), storyboardTable: "" };
   }
 
   const draftItems = toDraftItems(project, parsed, assets);
-  if (!draftItems.length) return fallback(projectId, { ...options, sourceText, force, append }, "模型 JSON 没有可写入镜头");
+  if (!draftItems.length) stopStructuredStoryboardWrite("模型 JSON 没有可写入镜头");
 
   let removedCount = 0;
   if (existingCount > 0 && force) removedCount = await deleteStoryboards(episodesId, projectId);

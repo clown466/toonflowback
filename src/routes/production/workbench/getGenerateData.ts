@@ -14,8 +14,12 @@ interface VideoItem {
 interface TrackMedia {
   src: string;
   id?: number;
+  sources?: string;
   fileType: "image" | "video" | "audio";
   videoDesc?: string;
+  prompt?: string;
+  label?: string;
+  index?: number;
 }
 
 interface TrackItem {
@@ -110,6 +114,23 @@ export default router.post(
     }
 
     const trackData = await u.db("o_videoTrack").where({ projectId, scriptId });
+    const directorBoardList = (await u.db("o_directorBoard").where({ projectId, scriptId }).orderBy("index", "asc").orderBy("id", "asc")) as any[];
+    await Promise.all(
+      directorBoardList.map(async (i) => {
+        i.src = i.filePath ? await u.oss.getSmallImageUrl(i.filePath) : "";
+      }),
+    );
+    const directorBoardMedias: TrackMedia[] = directorBoardList
+      .filter((item) => item.state === "已完成" && item.src)
+      .map((item) => ({
+        id: item.id,
+        src: item.src,
+        fileType: "image",
+        sources: "directorBoard",
+        prompt: item.prompt || undefined,
+        label: item.name || `导演板 ${Number(item.index ?? 0) + 1}`,
+        index: item.index,
+      }));
     const videoList = await u.db("o_video").whereIn(
       "videoTrackId",
       trackData.map((t) => t.id),
@@ -137,6 +158,11 @@ export default router.post(
           const hasImageAssetData = uniqueAssets.filter((i) => i.src);
           const notHasImageAssetData = uniqueAssets.filter((i) => !i.src);
 
+          if (directorBoardMedias.length) {
+            const remainingReferenceSlots = Math.max(0, 9 - directorBoardMedias.length);
+            return [...directorBoardMedias, ...hasImageAssetData.slice(0, remainingReferenceSlots), ...notHasImageAssetData];
+          }
+
           return [...hasImageAssetData, ...storyboardMedias, ...notHasImageAssetData];
         })(),
         videoList: await Promise.all(
@@ -159,6 +185,7 @@ export default router.post(
             src: s.filePath,
           })),
         ),
+        directorBoardList,
         trackList,
       }),
     );

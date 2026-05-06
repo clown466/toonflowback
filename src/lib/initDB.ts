@@ -453,6 +453,28 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
         table.unique(["id"]);
       },
     },
+    //章节导演板：用于视频模型的章节级空间/机位/连续性参考图
+    {
+      name: "o_directorBoard",
+      builder: (table) => {
+        table.integer("id").notNullable();
+        table.integer("projectId");
+        table.integer("scriptId");
+        table.text("name");
+        table.text("prompt");
+        table.text("filePath");
+        table.text("state");
+        table.text("reason");
+        table.text("model");
+        table.text("storyboardIds");
+        table.text("assetIds");
+        table.integer("index");
+        table.integer("createTime");
+        table.integer("updateTime");
+        table.primary(["id"]);
+        table.unique(["id"]);
+      },
+    },
     //flowData-剧本
     {
       name: "o_agentWorkData",

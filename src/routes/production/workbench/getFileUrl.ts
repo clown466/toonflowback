@@ -28,6 +28,11 @@ export default router.post(
             const assetsPaths = await u.db("o_assets").leftJoin("o_image", "o_image.id", "o_assets.imageId").whereIn("o_assets.id", assetsIds).select("o_assets.id", "o_image.filePath");
             totalFilePaths.push(...assetsPaths.map(i => ({ id: i.id, filePath: i.filePath, sources: "assets" })))
         }
+        const directorBoardIds = items.filter((item: any) => item.sources == "directorBoard").map((item: any) => item.id)
+        if (directorBoardIds.length) {
+            const boardPaths = await u.db("o_directorBoard").whereIn("id", directorBoardIds).select("id", "filePath");
+            totalFilePaths.push(...boardPaths.map(i => ({ id: i.id, filePath: i.filePath, sources: "directorBoard" })))
+        }
 
         await Promise.all(
             totalFilePaths.map(async (item: { id: string, filePath: string, sources: string }) => {

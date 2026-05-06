@@ -10,7 +10,7 @@ type Type = "imageReference" | "startImage" | "endImage" | "videoReference" | "a
 interface UploadItem {
   fileType: "image" | "video" | "audio";
   type: Type;
-  sources?: "assets" | "storyboard";
+  sources?: "assets" | "storyboard" | "directorBoard";
   id?: number;
   src?: string;
   label?: string;
@@ -62,6 +62,10 @@ export default router.post(
             .leftJoin("o_image", "o_assets.imageId", "o_image.id")
             .select("o_image.filePath")
             .first();
+          return filePath?.filePath;
+        }
+        if (item.sources === "directorBoard") {
+          const filePath = await u.db("o_directorBoard").where("id", item.id).select("filePath").first();
           return filePath?.filePath;
         }
       }),

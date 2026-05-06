@@ -10,21 +10,22 @@ const vendorData = rawVendorData as Record<string, string>;
 const MISSING_ARTIFACT_REASON = "产物文件缺失或为空";
 
 type ArtifactTableConfig = {
-  table: "o_image" | "o_storyboard" | "o_video";
+  table: "o_image" | "o_storyboard" | "o_video" | "o_directorBoard";
   successState: string;
   failedState: string;
   reasonColumn: "errorReason" | "reason";
-  label: "image" | "storyboard" | "video";
+  label: "image" | "storyboard" | "video" | "directorBoard";
 };
 
 async function repairMissingArtifacts(knex: Knex): Promise<void> {
   const configs: ArtifactTableConfig[] = [
     { table: "o_image", successState: "已完成", failedState: "生成失败", reasonColumn: "errorReason", label: "image" },
     { table: "o_storyboard", successState: "已完成", failedState: "生成失败", reasonColumn: "reason", label: "storyboard" },
+    { table: "o_directorBoard", successState: "已完成", failedState: "生成失败", reasonColumn: "reason", label: "directorBoard" },
     { table: "o_video", successState: "生成成功", failedState: "生成失败", reasonColumn: "errorReason", label: "video" },
   ];
 
-  const summary: Record<ArtifactTableConfig["label"], number> = { image: 0, storyboard: 0, video: 0 };
+  const summary: Record<ArtifactTableConfig["label"], number> = { image: 0, storyboard: 0, directorBoard: 0, video: 0 };
 
   for (const config of configs) {
     if (!(await knex.schema.hasTable(config.table))) continue;
@@ -46,10 +47,31 @@ async function repairMissingArtifacts(knex: Knex): Promise<void> {
     summary[config.label] = dirtyIds.length;
   }
 
-  console.info(`[fixDB] OSS一致性巡检完成：image=${summary.image}, storyboard=${summary.storyboard}, video=${summary.video}`);
+  console.info(`[fixDB] OSS一致性巡检完成：image=${summary.image}, storyboard=${summary.storyboard}, directorBoard=${summary.directorBoard}, video=${summary.video}`);
 }
 
 export default async (knex: Knex): Promise<void> => {
+  if (!(await knex.schema.hasTable("o_directorBoard"))) {
+    await knex.schema.createTable("o_directorBoard", (table) => {
+      table.integer("id").notNullable();
+      table.integer("projectId");
+      table.integer("scriptId");
+      table.text("name");
+      table.text("prompt");
+      table.text("filePath");
+      table.text("state");
+      table.text("reason");
+      table.text("model");
+      table.text("storyboardIds");
+      table.text("assetIds");
+      table.integer("index");
+      table.integer("createTime");
+      table.integer("updateTime");
+      table.primary(["id"]);
+      table.unique(["id"]);
+    });
+  }
+
   const addColumn = async (table: string, column: string, type: string) => {
     if (!(await knex.schema.hasTable(table))) return;
     if (!(await knex.schema.hasColumn(table, column))) {

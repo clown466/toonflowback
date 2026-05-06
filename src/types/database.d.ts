@@ -1,4 +1,4 @@
-// @db-hash 00f3c6d67c363cdb7ea097a0e4a8cd80
+// @db-hash 7033a684fe15c9e912d3cb5c70a60afe
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -65,6 +65,22 @@ export interface o_assets2Storyboard {
 export interface o_assetsRole2Audio {
   'assetsAudioId'?: number;
   'assetsRoleId'?: number;
+}
+export interface o_directorBoard {
+  'assetIds'?: string | null;
+  'createTime'?: number | null;
+  'filePath'?: string | null;
+  'id'?: number;
+  'index'?: number | null;
+  'model'?: string | null;
+  'name'?: string | null;
+  'projectId'?: number | null;
+  'prompt'?: string | null;
+  'reason'?: string | null;
+  'scriptId'?: number | null;
+  'state'?: string | null;
+  'storyboardIds'?: string | null;
+  'updateTime'?: number | null;
 }
 export interface o_event {
   'createTime'?: number | null;
@@ -263,6 +279,7 @@ export interface DB {
   "o_assets": o_assets;
   "o_assets2Storyboard": o_assets2Storyboard;
   "o_assetsRole2Audio": o_assetsRole2Audio;
+  "o_directorBoard": o_directorBoard;
   "o_event": o_event;
   "o_eventChapter": o_eventChapter;
   "o_image": o_image;

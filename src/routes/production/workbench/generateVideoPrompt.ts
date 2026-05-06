@@ -53,12 +53,24 @@ export default router.post(
             _type: "assets", // 标记类型
           };
         }
+        if (item.sources === "directorBoard") {
+          const board = await u
+            .db("o_directorBoard")
+            .where("id", item.id)
+            .select("id", "name", "prompt", "filePath", "storyboardIds")
+            .first();
+          return {
+            ...board,
+            _type: "directorBoard",
+          };
+        }
       }),
     );
 
     // 拆分 assets 和 storyboard
     const assets: any[] = [];
     const storyboard: any[] = [];
+    const directorBoards: any[] = [];
     for (const item of images) {
       if (!item) continue; // 忽略空
       if (item._type === "assets")
@@ -76,6 +88,14 @@ export default router.post(
           duration: item.duration,
           associateAssetsIds: item.associateAssetsIds,
           shouldGenerateImage: item.shouldGenerateImage,
+        });
+      if (item._type === "directorBoard")
+        directorBoards.push({
+          id: item.id,
+          name: item.name,
+          prompt: item.prompt,
+          filePath: item.filePath,
+          storyboardIds: item.storyboardIds,
         });
     }
     const [id, modelData] = model.split(/:(.+)/);
@@ -95,6 +115,11 @@ export default router.post(
         .filter((i) => i.filePath)
         .map((i) => `[${i.id},${i.type},${i.name}]`)
         .join("，")},
+          **章节导演板参考**：${directorBoards
+        .filter((i) => i.filePath)
+        .map((i) => `[${i.id},directorBoard,${i.name || "章节导演板"},覆盖分镜=${i.storyboardIds || "[]"}]`)
+        .join("，")},
+          **导演板使用规则**：如果存在章节导演板参考，默认把它作为空间、机位、角色位置、角色状态、场景连续性的第一参考；分镜图只作为更细的单镜首帧补充，不要让单镜首帧推翻导演板的空间连续性。
           **分镜信息**：${storyboard.map(
           (i) => `<storyboardItem
   videoDesc='${i.videoDesc}'

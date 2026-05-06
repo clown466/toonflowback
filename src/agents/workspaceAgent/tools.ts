@@ -615,7 +615,7 @@ export async function runProjectStoryboardDraftFastPath(
     tableDataRows > 0 ? `分镜表已生成 ${tableDataRows} 行并写入章节工作区数据。` : "",
     tablePreview ? `分镜表预览：\n${tablePreview}` : "",
     `已关联当前项目资产库，并写入 Flova 工作台可读取的数据。`,
-    result.createdCount > 0 ? "现在可以在左侧分镜列表查看；需要分镜图片时点“生成全部”。" : "",
+    result.createdCount > 0 ? "现在可以在左侧分镜列表查看分镜表；默认下一步是点“生成章节导演板”生成分镜故事板。首帧图只是可选补充。" : "",
   ].filter(Boolean);
   const text = msg.text(lines.join("\n"));
   text.complete();

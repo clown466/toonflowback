@@ -143,13 +143,15 @@ async function main() {
 
   let capturedPrompt = '';
   let capturedPrompts = [];
+  let capturedModelKeys = [];
   let mockStoryboardResponses = [];
   const service = loadTsModule('src/services/storyboardSkillGeneration.ts', {
     '@/utils': {
       db,
       Ai: {
-        Text: () => ({
+        Text: (modelKey) => ({
           invoke: async (input) => {
+            capturedModelKeys.push(modelKey);
             capturedPrompt = input.prompt;
             capturedPrompts.push(input.prompt);
             const response = mockStoryboardResponses.shift();
@@ -196,6 +198,8 @@ async function main() {
   assert.ok(capturedPrompt.includes('SELECTED_EVENT_ONLY'), 'selected chapter event should reach model');
   assert.ok(!capturedPrompt.includes('FUTURE_CHAPTER_MUST_NOT_REACH_MODEL'), 'future chapter body must not reach model');
   assert.ok(!capturedPrompt.includes('FUTURE_EVENT_MUST_NOT_REACH_MODEL'), 'future chapter event must not reach model');
+  assert.ok(!capturedPrompt.includes('future villain'), 'unrelated future-only assets should not reach storyboard model context');
+  assert.strictEqual(capturedModelKeys[0], 'productionAgent:storyboardTableAgent', 'structured storyboard generation should use the dedicated storyboard table agent model');
   assert.ok(capturedPrompt.includes('固定流程'), 'prompt should include the base storyboard method');
   assert.ok(capturedPrompt.includes('narrativeFunction'), 'prompt should include the storyboard table template fields');
   assert.ok(capturedPrompt.includes('先生成 storyboardTable'), 'prompt should require storyboard table first');
@@ -234,6 +238,7 @@ async function main() {
   ]);
 
   capturedPrompts = [];
+  capturedModelKeys = [];
   mockStoryboardResponses = ['not json'];
   await assert.rejects(
     () =>
@@ -270,6 +275,7 @@ async function main() {
   });
 
   capturedPrompts = [];
+  capturedModelKeys = [];
   mockStoryboardResponses = [];
   const quickDraftResult = await service.generateProjectStoryboardWithSkill(4, {
     sourceText: '请针对 juben10 生成快速草稿',
@@ -303,6 +309,7 @@ async function main() {
   ]);
 
   capturedPrompts = [];
+  capturedModelKeys = [];
   mockStoryboardResponses = [
     {
       storyboardTable: '| 镜号 | 时长 | 画面 |\\n| --- | ---: | --- |\\n| 1 | 4s | Chloe speaks |\\n| 2 | 4s | Team listens |\\n| 3 | 5s | Chloe finishes |',
@@ -379,6 +386,7 @@ async function main() {
 
   assert.strictEqual(dialogueResult.createdCount, 5, 'dialogue-heavy chapter should retry instead of accepting three shots');
   assert.strictEqual(capturedPrompts.length, 2, 'bad low-count/short-duration output should trigger one retry');
+  assert.deepStrictEqual(capturedModelKeys, ['productionAgent:storyboardTableAgent', 'productionAgent:storyboardTableAgent']);
   assert.ok(capturedPrompts[1].includes('上一次输出不合格'), 'retry prompt should explain the quality failure');
 
   const dialogueStoryboards = await db('o_storyboard').where({ projectId: 2, scriptId: dialogueResult.episodesId }).orderBy('index');

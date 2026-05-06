@@ -111,6 +111,9 @@ const ENGLISH_SLOW_WORDS_PER_SECOND = 2;
 const CJK_NORMAL_CHARS_PER_SECOND = 3;
 const CJK_FAST_CHARS_PER_SECOND = 4;
 const CJK_SLOW_CHARS_PER_SECOND = 2;
+const STORYBOARD_MODEL_KEY = "productionAgent:storyboardTableAgent";
+const MAX_MODEL_CONTEXT_ASSETS = 12;
+const MAX_STORYBOARD_SKILL_PROMPT_CHARS = 4200;
 
 function fallback(projectId: number, options: GenerateProjectStoryboardWithSkillOptions, reason: string) {
   return generateProjectStoryboardDraft(projectId, options).then((result) => ({
@@ -379,35 +382,54 @@ function mapAssetNamesToIds(assets: AssetRow[], names: string[]) {
   return ids;
 }
 
+function selectModelContextAssets(project: ProjectRow, novels: NovelRow[], assets: AssetRow[], userRequirement?: string) {
+  const sourceText = [
+    project.intro,
+    project.artStyle,
+    project.directorManual,
+    userRequirement,
+    ...novels.flatMap((novel) => [novel.chapter, novel.event, novel.chapterData]),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return matchAssets(assets, sourceText, MAX_MODEL_CONTEXT_ASSETS);
+}
+
 function buildModelContext(project: ProjectRow, novels: NovelRow[], assets: AssetRow[], scriptContent: string, userRequirement?: string) {
   const planning = buildPlanningHint(novels, userRequirement);
+  const contextAssets = selectModelContextAssets(project, novels, assets, userRequirement);
   const selectedChapters = novels.map((novel) => ({
     id: novel.id,
     chapterIndex: novel.chapterIndex,
     chapter: novel.chapter,
     event: novel.event,
-    chapterData: compactText(novel.chapterData, 3200),
+    chapterData: compactText(novel.chapterData, 2600),
   }));
   return {
     project: {
       id: project.id,
       name: project.name,
-      intro: project.intro,
+      intro: compactText(project.intro, 800),
       type: project.type,
       artStyle: project.artStyle,
-      directorManual: project.directorManual,
+      directorManual: compactText(project.directorManual, 1600),
       videoRatio: project.videoRatio,
     },
-    visualManual: [project.artStyle, project.directorManual].filter(Boolean).join("\n\n"),
+    visualManual: compactText([project.artStyle, project.directorManual].filter(Boolean).join("\n\n"), 1800),
     selectedChapters,
     scriptContent: novels.length ? undefined : compactText(scriptContent, 4200),
-    assets: assets.map((asset) => ({
+    assets: contextAssets.map((asset) => ({
       id: asset.id,
       name: asset.name,
       type: asset.type,
-      describe: compactText(asset.describe, 240),
-      prompt: compactText(asset.prompt, 240),
+      describe: compactText(asset.describe, 160),
+      prompt: compactText(asset.prompt, 180),
     })),
+    assetSelection: {
+      providedCount: contextAssets.length,
+      totalCount: assets.length,
+      note: "仅提供与当前章节最相关的资产；associateAssetNames 只能从 assets[].name 中选择。",
+    },
     userRequirement,
     storyboardPlanning: planning,
   };
@@ -530,15 +552,16 @@ function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: Story
 
 async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: Record<string, any>, retryReason?: string) {
   const planning = context.storyboardPlanning as StoryboardPlanningHint | undefined;
+  const skillContent = compactText(skill.content, MAX_STORYBOARD_SKILL_PROMPT_CHARS);
   const prompt = [
     BASE_STORYBOARD_METHOD_PROMPT,
     "",
     "选中的分镜方法 / 附加约束：",
-    skill.content,
+    skillContent,
     "",
     "核心流程：",
     "1. 先阅读 selectedChapters 中的 event 和 chapterData，只处理这些章节。",
-    "2. 先生成 storyboardTable，表中每一行代表一个真实分镜。",
+    "2. 先生成 storyboardTable，表中每一行代表一个真实分镜；为节省模型输出，最终 JSON 的 storyboardTable 字段可以填空字符串，系统会用 shots 字段重建表格。",
     "3. 再按 storyboardTable 逐行生成 shots；shots.length 必须等于 storyboardTable 的数据行数。",
     "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
     "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
@@ -552,7 +575,7 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "JSON schema:",
     JSON.stringify(
       {
-        storyboardTable: "markdown table string",
+        storyboardTable: "",
         shots: [
           {
             duration: 4,
@@ -587,7 +610,7 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "上下文 JSON:",
     JSON.stringify(context, null, 2),
   ].join("\n");
-  const result = await u.Ai.Text("universalAi").invoke({ prompt });
+  const result = await u.Ai.Text(STORYBOARD_MODEL_KEY).invoke({ prompt });
   const text = (result as any)?.text ?? (result as any)?._output ?? "";
   if (!nonEmpty(text)) throw new Error("模型未返回文本");
   return parseStoryboardJson(String(text));

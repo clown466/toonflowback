@@ -13,11 +13,12 @@ export default router.post(
     projectId: z.number(),
     scriptId: z.number(),
     boardId: z.number(),
+    model: z.string().optional(),
   }),
   async (req, res) => {
     try {
-      const { projectId, scriptId, boardId } = req.body;
-      res.status(200).send(success(await regenerateDirectorBoard(projectId, scriptId, boardId)));
+      const { projectId, scriptId, boardId, model } = req.body;
+      res.status(200).send(success(await regenerateDirectorBoard(projectId, scriptId, boardId, { model })));
     } catch (e) {
       res.status(400).send(error(u.error(e).message));
     }

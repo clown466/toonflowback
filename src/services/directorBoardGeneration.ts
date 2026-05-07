@@ -71,6 +71,10 @@ export interface QueueDirectorBoardOptions {
   replace?: boolean;
 }
 
+export interface RegenerateDirectorBoardOptions {
+  model?: string;
+}
+
 export type DirectorBoardPromptLanguage = "english" | "chinese";
 
 function compact(value: unknown, maxLength = 800) {
@@ -545,7 +549,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
   return created;
 }
 
-export async function regenerateDirectorBoard(projectId: number, scriptId: number, boardId: number) {
+export async function regenerateDirectorBoard(projectId: number, scriptId: number, boardId: number, options: RegenerateDirectorBoardOptions = {}) {
   const row = (await u.db("o_directorBoard").where({ id: boardId, projectId, scriptId }).first()) as DirectorBoardRow | undefined;
   if (!row?.id) throw new Error("章节导演板不存在，无法重绘。");
 
@@ -579,7 +583,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
     assets,
     language: promptLanguage,
   });
-  const model = clean(row.model || project.imageModel);
+  const model = clean(options.model || project.imageModel || row.model);
   if (!model) throw new Error("项目未配置出图模型，无法重绘章节导演板。");
 
   await u.db("o_directorBoard").where("id", boardId).update({

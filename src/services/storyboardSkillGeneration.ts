@@ -106,10 +106,11 @@ const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
 };
 
 const BASE_STORYBOARD_METHOD_PROMPT = DEFAULT_STORYBOARD_SKILL.content;
-const MAX_STORYBOARD_SHOTS = 40;
+const MAX_STORYBOARD_SHOTS = 60;
 const MIN_STORYBOARD_SHOT_DURATION = 1;
 const DEFAULT_STORYBOARD_SHOT_DURATION = 3;
 const MAX_STORYBOARD_SHOT_DURATION = 15;
+const FAST_DRAMA_MIN_AVERAGE_SHOT_DURATION = 2;
 const FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX = 4;
 const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 8;
 const STANDARD_CHAPTER_TARGET_MIN_SECONDS = 90;
@@ -389,7 +390,7 @@ function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): Stor
     Math.max(rawDurationBudget.targetDurationMax, estimatedMinimumShots * DEFAULT_STORYBOARD_SHOT_DURATION, dialogueVisualBreathingRoom),
   );
   const targetDurationMin = Math.min(targetDurationMax, rawDurationBudget.targetDurationMin);
-  const estimatedMaximumShots = explicitShotCount ?? clamp(Math.ceil(targetDurationMax / DEFAULT_STORYBOARD_SHOT_DURATION), estimatedMinimumShots, 30);
+  const estimatedMaximumShots = explicitShotCount ?? clamp(Math.ceil(targetDurationMax / FAST_DRAMA_MIN_AVERAGE_SHOT_DURATION), estimatedMinimumShots, MAX_STORYBOARD_SHOTS);
   const estimatedMinimumDuration = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds * 0.9) : 0;
   return {
     explicitShotCount,

@@ -434,8 +434,8 @@ async function main() {
   mockStoryboardResponses = [
     {
       storyboardTable: '',
-      shots: Array.from({ length: 20 }, (_, index) => ({
-        duration: 10,
+      shots: Array.from({ length: 34 }, (_, index) => ({
+        duration: 3,
         videoDesc: `Fast campus beat ${index + 1}.`,
         imagePrompt: `Chloe and team in fast campus beat ${index + 1}`,
         associateAssetNames: ['Chloe', 'campus'],
@@ -448,7 +448,7 @@ async function main() {
     sourceText: '请针对 juben10 重新生成分镜',
     force: true,
   });
-  assert.strictEqual(fastCutResult.createdCount, 20);
+  assert.strictEqual(fastCutResult.createdCount, 34, '34 fast-cut shots should be valid for a 90-120s chapter');
   assert.ok(capturedPrompts[0].includes('目标总时长'), 'prompt should include a chapter duration budget');
   assert.ok(capturedPrompts[0].includes('1-4s'), 'prompt should tell the model to use fast short shots');
   assert.ok(capturedPrompts[0].includes('单张章节导演板/一次 AI 视频生成片段'), 'prompt should scope 4-15s to director boards, not single shots');

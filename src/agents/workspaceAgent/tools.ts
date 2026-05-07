@@ -21,6 +21,8 @@ type GeneratableAssetType = z.infer<typeof generatableAssetTypeSchema>;
 export interface ProjectAssetImageGenerationOptions {
   includeCompleted?: boolean;
   sourceText?: string;
+  userRequirement?: string;
+  skillId?: string;
   finalizeMessage?: boolean;
   assetType?: GeneratableAssetType;
   limit?: number;
@@ -486,9 +488,11 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
       name: asset.name || `资产 #${asset.id}`,
       describe: nonEmpty(asset.describe) ?? null,
       prompt: nonEmpty(asset.prompt) ?? nonEmpty(asset.describe) ?? asset.name ?? "",
-      userRequirement: options?.sourceText ?? null,
+      skillId: options?.skillId ?? null,
+      userRequirement: options?.userRequirement ?? options?.sourceText ?? null,
     })),
-    userRequirement: options?.sourceText ?? null,
+    skillId: options?.skillId ?? null,
+    userRequirement: options?.userRequirement ?? options?.sourceText ?? null,
   });
 
   emitProjectAssetImageUpdate(resTool, {

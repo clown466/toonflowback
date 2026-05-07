@@ -11,7 +11,7 @@ export type WorkspaceCommandIntent = "asset_image_generation" | "storyboard_gene
 
 export type WorkspaceCommandConfirmationPolicy = "auto" | "confirm" | "require_confirmation" | "skip" | string;
 
-type AssetImageScope = Pick<ProjectAssetImageGenerationOptions, "assetType" | "limit" | "assetIds" | "assetNames" | "includeCompleted">;
+type AssetImageScope = Pick<ProjectAssetImageGenerationOptions, "assetType" | "limit" | "assetIds" | "assetNames" | "includeCompleted" | "skillId">;
 
 export interface WorkspaceCommandScope extends AssetImageScope {
   force?: boolean;
@@ -67,6 +67,7 @@ function normalizeAssetImageScope(scope?: WorkspaceCommandScope): AssetImageScop
     assetIds: uniquePositiveIntegers(scope?.assetIds),
     assetNames: uniqueNonEmptyStrings(scope?.assetNames),
     includeCompleted: Boolean(scope?.includeCompleted),
+    skillId: typeof scope?.skillId === "string" && scope.skillId.trim() ? scope.skillId.trim() : undefined,
   };
 }
 
@@ -184,6 +185,7 @@ export async function executeWorkspaceCommandPlan(config: ToolConfig, plan: Work
       await runProjectAssetImageGenerationFastPath(config, {
         ...scope,
         sourceText,
+        userRequirement: plan.userRequirement ?? plan.sourceText,
         disableNaturalLanguageScopeParsing: true,
       }),
     );

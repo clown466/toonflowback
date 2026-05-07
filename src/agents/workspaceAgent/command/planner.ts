@@ -247,6 +247,14 @@ function parseLimitFromText(text: string): number | undefined {
   return undefined;
 }
 
+function parseIncludeCompletedFromText(text: string) {
+  return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
+}
+
+function parseSkillIdFromText(text: string) {
+  return text.match(/\bskillId\s*[:：=]\s*([a-zA-Z0-9_-]{1,80})\b/i)?.[1];
+}
+
 function parseChapterIndexesFromText(text: string): number[] {
   const indexes: number[] = [];
   const rangePattern = new RegExp(String.raw`第?\s*${NUMBER_TOKEN}\s*(?:章|章节|集|条)?\s*(?:到|至|-|~)\s*第?\s*${NUMBER_TOKEN}\s*(?:章|章节|集|条)?`, "gi");
@@ -375,6 +383,8 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
   const parsedAssetType = parseAssetTypeFromText(text);
   const assetType = assetScope?.assetType ?? parsedAssetType;
   const limit = normalizePositiveLimit(assetScope?.limit) ?? parseLimitFromText(text);
+  const includeCompleted = assetScope?.includeCompleted ?? parseIncludeCompletedFromText(text);
+  const skillId = parseSkillIdFromText(text);
   const missingInfo: Array<WorkspaceMissingInfo | string> = [...((isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo) ?? [])];
   const isVague = signal.confidence < 0.7 || (!assetType && !limit && !assetScope?.assetIds?.length && !assetScope?.assetNames?.length && /帮我.{0,8}(出图|生图|生成.*图)|(出图|生图)$/i.test(text));
   if (isVague && !missingInfo.length) missingInfo.push("需要确认资产类型或生成范围");
@@ -385,8 +395,9 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
     limit,
     assetIds: assetScope?.assetIds,
     assetNames: assetScope?.assetNames,
-    includeCompleted: assetScope?.includeCompleted,
+    includeCompleted,
     onlyFailed: assetScope?.onlyFailed,
+    skillId,
     missingInfo,
     confidence: isWorkspaceResolvedScope(resolved) ? signal.confidence : resolved?.confidence ?? signal.confidence,
   };
@@ -414,7 +425,8 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
         limit,
         assetIds: assetScope?.assetIds,
         assetNames: assetScope?.assetNames,
-        includeCompleted: assetScope?.includeCompleted,
+        includeCompleted,
+        skillId,
         disableNaturalLanguageScopeParsing: true,
       },
     },
@@ -427,7 +439,7 @@ function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: Work
   const resolved = getResolvedScope(text, snapshot);
   const missingInfo = isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo;
   const chapters = resolveChapterCandidates(text, snapshot);
-  const skillId = text.match(/\bskillId\s*[:：=]\s*([a-zA-Z0-9_-]{1,80})\b/i)?.[1];
+  const skillId = parseSkillIdFromText(text);
   const force = /(重新|重做|覆盖|替换|清空|清除|删除|删掉|重置|再生成|重建|重新推理|重推)/i.test(text);
   const scopeBase: Omit<WorkspaceCommandScope, "summary"> = {
     kind: "chapter",

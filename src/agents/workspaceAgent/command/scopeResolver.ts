@@ -94,7 +94,7 @@ export function parseWorkspaceLimit(text: string): number | undefined {
 }
 
 function parseIncludeCompleted(text: string) {
-  return /includeCompleted/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
+  return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
 }
 
 function parseOnlyFailed(text: string) {

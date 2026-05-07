@@ -119,6 +119,25 @@ function buildPrompt(language) {
   );
   assert.equal(normalized, "Create a director board. C1 Leo is a yellow lemon in a tactical vest.");
 
+  const directorBoardChunks = service.chunkStoryboardsForDirectorBoards(
+    [
+      { id: 1, duration: "4" },
+      { id: 2, duration: "5" },
+      { id: 3, duration: "6" },
+      { id: 4, duration: "4" },
+      { id: 5, duration: "7" },
+    ],
+    { maxDuration: 15, maxShots: 6 },
+  );
+  assert.deepStrictEqual(
+    directorBoardChunks.map((chunk) => chunk.map((item) => item.id)),
+    [
+      [1, 2, 3],
+      [4, 5],
+    ],
+    "director boards should be grouped by <=15s video-generation windows",
+  );
+
   const src = fs.readFileSync(path.join(root, "src/services/directorBoardGeneration.ts"), "utf8");
   assert.match(src, /normalizeDirectorBoardPromptLanguage\(prompt, promptLanguage\)/, "background image task should normalize the prompt before image generation");
   assert.match(src, /promptLanguage,\s*model/, "generation paths should pass the detected language into the background image task");

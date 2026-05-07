@@ -72,7 +72,10 @@ interface SkillStoryboardJson {
 interface StoryboardPlanningHint {
   explicitShotCount?: number;
   estimatedMinimumShots: number;
+  estimatedMaximumShots: number;
   estimatedMinimumDuration: number;
+  targetDurationMin: number;
+  targetDurationMax: number;
   sourceDialogueSeconds: number;
   sourceDialogueText: string;
   eventCount: number;
@@ -94,7 +97,7 @@ const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
     "固定流程：",
     "1. 只读取 selectedChapters 中的 event 和 chapterData，禁止引用未选章节。",
     "2. 先抽取事件节拍：地点、角色、动作目标、冲突/信息点、情绪变化、关键道具。",
-    "3. 按事件复杂度决定镜头数量：未指定数量时不要默认 3 个；标准章节通常 6-12 个。",
+    "3. 按事件复杂度和章节总时长预算决定镜头数量：未指定数量时不要默认 3 个；英文短剧应快切、短镜头、高爆发。",
     "4. 先生成 storyboardTable，字段固定为：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "5. 再把分镜表逐行转换为 shots，shots.length 必须等于 storyboardTable 数据行数。",
     "",
@@ -104,7 +107,13 @@ const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
 
 const BASE_STORYBOARD_METHOD_PROMPT = DEFAULT_STORYBOARD_SKILL.content;
 const MAX_STORYBOARD_SHOTS = 40;
+const MIN_VIDEO_SHOT_DURATION = 4;
 const MAX_VIDEO_SHOT_DURATION = 15;
+const FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX = 6;
+const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 8;
+const STANDARD_CHAPTER_TARGET_MIN_SECONDS = 90;
+const STANDARD_CHAPTER_TARGET_MAX_SECONDS = 120;
+const MIN_CHAPTER_TARGET_SECONDS = 24;
 const ENGLISH_NORMAL_WORDS_PER_SECOND = 2.5;
 const ENGLISH_FAST_WORDS_PER_SECOND = 3;
 const ENGLISH_SLOW_WORDS_PER_SECOND = 2;
@@ -177,7 +186,7 @@ function parseStoryboardJson(text: string): SkillStoryboardJson {
     if (!imagePrompt) throw new Error(`第 ${index + 1} 个镜头缺少 imagePrompt`);
     const duration = Number(shot.duration);
     return {
-      duration: Number.isFinite(duration) && duration > 0 ? Math.min(Math.max(Math.round(duration), 1), MAX_VIDEO_SHOT_DURATION) : 4,
+      duration: Number.isFinite(duration) && duration > 0 ? Math.min(Math.max(Math.round(duration), MIN_VIDEO_SHOT_DURATION), MAX_VIDEO_SHOT_DURATION) : MIN_VIDEO_SHOT_DURATION,
       videoDesc,
       imagePrompt,
       associateAssetNames: Array.isArray(shot.associateAssetNames)
@@ -340,6 +349,30 @@ function getSourceDialogue(novels: NovelRow[]) {
   return extractDialogueFromSource(text);
 }
 
+function estimateChapterDurationBudget(input: {
+  explicitShotCount?: number;
+  sourceDialogueSeconds: number;
+  eventCount: number;
+  textLength: number;
+}) {
+  if (input.explicitShotCount) {
+    const targetMin = input.explicitShotCount * MIN_VIDEO_SHOT_DURATION;
+    const targetMax = Math.min(input.explicitShotCount * FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX, input.explicitShotCount * MAX_VIDEO_SHOT_DURATION);
+    return { targetDurationMin: targetMin, targetDurationMax: Math.max(targetMin, targetMax) };
+  }
+
+  const narrativeSeconds = Math.ceil(input.textLength / 45);
+  const eventSeconds = input.eventCount > 0 ? input.eventCount * 12 : 0;
+  const rawTargetMax = Math.max(input.sourceDialogueSeconds * 1.1, narrativeSeconds, eventSeconds);
+  const targetDurationMax = clamp(Math.ceil(rawTargetMax || MIN_CHAPTER_TARGET_SECONDS), MIN_CHAPTER_TARGET_SECONDS, STANDARD_CHAPTER_TARGET_MAX_SECONDS);
+  const standardChapterFloor = input.textLength >= 2500 || input.sourceDialogueSeconds >= 45 ? STANDARD_CHAPTER_TARGET_MIN_SECONDS : Math.floor(targetDurationMax * 0.7);
+  const targetDurationMin = Math.min(
+    targetDurationMax,
+    Math.max(MIN_CHAPTER_TARGET_SECONDS, standardChapterFloor, input.sourceDialogueSeconds ? Math.ceil(input.sourceDialogueSeconds * 0.9) : 0),
+  );
+  return { targetDurationMin, targetDurationMax };
+}
+
 function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): StoryboardPlanningHint {
   const explicitShotCount = parseRequestedShotCount(sourceText);
   const eventCount = novels.reduce((sum, novel) => sum + countEventRows(novel.event), 0);
@@ -347,12 +380,23 @@ function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): Stor
   const sourceDialogueText = getSourceDialogue(novels);
   const sourceDialogueSeconds = estimateSpeechDurationSeconds(sourceDialogueText);
   const dialogueShotFloor = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds / 8) : 0;
-  const estimatedMinimumShots = explicitShotCount ?? clamp(Math.max(4, eventCount * 2, Math.ceil(textLength / 700), dialogueShotFloor), 4, 16);
+  const estimatedMinimumShots = explicitShotCount ?? clamp(Math.max(4, eventCount * 2, Math.ceil(textLength / 700), dialogueShotFloor), 4, 24);
+  const rawDurationBudget = estimateChapterDurationBudget({ explicitShotCount, sourceDialogueSeconds, eventCount, textLength });
+  const dialogueVisualBreathingRoom = sourceDialogueSeconds > 0 ? sourceDialogueSeconds + estimatedMinimumShots * 3 : 0;
+  const targetDurationMax = Math.min(
+    explicitShotCount ? explicitShotCount * MAX_VIDEO_SHOT_DURATION : STANDARD_CHAPTER_TARGET_MAX_SECONDS,
+    Math.max(rawDurationBudget.targetDurationMax, estimatedMinimumShots * MIN_VIDEO_SHOT_DURATION, dialogueVisualBreathingRoom),
+  );
+  const targetDurationMin = Math.min(targetDurationMax, rawDurationBudget.targetDurationMin);
+  const estimatedMaximumShots = explicitShotCount ?? clamp(Math.ceil(targetDurationMax / MIN_VIDEO_SHOT_DURATION), estimatedMinimumShots, 30);
   const estimatedMinimumDuration = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds * 0.9) : 0;
   return {
     explicitShotCount,
     estimatedMinimumShots,
+    estimatedMaximumShots,
     estimatedMinimumDuration,
+    targetDurationMin,
+    targetDurationMax,
     sourceDialogueSeconds,
     sourceDialogueText: compactText(sourceDialogueText, 1000),
     eventCount,
@@ -485,14 +529,52 @@ function toDraftItems(project: ProjectRow, parsed: SkillStoryboardJson, assets: 
   });
 }
 
-function normalizeStoryboardTimings(parsed: SkillStoryboardJson): SkillStoryboardJson {
+function getShotDurationFloor(shot: SkillShot) {
+  const dialogueDuration = estimateSpeechDurationSeconds(extractShotDialogueText(shot), shot.emotion);
+  return Math.min(Math.max(dialogueDuration || MIN_VIDEO_SHOT_DURATION, MIN_VIDEO_SHOT_DURATION), MAX_VIDEO_SHOT_DURATION);
+}
+
+function getPreferredShotDurationCap(shot: SkillShot, floor: number) {
+  const hasDialogue = Boolean(extractShotDialogueText(shot));
+  const preferred = hasDialogue ? FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX : FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX;
+  return Math.min(Math.max(preferred, floor), MAX_VIDEO_SHOT_DURATION);
+}
+
+function compressStoryboardToTarget(shots: SkillShot[], targetDurationMax?: number) {
+  if (!targetDurationMax) return shots;
+  const normalized = shots.map((shot) => ({ ...shot }));
+  let total = normalized.reduce((sum, shot) => sum + shot.duration, 0);
+
+  while (total > targetDurationMax) {
+    let targetIndex = -1;
+    let reducibleSeconds = 0;
+    for (const [index, shot] of normalized.entries()) {
+      const floor = getShotDurationFloor(shot);
+      const reducible = shot.duration - floor;
+      if (reducible > reducibleSeconds) {
+        reducibleSeconds = reducible;
+        targetIndex = index;
+      }
+    }
+    if (targetIndex < 0 || reducibleSeconds <= 0) break;
+    normalized[targetIndex] = { ...normalized[targetIndex], duration: normalized[targetIndex].duration - 1 };
+    total -= 1;
+  }
+
+  return normalized;
+}
+
+function normalizeStoryboardTimings(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint): SkillStoryboardJson {
+  const shots = parsed.shots.map((shot) => {
+    const floor = getShotDurationFloor(shot);
+    const preferredCap = getPreferredShotDurationCap(shot, floor);
+    const duration = Math.min(Math.max(Math.round(shot.duration), floor), preferredCap);
+    return { ...shot, duration };
+  });
+
   return {
     ...parsed,
-    shots: parsed.shots.map((shot) => {
-      const dialogueDuration = estimateSpeechDurationSeconds(extractShotDialogueText(shot), shot.emotion);
-      const duration = Math.min(Math.max(shot.duration, dialogueDuration || 1), MAX_VIDEO_SHOT_DURATION);
-      return { ...shot, duration };
-    }),
+    shots: compressStoryboardToTarget(shots, planning?.targetDurationMax),
   };
 }
 
@@ -521,7 +603,8 @@ function storyboardCountInstruction(planning?: StoryboardPlanningHint) {
   }
   return [
     `用户未明确限定数量：不要默认生成 3 个分镜，也不要为了省事只生成 3 个。`,
-    `请先按章节事件拆分完整分镜表，再由分镜表逐行生成 shots。当前建议不少于 ${planning?.estimatedMinimumShots ?? 4} 个分镜；除非原文极短，否则单章通常应为 6-12 个分镜。`,
+    `请先按章节事件拆分完整分镜表，再由分镜表逐行生成 shots。当前建议 ${planning?.estimatedMinimumShots ?? 4}-${planning?.estimatedMaximumShots ?? 24} 个分镜。`,
+    `英文短剧节奏必须快：大多数无对白/动作镜头 4-6 秒；对白镜头优先 4-8 秒；只有密集对白或关键大动作才接近 10-15 秒。`,
     `如果只返回 3 个分镜，会被视为拆镜不足。`,
   ].join("\n");
 }
@@ -534,6 +617,10 @@ function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: Story
     return `分镜拆分不足：当前 ${count} 个，按事件和对白长度建议不少于 ${planning?.estimatedMinimumShots ?? 4} 个`;
   }
 
+  if (!planning?.explicitShotCount && planning?.estimatedMaximumShots && count > planning.estimatedMaximumShots) {
+    return `分镜拆分过多：当前 ${count} 个，按章节时长预算建议不超过 ${planning.estimatedMaximumShots} 个`;
+  }
+
   const oversized = findOversizedDialogueShot(parsed);
   if (oversized) {
     return `第 ${oversized.index} 镜对白预计需要 ${oversized.dialogueDuration}s，超过单条视频镜头 ${MAX_VIDEO_SHOT_DURATION}s 上限，必须把对白拆到多个镜头`;
@@ -541,6 +628,10 @@ function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: Story
 
   if (planning?.estimatedMinimumDuration && getTotalDuration(parsed) < planning.estimatedMinimumDuration) {
     return `总时长过短：当前 ${getTotalDuration(parsed)}s，选中章节对白至少需要约 ${planning.estimatedMinimumDuration}s`;
+  }
+
+  if (planning?.targetDurationMax && getTotalDuration(parsed) > planning.targetDurationMax) {
+    return `总时长过长：当前 ${getTotalDuration(parsed)}s，当前章节目标约 ${planning.targetDurationMin}-${planning.targetDurationMax}s；请压缩节奏或减少冗余镜头`;
   }
 
   if (planning?.sourceDialogueSeconds && planning.sourceDialogueSeconds >= 8 && getOutputDialogueSeconds(parsed) < planning.sourceDialogueSeconds * 0.6) {
@@ -566,8 +657,10 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
     "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "6. 角色图字段可先填空；系统会按 associateAssetNames 匹配资产库图片补齐显示。",
-    `7. 含对白镜头必须按可听懂语速估算时长：英文正常约 2-2.5 words/sec，短剧急促对白也不应超过约 3 words/sec；中文正常约 3 字/秒。每条视频镜头 duration 不超过 ${MAX_VIDEO_SHOT_DURATION}s，超出必须拆成多镜头。`,
-    planning?.sourceDialogueSeconds ? `8. 当前选中章节原文对白预计至少需要约 ${planning.sourceDialogueSeconds}s；总分镜时长不能明显低于这个值，且对白必须进入 dialogue 字段。` : "",
+    `7. 每条视频镜头 duration 必须在 ${MIN_VIDEO_SHOT_DURATION}-${MAX_VIDEO_SHOT_DURATION}s，因为视频模型单次只支持这个范围；超出必须拆成多镜头。`,
+    "8. 英文美剧短剧节奏必须快切、有爆发力：大多数无对白/动作镜头 4-6s；对白镜头优先 4-8s；避免把普通镜头写成 10-15s 长镜头。",
+    planning ? `9. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s。分镜总时长必须落在这个节奏预算附近，不要拖到 3 分钟。` : "",
+    planning?.sourceDialogueSeconds ? `10. 当前选中章节原文对白预计至少需要约 ${planning.sourceDialogueSeconds}s；总分镜时长不能明显低于这个值，且对白必须进入 dialogue 字段。` : "",
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",
@@ -685,7 +778,7 @@ export async function generateProjectStoryboardWithSkill(
   try {
     let retryReason = "";
     for (let attempt = 0; attempt < 3; attempt++) {
-      parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, retryReason || undefined));
+      parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, retryReason || undefined), planning);
       const qualityReason = validateStoryboardQuality(parsed, planning);
       if (!qualityReason) break;
       retryReason = qualityReason;

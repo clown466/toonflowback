@@ -77,6 +77,8 @@ export interface RegenerateDirectorBoardOptions {
 
 export type DirectorBoardPromptLanguage = "english" | "chinese";
 
+const MAX_DIRECTOR_BOARD_DURATION_SECONDS = 15;
+
 function compact(value: unknown, maxLength = 800) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   if (text.length <= maxLength) return text;
@@ -186,10 +188,31 @@ function parseDuration(value: unknown) {
   return Number.isFinite(duration) && duration > 0 ? duration : 4;
 }
 
-function chunkItems<T>(items: T[], size: number) {
-  const result: T[][] = [];
-  for (let i = 0; i < items.length; i += size) result.push(items.slice(i, i + size));
-  return result;
+export function chunkStoryboardsForDirectorBoards(
+  storyboards: StoryboardRow[],
+  options: {
+    maxDuration?: number;
+    maxShots?: number;
+  } = {},
+) {
+  const maxDuration = Math.max(1, Number(options.maxDuration || MAX_DIRECTOR_BOARD_DURATION_SECONDS));
+  const maxShots = Math.max(1, Math.floor(Number(options.maxShots || 8)));
+  const chunks: StoryboardRow[][] = [];
+  let chunk: StoryboardRow[] = [];
+  let chunkDuration = 0;
+
+  for (const storyboard of storyboards) {
+    const duration = Math.min(parseDuration(storyboard.duration), maxDuration);
+    if (chunk.length && (chunkDuration + duration > maxDuration || chunk.length >= maxShots)) {
+      chunks.push(chunk);
+      chunk = [];
+      chunkDuration = 0;
+    }
+    chunk.push(storyboard);
+    chunkDuration += duration;
+  }
+  if (chunk.length) chunks.push(chunk);
+  return chunks;
 }
 
 function safeJson(value: unknown) {
@@ -508,8 +531,11 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
   const storyboards = (await baseQuery.orderBy("index", "asc").select("id", "index", "prompt", "videoDesc", "duration", "filePath", "trackId")) as StoryboardRow[];
   if (!storyboards.length) throw new Error("当前章节没有可用于导演板的分镜。");
 
-  const shotsPerBoard = Math.min(Math.max(Number(options.shotsPerBoard || 6), 3), 8);
-  const chunks = chunkItems(storyboards, shotsPerBoard);
+  const shotsPerBoard = Math.min(Math.max(Number(options.shotsPerBoard || 6), 1), 8);
+  const chunks = chunkStoryboardsForDirectorBoards(storyboards, {
+    maxDuration: MAX_DIRECTOR_BOARD_DURATION_SECONDS,
+    maxShots: shotsPerBoard,
+  });
   if (options.replace !== false) {
     await u.db("o_directorBoard").where({ projectId, scriptId }).delete();
   }

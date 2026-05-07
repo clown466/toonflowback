@@ -343,7 +343,7 @@ async function main() {
       ],
     },
     {
-      storyboardTable: '| 镜号 | 时长 | 画面 |\\n| --- | ---: | --- |\\n| 1 | 3s | Setup |\\n| 2 | 4s | Warning starts |\\n| 3 | 4s | Guard risk |\\n| 4 | 4s | Gate risk |\\n| 5 | 4s | Sunrise threat |',
+      storyboardTable: '| 镜号 | 时长 | 画面 |\\n| --- | ---: | --- |\\n| 1 | 3s | Setup |\\n| 2 | 4s | Warning starts |\\n| 3 | 4s | Guard risk |\\n| 4 | 4s | Gate risk |\\n| 5 | 4s | Sunrise threat |\\n| 6 | 4s | Team reaction |',
       shots: [
         {
           duration: 3,
@@ -380,6 +380,13 @@ async function main() {
           associateAssetNames: ['Chloe', 'safehouse'],
           dialogue: 'Chloe: If we wait until sunrise every person in this room gets dragged into the street.',
         },
+        {
+          duration: 4,
+          videoDesc: 'The team absorbs the warning in a tight reaction shot.',
+          imagePrompt: 'team tense reaction in safehouse',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: '无台词',
+        },
       ],
     },
   ];
@@ -389,15 +396,66 @@ async function main() {
     force: true,
   });
 
-  assert.strictEqual(dialogueResult.createdCount, 5, 'dialogue-heavy chapter should retry instead of accepting three shots');
+  assert.strictEqual(dialogueResult.createdCount, 6, 'dialogue-heavy chapter should retry instead of accepting three shots');
   assert.strictEqual(capturedPrompts.length, 2, 'bad low-count/short-duration output should trigger one retry');
   assert.deepStrictEqual(capturedModelKeys, ['productionAgent:storyboardTableAgent', 'productionAgent:storyboardTableAgent']);
   assert.ok(capturedPrompts[1].includes('上一次输出不合格'), 'retry prompt should explain the quality failure');
 
   const dialogueStoryboards = await db('o_storyboard').where({ projectId: 2, scriptId: dialogueResult.episodesId }).orderBy('index');
-  assert.strictEqual(dialogueStoryboards.length, 5);
+  assert.strictEqual(dialogueStoryboards.length, 6);
   const totalDuration = dialogueStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
   assert.ok(totalDuration >= 20, `normalized total duration should be dialogue-aware, got ${totalDuration}s`);
+
+  await db('o_project').insert({
+    id: 5,
+    name: 'Fast Cut Budget',
+    intro: 'English-language American short drama with explosive pacing',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Use fast cuts and punchy American TV rhythm',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 50,
+    projectId: 5,
+    chapterIndex: 10,
+    chapter: 'juben10',
+    chapterData: Array.from({ length: 80 }, (_, index) => `Beat ${index + 1}: Chloe, Bob, and Leo push through a dangerous campus gag with fast physical comedy.`).join(' '),
+    event: '| juben10 | Chloe, Bob, Leo, campus | The team crosses campus through escalating danger with fast comedy beats |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 51, projectId: 5, name: 'Chloe', type: 'role', describe: 'lead', prompt: 'Chloe prompt' },
+    { id: 52, projectId: 5, name: 'campus', type: 'scene', describe: 'campus', prompt: 'campus prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  mockStoryboardResponses = [
+    {
+      storyboardTable: '',
+      shots: Array.from({ length: 20 }, (_, index) => ({
+        duration: 10,
+        videoDesc: `Fast campus beat ${index + 1}.`,
+        imagePrompt: `Chloe and team in fast campus beat ${index + 1}`,
+        associateAssetNames: ['Chloe', 'campus'],
+        dialogue: '无台词',
+      })),
+    },
+  ];
+
+  const fastCutResult = await service.generateProjectStoryboardWithSkill(5, {
+    sourceText: '请针对 juben10 重新生成分镜',
+    force: true,
+  });
+  assert.strictEqual(fastCutResult.createdCount, 20);
+  assert.ok(capturedPrompts[0].includes('目标总时长'), 'prompt should include a chapter duration budget');
+  assert.ok(capturedPrompts[0].includes('4-6s'), 'prompt should tell the model to use fast short shots');
+  const fastCutStoryboards = await db('o_storyboard').where({ projectId: 5, scriptId: fastCutResult.episodesId }).orderBy('index');
+  const fastCutDurations = fastCutStoryboards.map((row) => Number(row.duration));
+  assert.ok(fastCutDurations.every((duration) => duration >= 4 && duration <= 6), `fast-cut shot durations should stay short: ${fastCutDurations.join(',')}`);
+  const fastCutTotal = fastCutDurations.reduce((sum, duration) => sum + duration, 0);
+  assert.ok(fastCutTotal <= 120, `chapter duration budget should prevent 3-minute storyboard tables, got ${fastCutTotal}s`);
 
   await db.destroy();
   console.log('Storyboard skill generation checks passed');

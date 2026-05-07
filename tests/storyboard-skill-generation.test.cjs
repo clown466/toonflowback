@@ -422,6 +422,57 @@ async function main() {
   assert.ok(totalDuration >= 20, `normalized total duration should be dialogue-aware, got ${totalDuration}s`);
 
   await db('o_project').insert({
+    id: 7,
+    name: 'Dialogue Repair',
+    intro: 'English-language fast drama',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Split long dialogue into fast cuts',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 70,
+    projectId: 7,
+    chapterIndex: 10,
+    chapter: 'juben10',
+    chapterData:
+      'Chloe says, "Listen, we cannot keep pretending this plan is safe. The guards already know our faces, the east gate is locked, and if we wait until sunrise every person in this room gets dragged into the street."',
+    event: '| juben10 | Chloe, safehouse | Chloe warns the team that the plan is collapsing |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 71, projectId: 7, name: 'Chloe', type: 'role', describe: 'leader', prompt: 'Chloe prompt' },
+    { id: 72, projectId: 7, name: 'safehouse', type: 'scene', describe: 'hideout', prompt: 'safehouse prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  const oversizedSingleShot = {
+    storyboardTable: '| 镜号 | 时长 | 画面 |\\n| --- | ---: | --- |\\n| 1 | 15s | Chloe monologue |',
+    shots: [
+      {
+        duration: 15,
+        videoDesc: 'Chloe delivers the warning in one uninterrupted shot.',
+        imagePrompt: 'Chloe monologue in safehouse',
+        associateAssetNames: ['Chloe', 'safehouse'],
+        dialogue:
+          'Chloe: Listen, we cannot keep pretending this plan is safe. The guards already know our faces, the east gate is locked, and if we wait until sunrise every person in this room gets dragged into the street.',
+      },
+    ],
+  };
+  mockStoryboardResponses = [oversizedSingleShot, oversizedSingleShot, oversizedSingleShot];
+
+  const repairedDialogueResult = await service.generateProjectStoryboardWithSkill(7, {
+    sourceText: '请针对 juben10 重新生成分镜',
+    force: true,
+  });
+  assert.ok(repairedDialogueResult.createdCount > 1, 'final quality pass should split an oversized monologue instead of failing');
+  assert.strictEqual(capturedPrompts.length, 3, 'the model should get retry chances before deterministic repair');
+  const repairedStoryboards = await db('o_storyboard').where({ projectId: 7, scriptId: repairedDialogueResult.episodesId }).orderBy('index');
+  assert.ok(repairedStoryboards.every((row) => Number(row.duration) <= 4), 'repaired dialogue cuts should stay within the fast-cut shot cap');
+  assert.ok(repairedStoryboards.some((row) => String(row.videoDesc).includes('fast dialogue cut')), 'repaired rows should mark the fast-cut split');
+
+  await db('o_project').insert({
     id: 5,
     name: 'Fast Cut Budget',
     intro: 'English-language American short drama with explosive pacing',

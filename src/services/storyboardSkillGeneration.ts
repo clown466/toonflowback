@@ -346,6 +346,122 @@ function extractShotDialogueText(shot: SkillShot) {
   return "";
 }
 
+function hasMostlyEnglishText(text: string) {
+  const englishWords = text.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)?/g)?.length ?? 0;
+  const cjkChars = text.match(/[\u3400-\u9fff]/g)?.length ?? 0;
+  return englishWords >= Math.max(3, cjkChars);
+}
+
+function splitOversizedSentence(text: string, emotion?: string | null) {
+  const source = text.trim();
+  if (!source) return [];
+  const pieces = /\s/.test(source)
+    ? source.split(/\s+/).filter(Boolean)
+    : source.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)?|[\u3400-\u9fff]|[^\sA-Za-z0-9\u3400-\u9fff]/g) ?? [source];
+  const chunks: string[] = [];
+  let current = "";
+  for (const piece of pieces) {
+    const separator = /\s/.test(source) && current ? " " : "";
+    const candidate = `${current}${separator}${piece}`.trim();
+    if (current && estimateSpeechDurationSeconds(candidate, emotion) > MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT) {
+      chunks.push(current);
+      current = piece;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function splitDialogueContentIntoFastCuts(text: string, emotion?: string | null) {
+  const sentences = text.match(/[^.!?;:，。！？；：…]+[.!?;:，。！？；：…]*/g)?.map((part) => part.trim()).filter(Boolean) ?? [text.trim()].filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    const candidate = [current, sentence].filter(Boolean).join(" ").trim();
+    if (candidate && estimateSpeechDurationSeconds(candidate, emotion) <= MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT) {
+      current = candidate;
+      continue;
+    }
+    if (current) chunks.push(current);
+    if (estimateSpeechDurationSeconds(sentence, emotion) <= MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT) {
+      current = sentence;
+    } else {
+      chunks.push(...splitOversizedSentence(sentence, emotion));
+      current = "";
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.filter(Boolean);
+}
+
+function splitDialogueIntoFastCutChunks(dialogue: string, emotion?: string | null) {
+  const source = nonEmpty(dialogue);
+  if (!source || isNoDialogueText(source)) return [];
+  const chunks: string[] = [];
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || isNoDialogueText(line)) continue;
+    const speakerMatch = line.match(/^(\s*[-*]?\s*[\w\u4e00-\u9fa5 .'"’‘-]{1,36}\s*[:：]\s*)([\s\S]+)$/);
+    const speaker = speakerMatch?.[1] ?? "";
+    const content = (speakerMatch?.[2] ?? line).trim();
+    for (const chunk of splitDialogueContentIntoFastCuts(content, emotion)) {
+      chunks.push(`${speaker}${chunk}`.trim());
+    }
+  }
+  return chunks.length ? chunks : [source];
+}
+
+function fastCutVariant(index: number, english: boolean) {
+  const englishVariants = ["tight close-up", "reaction shot", "over-shoulder angle", "insert detail", "slow push-in", "side tracking angle"];
+  const chineseVariants = ["特写切角度", "反应镜头", "过肩镜头", "道具插入", "推近特写", "横移跟拍"];
+  const variants = english ? englishVariants : chineseVariants;
+  return variants[index % variants.length];
+}
+
+function appendFastCutCue(text: string | undefined, cue: string, part: number, total: number, english: boolean) {
+  const base = nonEmpty(text) ?? "";
+  const suffix = english ? `fast dialogue cut ${part}/${total}, ${cue}` : `对白快切 ${part}/${total}，${cue}`;
+  return base ? `${base}; ${suffix}` : suffix;
+}
+
+function splitOversizedDialogueShots(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint): SkillStoryboardJson {
+  if (planning?.explicitShotCount) return parsed;
+  const shots: SkillShot[] = [];
+  let changed = false;
+  for (const shot of parsed.shots) {
+    const dialogue = extractShotDialogueText(shot);
+    if (!dialogue || estimateSpeechDurationSeconds(dialogue, shot.emotion) <= MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT) {
+      shots.push(shot);
+      continue;
+    }
+
+    const chunks = splitDialogueIntoFastCutChunks(dialogue, shot.emotion);
+    if (chunks.length <= 1) {
+      shots.push(shot);
+      continue;
+    }
+
+    changed = true;
+    const english = hasMostlyEnglishText(`${dialogue}\n${shot.videoDesc}\n${shot.imagePrompt}`);
+    chunks.forEach((chunk, chunkIndex) => {
+      const cue = fastCutVariant(chunkIndex, english);
+      shots.push({
+        ...shot,
+        duration: clamp(estimateSpeechDurationSeconds(chunk, shot.emotion), 2, PREFERRED_STORYBOARD_SHOT_MAX),
+        dialogue: chunk,
+        videoDesc: appendFastCutCue(shot.videoDesc, cue, chunkIndex + 1, chunks.length, english),
+        imagePrompt: appendFastCutCue(shot.imagePrompt, cue, chunkIndex + 1, chunks.length, english),
+        cameraMove: shot.cameraMove ?? cue,
+        beat: appendFastCutCue(shot.beat, cue, chunkIndex + 1, chunks.length, english),
+        videoMotionPrompt: appendFastCutCue(shot.videoMotionPrompt ?? shot.videoDesc, cue, chunkIndex + 1, chunks.length, english),
+      });
+    });
+  }
+  return changed ? { ...parsed, storyboardTable: "", shots: shots.slice(0, MAX_STORYBOARD_SHOTS) } : parsed;
+}
+
 function getSourceDialogue(novels: NovelRow[]) {
   const text = novels
     .map((novel) => [novel.event, novel.chapterData].filter(Boolean).join("\n"))
@@ -385,7 +501,7 @@ function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): Stor
   const textLength = novels.reduce((sum, novel) => sum + String(novel.chapterData ?? "").length, 0);
   const sourceDialogueText = getSourceDialogue(novels);
   const sourceDialogueSeconds = estimateSpeechDurationSeconds(sourceDialogueText);
-  const dialogueShotFloor = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds / 8) : 0;
+  const dialogueShotFloor = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds / MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT) : 0;
   const estimatedMinimumShots = explicitShotCount ?? clamp(Math.max(4, eventCount * 2, Math.ceil(textLength / 700), dialogueShotFloor), 4, 24);
   const rawDurationBudget = estimateChapterDurationBudget({ explicitShotCount, sourceDialogueSeconds, eventCount, textLength });
   const dialogueVisualBreathingRoom = sourceDialogueSeconds > 0 ? sourceDialogueSeconds + estimatedMinimumShots * 3 : 0;
@@ -790,6 +906,14 @@ export async function generateProjectStoryboardWithSkill(
       parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, retryReason || undefined), planning);
       const qualityReason = validateStoryboardQuality(parsed, planning);
       if (!qualityReason) break;
+      if (attempt === 2) {
+        const repaired = normalizeStoryboardTimings(splitOversizedDialogueShots(parsed, planning), planning);
+        const repairReason = validateStoryboardQuality(repaired, planning);
+        if (!repairReason) {
+          parsed = repaired;
+          break;
+        }
+      }
       retryReason = qualityReason;
       if (attempt === 2) throw new Error(`模型分镜质量不合格：${qualityReason}`);
     }

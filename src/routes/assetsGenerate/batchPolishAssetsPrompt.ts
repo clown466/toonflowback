@@ -49,6 +49,8 @@ function buildSkillPromptPolishSystem(visualManual: string, skillPrompt: string)
   return [
     "你是 Toonflow 的资产生图提示词推理器。",
     "用户会选择一个资产生图预设。请根据该预设、视觉手册、项目设定和资产描述，生成最终可直接发送给图片模型的提示词。",
+    "如果现有生图提示词与所选预设冲突，必须以所选预设为最高优先级，重写冲突部分。",
+    "例如选择俯视/鸟瞰/overhead 预设时，不要输出 eye-level、cinematic establishing、front view、exterior perspective 等非俯视构图。",
     "只输出最终生图提示词，不要解释，不要 markdown，不要 JSON。",
     "提示词要简洁、明确、可执行；不要堆叠无关规则。",
     "",
@@ -90,7 +92,7 @@ export default router.post(
     // 预加载公共数据
     const assetsIds = items.map((item: { assetsId: number }) => item.assetsId);
     //查询所有资产，用于判断每个资产是否是衍生资产
-    const assetsDataList = await u.db("o_assets").whereIn("id", assetsIds).select("id", "assetsId");
+    const assetsDataList = await u.db("o_assets").whereIn("id", assetsIds).select("id", "assetsId", "prompt");
     if (!assetsDataList || assetsDataList.length === 0) return res.status(500).send(error("资产不存在"));
     const assetsDataMap = new Map(assetsDataList.map((a: any) => [a.id, a]));
     // 所有前置检测通过后，再批量更新状态为生成中
@@ -141,6 +143,7 @@ export default router.post(
         }
         try {
           const effectiveUserRequirement = item.userRequirement ?? userRequirement ?? otherTextPrompt ?? null;
+          const existingPrompt = String(assetData.prompt || "").trim();
           const selectedSkill = await resolveImageGenerationSkill({
             skillId: item.skillId ?? skillId,
             requestText: effectiveUserRequirement,
@@ -181,7 +184,7 @@ export default router.post(
                   type: assetType,
                   name: item.name,
                   describe: item.describe,
-                  prompt: item.describe,
+                  prompt: existingPrompt || item.describe,
                 },
                 visualManual: getVisualManualForAssetType(project.artStyle, assetType, !!assetData.assetsId) || visualManual,
                 userRequirement: effectiveUserRequirement,
@@ -204,6 +207,7 @@ export default router.post(
       **${config.nameLabel}设定：**
       - ${config.nameLabel}名称:${item.name},
       - ${config.nameLabel}描述:${item.describe},
+      - 现有生图提示词:${existingPrompt || "无"},
       - 用户额外要求:${effectiveUserRequirement || "无"},
       - 时间环境推理:${timeEnvironmentContext || "无"},
       - 标准展示光约束:${neutralAssetLighting || "无"},`,

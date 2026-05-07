@@ -30,6 +30,8 @@ function buildSkillPromptPolishSystem(visualManual: string, skillPrompt: string)
   return [
     "你是 Toonflow 的资产生图提示词推理器。",
     "用户会选择一个资产生图预设。请根据该预设、视觉手册、项目设定和资产描述，生成最终可直接发送给图片模型的提示词。",
+    "如果现有生图提示词与所选预设冲突，必须以所选预设为最高优先级，重写冲突部分。",
+    "例如选择俯视/鸟瞰/overhead 预设时，不要输出 eye-level、cinematic establishing、front view、exterior perspective 等非俯视构图。",
     "只输出最终生图提示词，不要解释，不要 markdown，不要 JSON。",
     "提示词要简洁、明确、可执行；不要堆叠无关规则。",
     "",
@@ -52,9 +54,10 @@ export default router.post(
     describe: zod.string(),
     skillId: zod.string().optional().nullable(),
     userRequirement: zod.string().optional().nullable(),
+    currentPrompt: zod.string().optional().nullable(),
   }),
   async (req, res) => {
-    const { assetsId, projectId, type, name, describe, skillId, userRequirement } = req.body;
+    const { assetsId, projectId, type, name, describe, skillId, userRequirement, currentPrompt } = req.body;
     //获取风格
     const project = await u.db("o_project").where("id", projectId).select("id", "name", "artStyle", "type", "intro", "directorManual").first();
     //如果没有找到对应的项目，返回错误
@@ -63,7 +66,7 @@ export default router.post(
     await u.db("o_assets").where("id", assetsId).update({ promptState: "生成中" });
 
     //查询资产是否是衍生资产
-    const assetsData = await u.db("o_assets").where("id", assetsId).select("assetsId").first();
+    const assetsData = await u.db("o_assets").where("id", assetsId).select("assetsId", "prompt").first();
     if (!assetsData) return { code: 500, message: "资产不存在" };
     const assetType = normalizeAssetType(type);
     if (!assetType) return res.status(500).send(error("不支持的类型"));
@@ -103,6 +106,7 @@ export default router.post(
         requestText: userRequirement,
         assetType,
       });
+      const existingPrompt = String(currentPrompt || assetsData.prompt || "").trim();
       const neutralAssetLighting = assetType === "scene" ? null : buildNeutralAssetLightingText(assetType);
       const timeEnvironmentContext =
         assetType === "scene"
@@ -138,7 +142,7 @@ export default router.post(
               type: assetType,
               name,
               describe,
-              prompt: describe,
+              prompt: existingPrompt || describe,
             },
             visualManual: getVisualManualForAssetType(project.artStyle, assetType, !!assetsData.assetsId) || visualManual,
             userRequirement,
@@ -160,6 +164,7 @@ export default router.post(
       **${config.nameLabel}设定：**
       - ${config.nameLabel}名称:${name},
       - ${config.nameLabel}描述:${describe},
+      - 现有生图提示词:${existingPrompt || "无"},
       - 用户额外要求:${userRequirement || "无"},
       - 时间环境推理:${timeEnvironmentContext || "无"},
       - 标准展示光约束:${neutralAssetLighting || "无"},`,

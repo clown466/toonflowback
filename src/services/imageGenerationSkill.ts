@@ -115,7 +115,8 @@ aspectRatio: 16:9
 你是场景资产设计师。
 
 生成一张场景俯视全景参考图。
-视角：top-down / bird's-eye view / overhead map。
+视角必须是 top-down / bird's-eye view / overhead map，像室内平面布局参考或鸟瞰地图。
+严禁使用 eye-level view、normal perspective、cinematic establishing shot、front exterior view、street-level view。
 重点展示完整空间布局、入口、主要家具、关键道具、可行动区域、摄像机友好空间和灯光方向。
 这是后续分镜、导演板和视频生成的权威场景参考图。
 不要出现角色、人物、对白、字幕、UI、水印。
@@ -286,8 +287,26 @@ function rootDir() {
 function ensureBuiltinSkills(dir: string) {
   for (const [id, content] of Object.entries(BUILTIN_IMAGE_GENERATION_SKILLS)) {
     const filePath = path.join(dir, `${id}.md`);
-    if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, content, "utf-8");
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, content, "utf-8");
+    } else {
+      patchBuiltinSkillIfNeeded(id, filePath);
+    }
   }
+}
+
+function patchBuiltinSkillIfNeeded(id: string, filePath: string) {
+  if (id !== "scene_top_down_panorama") return;
+  const content = fs.readFileSync(filePath, "utf-8");
+  if (content.includes("严禁使用 eye-level view")) return;
+  const next = content.replace(
+    "视角：top-down / bird's-eye view / overhead map。",
+    [
+      "视角必须是 top-down / bird's-eye view / overhead map，像室内平面布局参考或鸟瞰地图。",
+      "严禁使用 eye-level view、normal perspective、cinematic establishing shot、front exterior view、street-level view。",
+    ].join("\n"),
+  );
+  if (next !== content) fs.writeFileSync(filePath, next, "utf-8");
 }
 
 function normalizeId(value: string) {

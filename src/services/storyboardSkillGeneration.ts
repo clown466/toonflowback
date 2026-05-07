@@ -116,7 +116,6 @@ const MIN_STORYBOARD_SHOT_DURATION = 1;
 const DEFAULT_STORYBOARD_SHOT_DURATION = 3;
 const PREFERRED_STORYBOARD_SHOT_MAX = 4;
 const MAX_STORYBOARD_SHOT_DURATION = 15;
-const FAST_DRAMA_MIN_AVERAGE_SHOT_DURATION = 2;
 const FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX = 4;
 const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 4;
 const MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT = 4;
@@ -525,7 +524,7 @@ function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): Stor
     Math.max(rawDurationBudget.targetDurationMax, estimatedMinimumShots * DEFAULT_STORYBOARD_SHOT_DURATION, dialogueVisualBreathingRoom),
   );
   const targetDurationMin = Math.min(targetDurationMax, rawDurationBudget.targetDurationMin);
-  const estimatedMaximumShots = explicitShotCount ?? clamp(Math.ceil(targetDurationMax / FAST_DRAMA_MIN_AVERAGE_SHOT_DURATION), estimatedMinimumShots, MAX_STORYBOARD_SHOTS);
+  const estimatedMaximumShots = explicitShotCount ?? clamp(Math.ceil(targetDurationMax / DEFAULT_STORYBOARD_SHOT_DURATION), estimatedMinimumShots, MAX_STORYBOARD_SHOTS);
   const estimatedMinimumDuration = sourceDialogueSeconds > 0 ? Math.min(targetDurationMax, Math.ceil(sourceDialogueSeconds * 0.9)) : 0;
   return {
     explicitShotCount,
@@ -744,8 +743,6 @@ function findOversizedDialogueShot(parsed: SkillStoryboardJson) {
 
 function hasFlatTwoSecondTiming(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint) {
   if (planning?.explicitShotCount || parsed.shots.length < 6) return false;
-  const canUseThreeSecondAverage = !planning?.targetDurationMax || parsed.shots.length * DEFAULT_STORYBOARD_SHOT_DURATION <= planning.targetDurationMax;
-  if (!canUseThreeSecondAverage) return false;
   const shortCount = parsed.shots.filter((shot) => shot.duration <= 2).length;
   const hasMediumHold = parsed.shots.some((shot) => shot.duration >= 4);
   return shortCount / parsed.shots.length >= 0.8 && !hasMediumHold;

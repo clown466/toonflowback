@@ -615,10 +615,20 @@ async function main() {
   mockStoryboardResponses = [
     {
       storyboardTable: '',
-      shots: Array.from({ length: 50 }, (_, index) => ({
-        duration: 4,
-        videoDesc: `Dense cut ${index + 1}.`,
-        imagePrompt: `Chloe dense cut ${index + 1}`,
+      shots: Array.from({ length: 60 }, (_, index) => ({
+        duration: 2,
+        videoDesc: `Too many flat cuts ${index + 1}.`,
+        imagePrompt: `Chloe flat cut ${index + 1}`,
+        associateAssetNames: ['Chloe', 'campus'],
+        dialogue: '无台词',
+      })),
+    },
+    {
+      storyboardTable: '',
+      shots: Array.from({ length: 33 }, (_, index) => ({
+        duration: 3,
+        videoDesc: `Dense but varied cut ${index + 1}.`,
+        imagePrompt: `Chloe dense varied cut ${index + 1}`,
         associateAssetNames: ['Chloe', 'campus'],
         dialogue: '无台词',
       })),
@@ -629,7 +639,9 @@ async function main() {
     sourceText: '请针对 juben10 重新生成分镜',
     force: true,
   });
-  assert.strictEqual(hardCapResult.createdCount, 50);
+  assert.strictEqual(hardCapResult.createdCount, 33);
+  assert.strictEqual(capturedPrompts.length, 2, '60 all-2s shots should be rejected and retried');
+  assert.ok(capturedPrompts[1].includes('分镜拆分过多') || capturedPrompts[1].includes('分镜时长过于机械'), 'retry prompt should reject too many flat 2s shots');
   const hardCapStoryboards = await db('o_storyboard').where({ projectId: 6, scriptId: hardCapResult.episodesId }).orderBy('index');
   const hardCapTotal = hardCapStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
   assert.ok(hardCapTotal <= 120, `chapter storyboard total must never exceed 120s, got ${hardCapTotal}s`);

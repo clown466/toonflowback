@@ -69,6 +69,7 @@ export interface QueueDirectorBoardOptions {
   model?: string;
   shotsPerBoard?: number;
   replace?: boolean;
+  generateImages?: boolean;
 }
 
 export interface RegenerateDirectorBoardOptions {
@@ -523,8 +524,9 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
   if (!project?.id) throw new Error("项目不存在，无法生成章节导演板。");
   const script = (await u.db("o_script").where({ id: scriptId, projectId }).first()) as ScriptRow | undefined;
   if (!script?.id) throw new Error("章节工作区不存在，无法生成章节导演板。");
+  const shouldGenerateImages = options.generateImages === true;
   const model = clean(options.model || project.imageModel);
-  if (!model) throw new Error("项目未配置出图模型，无法生成章节导演板。");
+  if (shouldGenerateImages && !model) throw new Error("项目未配置出图模型，无法生成章节导演板图片。");
 
   const baseQuery = u.db("o_storyboard").where({ projectId, scriptId });
   if (options.storyboardIds?.length) baseQuery.whereIn("id", options.storyboardIds);
@@ -558,7 +560,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
       scriptId,
       name: `章节导演板 ${boardIndex + 1}/${chunks.length}`,
       prompt,
-      state: "生成中",
+      state: shouldGenerateImages ? "生成中" : "未生成",
       reason: "",
       model,
       storyboardIds: safeJson(chunk.map((item) => item.id)),
@@ -569,7 +571,9 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
     });
     const row = (await u.db("o_directorBoard").where("id", rowId).first()) as DirectorBoardRow;
     created.push(row);
-    void runDirectorBoardImageTask(Number(rowId), { project, script, storyboards: chunk, assets, prompt, promptLanguage, model });
+    if (shouldGenerateImages) {
+      void runDirectorBoardImageTask(Number(rowId), { project, script, storyboards: chunk, assets, prompt, promptLanguage, model });
+    }
   }
 
   return created;

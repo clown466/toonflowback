@@ -16,15 +16,17 @@ export default router.post(
     model: z.string().optional(),
     shotsPerBoard: z.number().min(3).max(8).optional(),
     replace: z.boolean().optional(),
+    generateImages: z.boolean().optional(),
   }),
   async (req, res) => {
     try {
-      const { projectId, scriptId, storyboardIds, model, shotsPerBoard, replace } = req.body;
+      const { projectId, scriptId, storyboardIds, model, shotsPerBoard, replace, generateImages } = req.body;
       const rows = await queueDirectorBoardGeneration(projectId, scriptId, {
         storyboardIds,
         model,
         shotsPerBoard,
         replace,
+        generateImages,
       });
       res.status(200).send(success(rows));
     } catch (e) {

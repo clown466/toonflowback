@@ -100,14 +100,18 @@ function buildPrompt(language) {
   );
 
   const englishPrompt = buildPrompt("english");
-  assert.match(englishPrompt, /Primary goal:/, "English director board prompt should use English structure");
-  assert.doesNotMatch(englishPrompt, /主要目标：/, "English director board prompt should not use Chinese structure");
-  assert.match(englishPrompt, /All visible board labels and annotations must be in English only/, "English prompt should constrain visible labels");
+  assert.match(englishPrompt, /Simple layout:/, "English director board prompt should use English structure");
+  assert.doesNotMatch(englishPrompt, /简单版式：/, "English director board prompt should not use Chinese structure");
+  assert.match(englishPrompt, /English only/, "English prompt should constrain visible labels");
+  assert.match(englishPrompt, /Draw characters as simple pencil\/marker symbols/, "English prompt should use the simpler board style");
+  assert.ok(englishPrompt.length < 3500, "English director board prompt should stay concise");
 
   const chinesePrompt = buildPrompt("chinese");
-  assert.match(chinesePrompt, /主要目标：/, "Chinese director board prompt should use Chinese structure");
-  assert.doesNotMatch(chinesePrompt, /Primary goal:/, "Chinese director board prompt should not use English structure");
-  assert.match(chinesePrompt, /画面内所有标签和标注统一使用中文/, "Chinese prompt should constrain visible labels");
+  assert.match(chinesePrompt, /简单版式：/, "Chinese director board prompt should use Chinese structure");
+  assert.doesNotMatch(chinesePrompt, /Simple layout:/, "Chinese director board prompt should not use English structure");
+  assert.match(chinesePrompt, /画面文字保持简短可读，并统一使用中文/, "Chinese prompt should constrain visible labels");
+  assert.match(chinesePrompt, /角色只画成简单铅笔\/马克笔符号或剪影/, "Chinese prompt should use the simpler board style");
+  assert.ok(chinesePrompt.length < 3000, "Chinese director board prompt should stay concise");
 
   const normalized = await service.normalizeDirectorBoardPromptLanguage(
     "Create one director board.\nCharacter facts: 黄色柠檬角色，穿战术背心。",

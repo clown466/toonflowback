@@ -450,6 +450,7 @@ async function main() {
   });
   assert.strictEqual(fastCutResult.createdCount, 34, '34 fast-cut shots should be valid for a 90-120s chapter');
   assert.ok(capturedPrompts[0].includes('目标总时长'), 'prompt should include a chapter duration budget');
+  assert.ok(capturedPrompts[0].includes('硬上限 120s'), 'prompt should make the 2-minute cap explicit');
   assert.ok(capturedPrompts[0].includes('1-4s'), 'prompt should tell the model to use fast short shots');
   assert.ok(capturedPrompts[0].includes('单张章节导演板/一次 AI 视频生成片段'), 'prompt should scope 4-15s to director boards, not single shots');
   const fastCutStoryboards = await db('o_storyboard').where({ projectId: 5, scriptId: fastCutResult.episodesId }).orderBy('index');
@@ -457,6 +458,53 @@ async function main() {
   assert.ok(fastCutDurations.every((duration) => duration >= 1 && duration <= 4), `fast-cut shot durations should allow sub-4s cuts: ${fastCutDurations.join(',')}`);
   const fastCutTotal = fastCutDurations.reduce((sum, duration) => sum + duration, 0);
   assert.ok(fastCutTotal <= 120, `chapter duration budget should prevent 3-minute storyboard tables, got ${fastCutTotal}s`);
+
+  await db('o_project').insert({
+    id: 6,
+    name: 'Hard Two Minute Cap',
+    intro: 'English-language American short drama with very dense fast cuts',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Never exceed two minutes',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 60,
+    projectId: 6,
+    chapterIndex: 10,
+    chapter: 'juben10',
+    chapterData: Array.from({ length: 120 }, (_, index) => `Beat ${index + 1}: a short explosive campus cut.`).join(' '),
+    event: '| juben10 | Chloe, campus | A dense fast-cut sequence must stay under two minutes |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 61, projectId: 6, name: 'Chloe', type: 'role', describe: 'lead', prompt: 'Chloe prompt' },
+    { id: 62, projectId: 6, name: 'campus', type: 'scene', describe: 'campus', prompt: 'campus prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  mockStoryboardResponses = [
+    {
+      storyboardTable: '',
+      shots: Array.from({ length: 50 }, (_, index) => ({
+        duration: 4,
+        videoDesc: `Dense cut ${index + 1}.`,
+        imagePrompt: `Chloe dense cut ${index + 1}`,
+        associateAssetNames: ['Chloe', 'campus'],
+        dialogue: '无台词',
+      })),
+    },
+  ];
+
+  const hardCapResult = await service.generateProjectStoryboardWithSkill(6, {
+    sourceText: '请针对 juben10 重新生成分镜',
+    force: true,
+  });
+  assert.strictEqual(hardCapResult.createdCount, 50);
+  const hardCapStoryboards = await db('o_storyboard').where({ projectId: 6, scriptId: hardCapResult.episodesId }).orderBy('index');
+  const hardCapTotal = hardCapStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
+  assert.ok(hardCapTotal <= 120, `chapter storyboard total must never exceed 120s, got ${hardCapTotal}s`);
 
   await db.destroy();
   console.log('Storyboard skill generation checks passed');

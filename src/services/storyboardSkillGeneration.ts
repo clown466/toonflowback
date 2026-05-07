@@ -115,6 +115,7 @@ const FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX = 4;
 const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 8;
 const STANDARD_CHAPTER_TARGET_MIN_SECONDS = 90;
 const STANDARD_CHAPTER_TARGET_MAX_SECONDS = 120;
+const CHAPTER_DURATION_HARD_CAP_SECONDS = 120;
 const MIN_CHAPTER_TARGET_SECONDS = 24;
 const ENGLISH_NORMAL_WORDS_PER_SECOND = 2.5;
 const ENGLISH_FAST_WORDS_PER_SECOND = 3;
@@ -360,7 +361,8 @@ function estimateChapterDurationBudget(input: {
   if (input.explicitShotCount) {
     const targetMin = input.explicitShotCount * MIN_STORYBOARD_SHOT_DURATION;
     const targetMax = Math.min(input.explicitShotCount * FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX, input.explicitShotCount * MAX_STORYBOARD_SHOT_DURATION);
-    return { targetDurationMin: targetMin, targetDurationMax: Math.max(targetMin, targetMax) };
+    const cappedTargetMax = Math.min(Math.max(targetMin, targetMax), CHAPTER_DURATION_HARD_CAP_SECONDS);
+    return { targetDurationMin: Math.min(targetMin, cappedTargetMax), targetDurationMax: cappedTargetMax };
   }
 
   const narrativeSeconds = Math.ceil(input.textLength / 45);
@@ -386,12 +388,13 @@ function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): Stor
   const rawDurationBudget = estimateChapterDurationBudget({ explicitShotCount, sourceDialogueSeconds, eventCount, textLength });
   const dialogueVisualBreathingRoom = sourceDialogueSeconds > 0 ? sourceDialogueSeconds + estimatedMinimumShots * 3 : 0;
   const targetDurationMax = Math.min(
+    CHAPTER_DURATION_HARD_CAP_SECONDS,
     explicitShotCount ? explicitShotCount * MAX_STORYBOARD_SHOT_DURATION : STANDARD_CHAPTER_TARGET_MAX_SECONDS,
     Math.max(rawDurationBudget.targetDurationMax, estimatedMinimumShots * DEFAULT_STORYBOARD_SHOT_DURATION, dialogueVisualBreathingRoom),
   );
   const targetDurationMin = Math.min(targetDurationMax, rawDurationBudget.targetDurationMin);
   const estimatedMaximumShots = explicitShotCount ?? clamp(Math.ceil(targetDurationMax / FAST_DRAMA_MIN_AVERAGE_SHOT_DURATION), estimatedMinimumShots, MAX_STORYBOARD_SHOTS);
-  const estimatedMinimumDuration = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds * 0.9) : 0;
+  const estimatedMinimumDuration = sourceDialogueSeconds > 0 ? Math.min(targetDurationMax, Math.ceil(sourceDialogueSeconds * 0.9)) : 0;
   return {
     explicitShotCount,
     estimatedMinimumShots,
@@ -633,11 +636,12 @@ function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: Story
   }
 
   if (planning?.targetDurationMax && getTotalDuration(parsed) > planning.targetDurationMax) {
-    return `总时长过长：当前 ${getTotalDuration(parsed)}s，当前章节目标约 ${planning.targetDurationMin}-${planning.targetDurationMax}s；请压缩节奏或减少冗余镜头`;
+    return `总时长过长：当前 ${getTotalDuration(parsed)}s，当前章节硬上限 ${planning.targetDurationMax}s；请压缩节奏、减少冗余镜头或浓缩对白`;
   }
 
-  if (planning?.sourceDialogueSeconds && planning.sourceDialogueSeconds >= 8 && getOutputDialogueSeconds(parsed) < planning.sourceDialogueSeconds * 0.6) {
-    return `输出对白覆盖不足：选中章节对白约 ${planning.sourceDialogueSeconds}s，但分镜对白字段明显缺失，必须保留原文对白`;
+  const minimumDialogueCoverage = planning?.sourceDialogueSeconds ? Math.min(planning.sourceDialogueSeconds * 0.6, (planning.targetDurationMax || CHAPTER_DURATION_HARD_CAP_SECONDS) * 0.75) : 0;
+  if (planning?.sourceDialogueSeconds && planning.sourceDialogueSeconds >= 8 && getOutputDialogueSeconds(parsed) < minimumDialogueCoverage) {
+    return `输出对白覆盖不足：选中章节对白约 ${planning.sourceDialogueSeconds}s，但分镜对白字段明显缺失；请在 120 秒内保留关键对白并浓缩次要台词`;
   }
 
   return "";
@@ -662,8 +666,8 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     `7. 单条分镜 duration 可以短于 4s；快切镜头允许 ${MIN_STORYBOARD_SHOT_DURATION}-4s。单条分镜最长不超过 ${MAX_STORYBOARD_SHOT_DURATION}s，否则无法放进单张导演板。`,
     "8. 4-15s 是单张章节导演板/一次 AI 视频生成片段的总时长范围，不是单条分镜的最小时长。后续系统会把连续分镜按不超过 15s 分组到导演板。",
     "9. 英文美剧短剧节奏必须快切、有爆发力：大多数无对白/动作镜头 1-4s；对白镜头优先 3-8s；避免把普通镜头写成 10-15s 长镜头。",
-    planning ? `10. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s。分镜总时长必须落在这个节奏预算附近，不要拖到 3 分钟。` : "",
-    planning?.sourceDialogueSeconds ? `11. 当前选中章节原文对白预计至少需要约 ${planning.sourceDialogueSeconds}s；总分镜时长不能明显低于这个值，且对白必须进入 dialogue 字段。` : "",
+    planning ? `10. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
+    planning?.sourceDialogueSeconds ? `11. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",

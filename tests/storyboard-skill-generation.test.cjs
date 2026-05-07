@@ -450,10 +450,11 @@ async function main() {
   });
   assert.strictEqual(fastCutResult.createdCount, 20);
   assert.ok(capturedPrompts[0].includes('目标总时长'), 'prompt should include a chapter duration budget');
-  assert.ok(capturedPrompts[0].includes('4-6s'), 'prompt should tell the model to use fast short shots');
+  assert.ok(capturedPrompts[0].includes('1-4s'), 'prompt should tell the model to use fast short shots');
+  assert.ok(capturedPrompts[0].includes('单张章节导演板/一次 AI 视频生成片段'), 'prompt should scope 4-15s to director boards, not single shots');
   const fastCutStoryboards = await db('o_storyboard').where({ projectId: 5, scriptId: fastCutResult.episodesId }).orderBy('index');
   const fastCutDurations = fastCutStoryboards.map((row) => Number(row.duration));
-  assert.ok(fastCutDurations.every((duration) => duration >= 4 && duration <= 6), `fast-cut shot durations should stay short: ${fastCutDurations.join(',')}`);
+  assert.ok(fastCutDurations.every((duration) => duration >= 1 && duration <= 4), `fast-cut shot durations should allow sub-4s cuts: ${fastCutDurations.join(',')}`);
   const fastCutTotal = fastCutDurations.reduce((sum, duration) => sum + duration, 0);
   assert.ok(fastCutTotal <= 120, `chapter duration budget should prevent 3-minute storyboard tables, got ${fastCutTotal}s`);
 

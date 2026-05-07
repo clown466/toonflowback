@@ -114,14 +114,14 @@ const BASE_STORYBOARD_METHOD_PROMPT = DEFAULT_STORYBOARD_SKILL.content;
 const MAX_STORYBOARD_SHOTS = 60;
 const MIN_STORYBOARD_SHOT_DURATION = 1;
 const DEFAULT_STORYBOARD_SHOT_DURATION = 3;
-const PREFERRED_STORYBOARD_SHOT_MAX = 4;
+const PREFERRED_STORYBOARD_SHOT_MAX = 6;
 const MAX_STORYBOARD_SHOT_DURATION = 15;
 const FAST_DRAMA_MIN_AVERAGE_SHOT_DURATION = 2;
-const FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX = 4;
-const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 4;
-const MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT = 4;
-const MAX_DIALOGUE_WORDS_PER_STORYBOARD_SHOT_HINT = 8;
-const MAX_CJK_CHARS_PER_STORYBOARD_SHOT_HINT = 10;
+const FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX = 6;
+const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 6;
+const MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT = 6;
+const MAX_DIALOGUE_WORDS_PER_STORYBOARD_SHOT_HINT = 12;
+const MAX_CJK_CHARS_PER_STORYBOARD_SHOT_HINT = 16;
 const STANDARD_CHAPTER_TARGET_MIN_SECONDS = 90;
 const STANDARD_CHAPTER_TARGET_MAX_SECONDS = 120;
 const CHAPTER_DURATION_HARD_CAP_SECONDS = 120;
@@ -613,12 +613,12 @@ function buildModelContext(project: ProjectRow, novels: NovelRow[], assets: Asse
       note: "仅提供与当前章节最相关的资产；associateAssetNames 只能从 assets[].name 中选择。",
     },
     dialogueTimingRules: {
-      preferredShotSeconds: "2-4",
+      preferredShotSeconds: "2-6",
       maxDialogueSecondsPerShot: MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT,
       maxEnglishWordsPerDialogueShotHint: MAX_DIALOGUE_WORDS_PER_STORYBOARD_SHOT_HINT,
       maxCjkCharsPerDialogueShotHint: MAX_CJK_CHARS_PER_STORYBOARD_SHOT_HINT,
       sourceDialogueFastCutChunks: planning.sourceDialogueFastCutChunks,
-      note: "生成 shots[].dialogue 时优先使用这些预切片段。不要把 selectedChapters.chapterData 里的完整长句复制进单个镜头。",
+      note: "生成 shots[].dialogue 时优先使用这些预切片段。不要把 selectedChapters.chapterData 里的完整长句复制进单个镜头；不要把大部分镜头机械写成 2 秒。",
     },
     userRequirement,
     storyboardPlanning: planning,
@@ -742,6 +742,15 @@ function findOversizedDialogueShot(parsed: SkillStoryboardJson) {
   return null;
 }
 
+function hasFlatTwoSecondTiming(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint) {
+  if (planning?.explicitShotCount || parsed.shots.length < 6) return false;
+  const canUseThreeSecondAverage = !planning?.targetDurationMax || parsed.shots.length * DEFAULT_STORYBOARD_SHOT_DURATION <= planning.targetDurationMax;
+  if (!canUseThreeSecondAverage) return false;
+  const shortCount = parsed.shots.filter((shot) => shot.duration <= 2).length;
+  const hasMediumHold = parsed.shots.some((shot) => shot.duration >= 4);
+  return shortCount / parsed.shots.length >= 0.8 && !hasMediumHold;
+}
+
 function storyboardCountInstruction(planning?: StoryboardPlanningHint) {
   if (planning?.explicitShotCount) {
     return `用户明确要求数量：必须输出 ${planning.explicitShotCount} 个分镜；storyboardTable 数据行数和 shots.length 都必须等于 ${planning.explicitShotCount}。`;
@@ -749,8 +758,9 @@ function storyboardCountInstruction(planning?: StoryboardPlanningHint) {
   return [
     `用户未明确限定数量：不要默认生成 3 个分镜，也不要为了省事只生成 3 个。`,
     `请先按章节事件拆分完整分镜表，再由分镜表逐行生成 shots。当前建议 ${planning?.estimatedMinimumShots ?? 4}-${planning?.estimatedMaximumShots ?? 24} 个分镜。`,
-    `英文短剧节奏必须快：大多数镜头控制在 2-4 秒；无对白/动作快切镜头 1-4 秒；对白镜头也优先 2-4 秒。`,
-    `一句台词不一定非要一个镜头拍完；长台词必须拆成多个 2-4 秒镜头，用不同景别、反应镜头、切入道具、越肩镜头、插入镜头承接同一句话。`,
+    `英文短剧节奏必须快，但不能机械地全写成 2 秒：大多数镜头控制在 2-6 秒；动作/插入快切可 1-2 秒；常规对白/反应镜头多用 3-5 秒；关键情绪停顿可 5-6 秒。`,
+    `一句台词不一定非要一个镜头拍完；长台词必须拆成多个 2-6 秒镜头，用不同景别、反应镜头、切入道具、越肩镜头、插入镜头承接同一句话。`,
+    `除非用户明确要求极限快切，不要让 80% 以上镜头都是 2 秒；分镜时长要有 2/3/4/5/6 秒的节奏变化。`,
     `如果只返回 3 个分镜，会被视为拆镜不足。`,
   ].join("\n");
 }
@@ -767,9 +777,13 @@ function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: Story
     return `分镜拆分过多：当前 ${count} 个，按章节时长预算建议不超过 ${planning.estimatedMaximumShots} 个`;
   }
 
+  if (hasFlatTwoSecondTiming(parsed, planning)) {
+    return `分镜时长过于机械：当前大部分镜头都是 2s。请按 2-6s 重新分配节奏，常规对白/反应镜头用 3-5s，关键停顿可用 5-6s`;
+  }
+
   const oversized = findOversizedDialogueShot(parsed);
   if (oversized) {
-    return `第 ${oversized.index} 镜对白预计需要 ${oversized.dialogueDuration}s，超过快切分镜单镜头对白建议 ${MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT}s；请把同一句台词拆成多个 2-4s 镜头和反应/切角度镜头`;
+    return `第 ${oversized.index} 镜对白预计需要 ${oversized.dialogueDuration}s，超过快切分镜单镜头对白建议 ${MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT}s；请把同一句台词拆成多个 2-6s 镜头和反应/切角度镜头`;
   }
 
   if (planning?.estimatedMinimumDuration && getTotalDuration(parsed) < planning.estimatedMinimumDuration) {
@@ -804,13 +818,14 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
     "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "6. 角色图字段可先填空；系统会按 associateAssetNames 匹配资产库图片补齐显示。",
-    `7. 单条分镜 duration 应以 2-4s 为主，快切镜头允许 ${MIN_STORYBOARD_SHOT_DURATION}-4s；系统会把普通单镜头压到 ${PREFERRED_STORYBOARD_SHOT_MAX}s 以内。`,
+    `7. 单条分镜 duration 应以 2-6s 为主，动作插入快切允许 ${MIN_STORYBOARD_SHOT_DURATION}-2s；系统会把普通单镜头压到 ${PREFERRED_STORYBOARD_SHOT_MAX}s 以内。`,
     "8. 4-15s 是单张章节导演板/一次 AI 视频生成片段的总时长范围，不是单条分镜的最小时长。后续系统会把连续分镜按不超过 15s 分组到导演板。",
     `9. shots[].dialogue 是本镜听到的短对白片段，不是整句原文。每镜对白预计不得超过 ${MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT}s；英文通常不超过 ${MAX_DIALOGUE_WORDS_PER_STORYBOARD_SHOT_HINT} 个词，中文通常不超过 ${MAX_CJK_CHARS_PER_STORYBOARD_SHOT_HINT} 个汉字。`,
-    "10. 一句台词不必一个镜头拍完。长台词必须拆成多个 2-4s 镜头，用正反打、反应、道具插入、越肩、推近、横移等多角度完成。",
+    "10. 一句台词不必一个镜头拍完。长台词必须拆成多个 2-6s 镜头，用正反打、反应、道具插入、越肩、推近、横移等多角度完成。",
     "11. 上下文 dialogueTimingRules.sourceDialogueFastCutChunks 是系统预切好的对白片段计划；生成 shots 时优先按这些片段分配，不要从 selectedChapters.chapterData 复制完整长句到单个 shot.dialogue。",
-    planning ? `12. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
-    planning?.sourceDialogueSeconds ? `13. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
+    "12. 不要把所有镜头都写成 2s。合理分布：爆点/插入 1-2s，普通动作 3-4s，对白反应 3-5s，重要停顿 5-6s。",
+    planning ? `13. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
+    planning?.sourceDialogueSeconds ? `14. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",

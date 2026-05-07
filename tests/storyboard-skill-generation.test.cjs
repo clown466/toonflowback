@@ -421,7 +421,7 @@ async function main() {
 
   const dialogueStoryboards = await db('o_storyboard').where({ projectId: 2, scriptId: dialogueResult.episodesId }).orderBy('index');
   assert.strictEqual(dialogueStoryboards.length, 8);
-  assert.ok(dialogueStoryboards.every((row) => Number(row.duration) <= 4), 'dialogue shots should stay in 2-4s fast-cut rhythm');
+  assert.ok(dialogueStoryboards.every((row) => Number(row.duration) <= 6), 'dialogue shots should stay in 2-6s fast-cut rhythm');
   const totalDuration = dialogueStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
   assert.ok(totalDuration >= 20, `normalized total duration should be dialogue-aware, got ${totalDuration}s`);
 
@@ -473,8 +473,66 @@ async function main() {
   assert.ok(repairedDialogueResult.createdCount > 1, 'final quality pass should split an oversized monologue instead of failing');
   assert.strictEqual(capturedPrompts.length, 3, 'the model should get retry chances before deterministic repair');
   const repairedStoryboards = await db('o_storyboard').where({ projectId: 7, scriptId: repairedDialogueResult.episodesId }).orderBy('index');
-  assert.ok(repairedStoryboards.every((row) => Number(row.duration) <= 4), 'repaired dialogue cuts should stay within the fast-cut shot cap');
+  assert.ok(repairedStoryboards.every((row) => Number(row.duration) <= 6), 'repaired dialogue cuts should stay within the fast-cut shot cap');
   assert.ok(repairedStoryboards.some((row) => String(row.videoDesc).includes('fast dialogue cut')), 'repaired rows should mark the fast-cut split');
+
+  await db('o_project').insert({
+    id: 8,
+    name: 'Flat Timing',
+    intro: 'English-language American short drama with varied timing',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Use fast cuts with rhythm variation',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 80,
+    projectId: 8,
+    chapterIndex: 10,
+    chapter: 'juben10',
+    chapterData: 'Chloe spots Leo near the gate, Bob drops the keycard, and the team races into the bunker before security arrives.',
+    event: '| juben10 | Chloe, Leo, Bob, gate, bunker | The team crosses the gate and enters the bunker under pressure |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 81, projectId: 8, name: 'Chloe', type: 'role', describe: 'lead', prompt: 'Chloe prompt' },
+    { id: 82, projectId: 8, name: 'bunker', type: 'scene', describe: 'bunker', prompt: 'bunker prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  mockStoryboardResponses = [
+    {
+      storyboardTable: '',
+      shots: Array.from({ length: 6 }, (_, index) => ({
+        duration: 2,
+        videoDesc: `Flat two-second beat ${index + 1}.`,
+        imagePrompt: `Chloe and team flat beat ${index + 1}`,
+        associateAssetNames: ['Chloe', 'bunker'],
+        dialogue: '无台词',
+      })),
+    },
+    {
+      storyboardTable: '',
+      shots: [2, 3, 4, 5, 3, 6].map((duration, index) => ({
+        duration,
+        videoDesc: `Varied timing beat ${index + 1}.`,
+        imagePrompt: `Chloe and team varied beat ${index + 1}`,
+        associateAssetNames: ['Chloe', 'bunker'],
+        dialogue: '无台词',
+      })),
+    },
+  ];
+
+  const variedTimingResult = await service.generateProjectStoryboardWithSkill(8, {
+    sourceText: '请针对 juben10 重新生成分镜',
+    force: true,
+  });
+  assert.strictEqual(variedTimingResult.createdCount, 6);
+  assert.strictEqual(capturedPrompts.length, 2, 'flat all-2s timing should trigger a retry');
+  assert.ok(capturedPrompts[1].includes('分镜时长过于机械'), 'retry prompt should explain flat timing');
+  const variedTimingRows = await db('o_storyboard').where({ projectId: 8, scriptId: variedTimingResult.episodesId }).orderBy('index');
+  assert.deepStrictEqual(variedTimingRows.map((row) => Number(row.duration)), [2, 3, 4, 5, 3, 6]);
 
   await db('o_project').insert({
     id: 5,
@@ -521,11 +579,11 @@ async function main() {
   assert.strictEqual(fastCutResult.createdCount, 34, '34 fast-cut shots should be valid for a 90-120s chapter');
   assert.ok(capturedPrompts[0].includes('目标总时长'), 'prompt should include a chapter duration budget');
   assert.ok(capturedPrompts[0].includes('硬上限 120s'), 'prompt should make the 2-minute cap explicit');
-  assert.ok(capturedPrompts[0].includes('1-4s'), 'prompt should tell the model to use fast short shots');
+  assert.ok(capturedPrompts[0].includes('2-6 秒'), 'prompt should tell the model to use varied fast short shots');
   assert.ok(capturedPrompts[0].includes('单张章节导演板/一次 AI 视频生成片段'), 'prompt should scope 4-15s to director boards, not single shots');
   const fastCutStoryboards = await db('o_storyboard').where({ projectId: 5, scriptId: fastCutResult.episodesId }).orderBy('index');
   const fastCutDurations = fastCutStoryboards.map((row) => Number(row.duration));
-  assert.ok(fastCutDurations.every((duration) => duration >= 1 && duration <= 4), `fast-cut shot durations should allow sub-4s cuts: ${fastCutDurations.join(',')}`);
+  assert.ok(fastCutDurations.every((duration) => duration >= 1 && duration <= 6), `fast-cut shot durations should allow sub-6s cuts: ${fastCutDurations.join(',')}`);
   const fastCutTotal = fastCutDurations.reduce((sum, duration) => sum + duration, 0);
   assert.ok(fastCutTotal <= 120, `chapter duration budget should prevent 3-minute storyboard tables, got ${fastCutTotal}s`);
 

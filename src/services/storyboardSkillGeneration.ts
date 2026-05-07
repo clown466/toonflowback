@@ -109,10 +109,12 @@ const BASE_STORYBOARD_METHOD_PROMPT = DEFAULT_STORYBOARD_SKILL.content;
 const MAX_STORYBOARD_SHOTS = 60;
 const MIN_STORYBOARD_SHOT_DURATION = 1;
 const DEFAULT_STORYBOARD_SHOT_DURATION = 3;
+const PREFERRED_STORYBOARD_SHOT_MAX = 4;
 const MAX_STORYBOARD_SHOT_DURATION = 15;
 const FAST_DRAMA_MIN_AVERAGE_SHOT_DURATION = 2;
 const FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX = 4;
-const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 8;
+const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 4;
+const MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT = 4;
 const STANDARD_CHAPTER_TARGET_MIN_SECONDS = 90;
 const STANDARD_CHAPTER_TARGET_MAX_SECONDS = 120;
 const CHAPTER_DURATION_HARD_CAP_SECONDS = 120;
@@ -535,8 +537,7 @@ function toDraftItems(project: ProjectRow, parsed: SkillStoryboardJson, assets: 
 }
 
 function getShotDurationFloor(shot: SkillShot) {
-  const dialogueDuration = estimateSpeechDurationSeconds(extractShotDialogueText(shot), shot.emotion);
-  return Math.min(Math.max(dialogueDuration || MIN_STORYBOARD_SHOT_DURATION, MIN_STORYBOARD_SHOT_DURATION), MAX_STORYBOARD_SHOT_DURATION);
+  return MIN_STORYBOARD_SHOT_DURATION;
 }
 
 function getPreferredShotDurationCap(shot: SkillShot, floor: number) {
@@ -595,7 +596,7 @@ function getOutputDialogueSeconds(parsed: SkillStoryboardJson) {
 function findOversizedDialogueShot(parsed: SkillStoryboardJson) {
   for (const [index, shot] of parsed.shots.entries()) {
     const dialogueDuration = estimateSpeechDurationSeconds(extractShotDialogueText(shot), shot.emotion);
-    if (dialogueDuration > MAX_STORYBOARD_SHOT_DURATION) {
+    if (dialogueDuration > MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT) {
       return { index: index + 1, dialogueDuration };
     }
   }
@@ -609,7 +610,8 @@ function storyboardCountInstruction(planning?: StoryboardPlanningHint) {
   return [
     `用户未明确限定数量：不要默认生成 3 个分镜，也不要为了省事只生成 3 个。`,
     `请先按章节事件拆分完整分镜表，再由分镜表逐行生成 shots。当前建议 ${planning?.estimatedMinimumShots ?? 4}-${planning?.estimatedMaximumShots ?? 24} 个分镜。`,
-    `英文短剧节奏必须快：大多数无对白/动作快切镜头 1-4 秒；对白镜头优先 3-8 秒；只有密集对白或关键大动作才接近 10-15 秒。`,
+    `英文短剧节奏必须快：大多数镜头控制在 2-4 秒；无对白/动作快切镜头 1-4 秒；对白镜头也优先 2-4 秒。`,
+    `一句台词不一定非要一个镜头拍完；长台词必须拆成多个 2-4 秒镜头，用不同景别、反应镜头、切入道具、越肩镜头、插入镜头承接同一句话。`,
     `如果只返回 3 个分镜，会被视为拆镜不足。`,
   ].join("\n");
 }
@@ -628,7 +630,7 @@ function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: Story
 
   const oversized = findOversizedDialogueShot(parsed);
   if (oversized) {
-    return `第 ${oversized.index} 镜对白预计需要 ${oversized.dialogueDuration}s，超过单条分镜 ${MAX_STORYBOARD_SHOT_DURATION}s 上限，无法放入单张导演板，必须把对白拆到多个镜头`;
+    return `第 ${oversized.index} 镜对白预计需要 ${oversized.dialogueDuration}s，超过快切分镜单镜头对白建议 ${MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT}s；请把同一句台词拆成多个 2-4s 镜头和反应/切角度镜头`;
   }
 
   if (planning?.estimatedMinimumDuration && getTotalDuration(parsed) < planning.estimatedMinimumDuration) {
@@ -663,9 +665,9 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
     "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "6. 角色图字段可先填空；系统会按 associateAssetNames 匹配资产库图片补齐显示。",
-    `7. 单条分镜 duration 可以短于 4s；快切镜头允许 ${MIN_STORYBOARD_SHOT_DURATION}-4s。单条分镜最长不超过 ${MAX_STORYBOARD_SHOT_DURATION}s，否则无法放进单张导演板。`,
+    `7. 单条分镜 duration 应以 2-4s 为主，快切镜头允许 ${MIN_STORYBOARD_SHOT_DURATION}-4s；系统会把普通单镜头压到 ${PREFERRED_STORYBOARD_SHOT_MAX}s 以内。`,
     "8. 4-15s 是单张章节导演板/一次 AI 视频生成片段的总时长范围，不是单条分镜的最小时长。后续系统会把连续分镜按不超过 15s 分组到导演板。",
-    "9. 英文美剧短剧节奏必须快切、有爆发力：大多数无对白/动作镜头 1-4s；对白镜头优先 3-8s；避免把普通镜头写成 10-15s 长镜头。",
+    "9. 一句台词不必一个镜头拍完。长台词必须拆成多个 2-4s 镜头，用正反打、反应、道具插入、越肩、推近、横移等多角度完成；dialogue 字段只写本镜听到的台词片段。",
     planning ? `10. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
     planning?.sourceDialogueSeconds ? `11. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
     storyboardCountInstruction(planning),

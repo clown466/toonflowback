@@ -343,48 +343,62 @@ async function main() {
       ],
     },
     {
-      storyboardTable: '| 镜号 | 时长 | 画面 |\\n| --- | ---: | --- |\\n| 1 | 3s | Setup |\\n| 2 | 4s | Warning starts |\\n| 3 | 4s | Guard risk |\\n| 4 | 4s | Gate risk |\\n| 5 | 4s | Sunrise threat |\\n| 6 | 4s | Team reaction |',
+      storyboardTable: '| 镜号 | 时长 | 画面 |\\n| --- | ---: | --- |\\n| 1 | 2s | Setup |\\n| 2 | 3s | Warning starts |\\n| 3 | 3s | Guard risk |\\n| 4 | 3s | Gate risk |\\n| 5 | 3s | Sunrise line begins |\\n| 6 | 3s | Sunrise line lands |\\n| 7 | 2s | Team reaction |\\n| 8 | 2s | Bob reaction |',
       shots: [
         {
-          duration: 3,
+          duration: 2,
           videoDesc: 'Safehouse tension before Chloe speaks.',
           imagePrompt: 'safehouse tense opening',
           associateAssetNames: ['safehouse'],
           dialogue: '无台词',
         },
         {
-          duration: 2,
-          videoDesc: 'Chloe tells the team the plan is unsafe.',
+          duration: 3,
+          videoDesc: 'Chloe starts the warning in a tight close-up.',
           imagePrompt: 'Chloe warning close shot',
           associateAssetNames: ['Chloe', 'safehouse'],
-          dialogue: 'Chloe: Listen, we cannot keep pretending this plan is safe.',
+          dialogue: 'Chloe: This plan is not safe.',
         },
         {
-          duration: 2,
+          duration: 3,
           videoDesc: 'Chloe explains the guards know their faces.',
           imagePrompt: 'Chloe tense medium shot',
           associateAssetNames: ['Chloe', 'safehouse'],
           dialogue: 'Chloe: The guards already know our faces.',
         },
         {
-          duration: 2,
+          duration: 3,
           videoDesc: 'The east gate problem lands on the team.',
           imagePrompt: 'team reacting in safehouse',
           associateAssetNames: ['Chloe', 'safehouse'],
           dialogue: 'Chloe: The east gate is locked.',
         },
         {
-          duration: 2,
-          videoDesc: 'Chloe finishes with the sunrise threat.',
-          imagePrompt: 'Chloe final warning dramatic light',
+          duration: 3,
+          videoDesc: 'A cut-in angle catches Chloe starting the sunrise threat.',
+          imagePrompt: 'Chloe sunrise warning cut-in',
           associateAssetNames: ['Chloe', 'safehouse'],
-          dialogue: 'Chloe: If we wait until sunrise every person in this room gets dragged into the street.',
+          dialogue: 'Chloe: If we wait until sunrise.',
         },
         {
-          duration: 4,
+          duration: 3,
+          videoDesc: 'A reaction angle catches the warning landing on everyone.',
+          imagePrompt: 'team tense reaction in safehouse',
+          associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: 'Chloe: Everyone gets dragged into the street.',
+        },
+        {
+          duration: 2,
           videoDesc: 'The team absorbs the warning in a tight reaction shot.',
           imagePrompt: 'team tense reaction in safehouse',
           associateAssetNames: ['Chloe', 'safehouse'],
+          dialogue: '无台词',
+        },
+        {
+          duration: 2,
+          videoDesc: 'Bob looks away, realizing Chloe is right.',
+          imagePrompt: 'Bob tense reaction in safehouse',
+          associateAssetNames: ['safehouse'],
           dialogue: '无台词',
         },
       ],
@@ -396,13 +410,14 @@ async function main() {
     force: true,
   });
 
-  assert.strictEqual(dialogueResult.createdCount, 6, 'dialogue-heavy chapter should retry instead of accepting three shots');
+  assert.strictEqual(dialogueResult.createdCount, 8, 'dialogue-heavy chapter should retry and split long dialogue across fast cuts');
   assert.strictEqual(capturedPrompts.length, 2, 'bad low-count/short-duration output should trigger one retry');
   assert.deepStrictEqual(capturedModelKeys, ['productionAgent:storyboardTableAgent', 'productionAgent:storyboardTableAgent']);
   assert.ok(capturedPrompts[1].includes('上一次输出不合格'), 'retry prompt should explain the quality failure');
 
   const dialogueStoryboards = await db('o_storyboard').where({ projectId: 2, scriptId: dialogueResult.episodesId }).orderBy('index');
-  assert.strictEqual(dialogueStoryboards.length, 6);
+  assert.strictEqual(dialogueStoryboards.length, 8);
+  assert.ok(dialogueStoryboards.every((row) => Number(row.duration) <= 4), 'dialogue shots should stay in 2-4s fast-cut rhythm');
   const totalDuration = dialogueStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
   assert.ok(totalDuration >= 20, `normalized total duration should be dialogue-aware, got ${totalDuration}s`);
 

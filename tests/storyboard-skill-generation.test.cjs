@@ -413,6 +413,10 @@ async function main() {
   assert.strictEqual(dialogueResult.createdCount, 8, 'dialogue-heavy chapter should retry and split long dialogue across fast cuts');
   assert.strictEqual(capturedPrompts.length, 2, 'bad low-count/short-duration output should trigger one retry');
   assert.deepStrictEqual(capturedModelKeys, ['productionAgent:storyboardTableAgent', 'productionAgent:storyboardTableAgent']);
+  assert.ok(capturedPrompts[0].includes('dialogueTimingRules'), 'prompt context should include front-loaded dialogue timing rules');
+  assert.ok(capturedPrompts[0].includes('sourceDialogueFastCutChunks'), 'prompt context should include pre-split dialogue chunks');
+  assert.ok(capturedPrompts[0].includes('maxDialogueSecondsPerShot'), 'prompt context should expose the per-shot dialogue cap');
+  assert.ok(capturedPrompts[0].includes('不要把 selectedChapters.chapterData 里的完整长句复制进单个镜头'), 'prompt should explicitly forbid copying long raw dialogue into one shot');
   assert.ok(capturedPrompts[1].includes('上一次输出不合格'), 'retry prompt should explain the quality failure');
 
   const dialogueStoryboards = await db('o_storyboard').where({ projectId: 2, scriptId: dialogueResult.episodesId }).orderBy('index');

@@ -78,6 +78,11 @@ interface StoryboardPlanningHint {
   targetDurationMax: number;
   sourceDialogueSeconds: number;
   sourceDialogueText: string;
+  sourceDialogueFastCutChunks: Array<{
+    index: number;
+    text: string;
+    estimatedSeconds: number;
+  }>;
   eventCount: number;
 }
 
@@ -115,6 +120,8 @@ const FAST_DRAMA_MIN_AVERAGE_SHOT_DURATION = 2;
 const FAST_DRAMA_PREFERRED_NON_DIALOGUE_SHOT_MAX = 4;
 const FAST_DRAMA_PREFERRED_DIALOGUE_SHOT_MAX = 4;
 const MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT = 4;
+const MAX_DIALOGUE_WORDS_PER_STORYBOARD_SHOT_HINT = 8;
+const MAX_CJK_CHARS_PER_STORYBOARD_SHOT_HINT = 10;
 const STANDARD_CHAPTER_TARGET_MIN_SECONDS = 90;
 const STANDARD_CHAPTER_TARGET_MAX_SECONDS = 120;
 const CHAPTER_DURATION_HARD_CAP_SECONDS = 120;
@@ -501,6 +508,13 @@ function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): Stor
   const textLength = novels.reduce((sum, novel) => sum + String(novel.chapterData ?? "").length, 0);
   const sourceDialogueText = getSourceDialogue(novels);
   const sourceDialogueSeconds = estimateSpeechDurationSeconds(sourceDialogueText);
+  const sourceDialogueFastCutChunks = splitDialogueIntoFastCutChunks(sourceDialogueText)
+    .slice(0, MAX_STORYBOARD_SHOTS)
+    .map((text, index) => ({
+      index: index + 1,
+      text: compactText(text, 180),
+      estimatedSeconds: estimateSpeechDurationSeconds(text),
+    }));
   const dialogueShotFloor = sourceDialogueSeconds > 0 ? Math.ceil(sourceDialogueSeconds / MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT) : 0;
   const estimatedMinimumShots = explicitShotCount ?? clamp(Math.max(4, eventCount * 2, Math.ceil(textLength / 700), dialogueShotFloor), 4, 24);
   const rawDurationBudget = estimateChapterDurationBudget({ explicitShotCount, sourceDialogueSeconds, eventCount, textLength });
@@ -522,6 +536,7 @@ function buildPlanningHint(novels: NovelRow[], sourceText?: string | null): Stor
     targetDurationMax,
     sourceDialogueSeconds,
     sourceDialogueText: compactText(sourceDialogueText, 1000),
+    sourceDialogueFastCutChunks,
     eventCount,
   };
 }
@@ -596,6 +611,14 @@ function buildModelContext(project: ProjectRow, novels: NovelRow[], assets: Asse
       providedCount: contextAssets.length,
       totalCount: assets.length,
       note: "仅提供与当前章节最相关的资产；associateAssetNames 只能从 assets[].name 中选择。",
+    },
+    dialogueTimingRules: {
+      preferredShotSeconds: "2-4",
+      maxDialogueSecondsPerShot: MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT,
+      maxEnglishWordsPerDialogueShotHint: MAX_DIALOGUE_WORDS_PER_STORYBOARD_SHOT_HINT,
+      maxCjkCharsPerDialogueShotHint: MAX_CJK_CHARS_PER_STORYBOARD_SHOT_HINT,
+      sourceDialogueFastCutChunks: planning.sourceDialogueFastCutChunks,
+      note: "生成 shots[].dialogue 时优先使用这些预切片段。不要把 selectedChapters.chapterData 里的完整长句复制进单个镜头。",
     },
     userRequirement,
     storyboardPlanning: planning,
@@ -783,9 +806,11 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "6. 角色图字段可先填空；系统会按 associateAssetNames 匹配资产库图片补齐显示。",
     `7. 单条分镜 duration 应以 2-4s 为主，快切镜头允许 ${MIN_STORYBOARD_SHOT_DURATION}-4s；系统会把普通单镜头压到 ${PREFERRED_STORYBOARD_SHOT_MAX}s 以内。`,
     "8. 4-15s 是单张章节导演板/一次 AI 视频生成片段的总时长范围，不是单条分镜的最小时长。后续系统会把连续分镜按不超过 15s 分组到导演板。",
-    "9. 一句台词不必一个镜头拍完。长台词必须拆成多个 2-4s 镜头，用正反打、反应、道具插入、越肩、推近、横移等多角度完成；dialogue 字段只写本镜听到的台词片段。",
-    planning ? `10. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
-    planning?.sourceDialogueSeconds ? `11. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
+    `9. shots[].dialogue 是本镜听到的短对白片段，不是整句原文。每镜对白预计不得超过 ${MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT}s；英文通常不超过 ${MAX_DIALOGUE_WORDS_PER_STORYBOARD_SHOT_HINT} 个词，中文通常不超过 ${MAX_CJK_CHARS_PER_STORYBOARD_SHOT_HINT} 个汉字。`,
+    "10. 一句台词不必一个镜头拍完。长台词必须拆成多个 2-4s 镜头，用正反打、反应、道具插入、越肩、推近、横移等多角度完成。",
+    "11. 上下文 dialogueTimingRules.sourceDialogueFastCutChunks 是系统预切好的对白片段计划；生成 shots 时优先按这些片段分配，不要从 selectedChapters.chapterData 复制完整长句到单个 shot.dialogue。",
+    planning ? `12. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
+    planning?.sourceDialogueSeconds ? `13. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",
@@ -815,7 +840,7 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
             emotion: "可选",
             lighting: "可选",
             sound: "环境音/动作音",
-            dialogue: "对白原文或无台词",
+            dialogue: "本镜短对白片段，优先取 dialogueTimingRules.sourceDialogueFastCutChunks 中的一个片段；无台词则写无台词",
             beat: "可选",
             videoMotionPrompt: "用于视频生成的运动提示词",
           },

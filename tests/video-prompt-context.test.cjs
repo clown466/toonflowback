@@ -7,6 +7,10 @@ const generateVideoPromptSrc = fs.readFileSync(
   path.join(root, 'src/routes/production/workbench/generateVideoPrompt.ts'),
   'utf8'
 );
+const generateVideoSrc = fs.readFileSync(
+  path.join(root, 'src/routes/production/workbench/generateVideo.ts'),
+  'utf8'
+);
 
 function assertIncludes(haystack, needle, label) {
   assert.ok(haystack.includes(needle), `${label} should include: ${needle}`);
@@ -109,6 +113,16 @@ assertIncludes(
   '**本次实际分镜数量**',
   'prompt context should include the actual hydrated storyboard count'
 );
+assertIncludes(
+  generateVideoPromptSrc,
+  'shouldGenerateImage: 0',
+  'director-board hydrated storyboards should not create fake storyboard image references'
+);
+assertIncludes(
+  generateVideoPromptSrc,
+  'chooseTargetDuration({ requestedDuration: duration, storyboard, hasDirectorBoard: directorBoards.length > 0 })',
+  'director board prompt target duration should follow covered storyboard durations'
+);
 
 // 10. Prompt generation should respect the selected video duration and project language
 assertIncludes(
@@ -125,6 +139,23 @@ assertIncludes(
   generateVideoPromptSrc,
   '目标时长=',
   'prompt context should include target video duration'
+);
+
+// 11. Actual video generation should use the same director-board duration, not only the UI dropdown duration
+assertIncludes(
+  generateVideoSrc,
+  'getDirectorBoardDuration(projectId, uploadData)',
+  'generateVideo should calculate director-board duration'
+);
+assertIncludes(
+  generateVideoSrc,
+  'const effectiveDuration = directorBoardDuration > 0 ? directorBoardDuration : duration',
+  'generateVideo should prefer director-board duration when present'
+);
+assertIncludes(
+  generateVideoSrc,
+  'duration: effectiveDuration',
+  'generateVideo should send effective duration to the video provider'
 );
 
 console.log('video-prompt-context checks passed');

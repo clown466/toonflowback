@@ -74,6 +74,14 @@ function sumStoryboardDuration(storyboard: any[]) {
   }, 0);
 }
 
+function chooseTargetDuration(input: { requestedDuration?: unknown; storyboard: any[]; hasDirectorBoard: boolean }) {
+  const storyboardDuration = sumStoryboardDuration(input.storyboard);
+  const requestedDuration = Number(input.requestedDuration);
+  if (input.hasDirectorBoard && storyboardDuration > 0) return storyboardDuration;
+  if (Number.isFinite(requestedDuration) && requestedDuration > 0) return requestedDuration;
+  return storyboardDuration;
+}
+
 async function loadStoryboardsWithAssets(storyboardIds: number[], projectId: number) {
   const ids = Array.from(new Set(storyboardIds.map(Number).filter((id) => Number.isFinite(id))));
   if (!ids.length) return [];
@@ -106,7 +114,9 @@ async function loadStoryboardsWithAssets(storyboardIds: number[], projectId: num
       track: row.track,
       duration: row.duration,
       associateAssetsIds: assetMap.get(Number(row.id)) ?? [],
-      shouldGenerateImage: row.shouldGenerateImage,
+      // These rows are hydrated from a director board for text context only.
+      // They are not uploaded as separate storyboard image references.
+      shouldGenerateImage: 0,
     }));
 }
 
@@ -119,9 +129,10 @@ function buildDirectorBoardVideoPromptRules(hasDirectorBoard: boolean) {
     "3. 每个镜头段落必须包含：时长、导演板参考作用、角色/资产参考、景别、运镜、角色动作、空间站位/运动方向、光影氛围、台词/无台词、音效。",
     "4. 章节导演板只作为空间、机位、角色站位、动作方向、场景连续性的第一参考；角色最终外观、脸、服装、身体材质、比例、武器细节以资产参考图为最高优先级。",
     "5. 导演板中的铅笔线稿、符号角色或简化角色不可当作最终角色长相参考；不要让导演板里可能不准确的角色形象覆盖资产图。",
-    "6. 单次视频片段总时长必须服从当前视频生成参数中的目标时长和视频模型限制；章节导演板通常对应 4-15 秒视频片段，可把覆盖分镜压缩到目标时长内。",
+    "6. 单次视频片段总时长必须服从当前视频生成参数中的目标时长；如果存在章节导演板，目标时长等于该导演板覆盖分镜的 duration 总和。",
     "7. 如果章节导演板覆盖了多个分镜，每个 <storyboardItem> 代表一个镜头/子镜头，不允许因为只选择了导演板参考图就输出 0 个分镜。",
-    "8. 输出只给可直接发送给视频模型的视频提示词，不要解释规则，不要输出 XML，不要输出分析过程。",
+    "8. 自动从章节导演板补入的 <storyboardItem> 只提供文字镜头上下文，不是额外上传的分镜图片；当 shouldGenerateImage=false 时，禁止给它分配新的 @图N 或写成 storyboard image reference。",
+    "9. 输出只给可直接发送给视频模型的视频提示词，不要解释规则，不要输出 XML，不要输出分析过程。",
     "",
     "推荐输出结构：",
     "参考优先级：资产参考图 > 章节导演板空间/机位/连续性 > 分镜文字。",
@@ -261,7 +272,7 @@ export default router.post(
     const directorBoardVideoPromptRules = buildDirectorBoardVideoPromptRules(directorBoards.some((i) => i.filePath));
     const outputLanguage = detectVideoPromptLanguage({ projectData, scriptData, storyboard, directorBoards });
     const languageSystemRule = buildVideoPromptLanguageSystemRule(outputLanguage);
-    const targetDuration = Number(duration) > 0 ? Number(duration) : sumStoryboardDuration(storyboard);
+    const targetDuration = chooseTargetDuration({ requestedDuration: duration, storyboard, hasDirectorBoard: directorBoards.length > 0 });
     const content = `
           **模型名称**：${modelData},
           **视频生成参数**：目标时长=${targetDuration > 0 ? `${targetDuration}s` : "未指定"}，输出语言=${outputLanguage === "english" ? "English only" : "中文"}。

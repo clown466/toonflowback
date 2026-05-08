@@ -76,4 +76,21 @@ assertIncludes(
   'shouldGenerateImage rendering should handle number and boolean'
 );
 
+// 8. Director-board video prompts must be split by shot, not merged into one paragraph
+assertIncludes(
+  generateVideoPromptSrc,
+  '输出必须按镜头拆分',
+  'director board video prompt should force shot-by-shot output'
+);
+assertIncludes(
+  generateVideoPromptSrc,
+  '`镜头1：`、`镜头2：`',
+  'director board video prompt should include numbered shot labels'
+);
+assertIncludes(
+  generateVideoPromptSrc,
+  '每个 <storyboardItem> 至少对应一个独立镜头段落',
+  'director board video prompt should map storyboard items to shot paragraphs'
+);
+
 console.log('video-prompt-context checks passed');

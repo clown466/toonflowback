@@ -3,8 +3,27 @@ import u from "@/utils";
 import { z } from "zod";
 import { success, error } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
-import { info } from "node:console";
 const router = express.Router();
+
+function buildDirectorBoardVideoPromptRules(hasDirectorBoard: boolean) {
+  if (!hasDirectorBoard) return "";
+  return [
+    "**章节导演板视频提示词输出规则（最高优先级）**：",
+    "1. 存在章节导演板参考时，输出必须按镜头拆分，禁止合并成一整段连续描述。",
+    "2. 每个 <storyboardItem> 至少对应一个独立镜头段落，使用类似 `镜头1：`、`镜头2：` 的清晰编号；如果源项目/对白为英文，可使用 `Shot 1:`、`Shot 2:`，但不要中英混杂。",
+    "3. 每个镜头段落必须包含：时长、导演板参考作用、角色/资产参考、景别、运镜、角色动作、空间站位/运动方向、光影氛围、台词/无台词、音效。",
+    "4. 章节导演板只作为空间、机位、角色站位、动作方向、场景连续性的第一参考；角色最终外观、脸、服装、身体材质、比例、武器细节以资产参考图为最高优先级。",
+    "5. 导演板中的铅笔线稿、符号角色或简化角色不可当作最终角色长相参考；不要让导演板里可能不准确的角色形象覆盖资产图。",
+    "6. 单次视频片段总时长必须服从当前轨道时长和视频模型限制；章节导演板通常对应 4-15 秒视频片段。",
+    "7. 输出只给可直接发送给视频模型的视频提示词，不要解释规则，不要输出 XML，不要输出分析过程。",
+    "",
+    "推荐输出结构：",
+    "参考优先级：资产参考图 > 章节导演板空间/机位/连续性 > 分镜文字。",
+    "总片段：{总时长}s，按导演板覆盖范围生成。",
+    "镜头1：{时长}，{景别/机位/运镜}，{角色与站位}，{动作}，{光影/场景连续性}，{台词或无台词}，{音效}。",
+    "镜头2：{时长}，{景别/机位/运镜}，{角色与站位}，{动作}，{光影/场景连续性}，{台词或无台词}，{音效}。",
+  ].join("\n");
+}
 
 export default router.post(
   "/",
@@ -109,6 +128,7 @@ export default router.post(
     }
     const artStyle = projectData?.artStyle || "无";
     const visualManual = u.getArtPrompt(artStyle, "art_skills", "art_storyboard_video");
+    const directorBoardVideoPromptRules = buildDirectorBoardVideoPromptRules(directorBoards.some((i) => i.filePath));
     const content = `
           **模型名称**：${modelData},
           **资产信息**（角色、场景、道具):${assets
@@ -120,6 +140,7 @@ export default router.post(
         .map((i) => `[${i.id},directorBoard,${i.name || "章节导演板"},覆盖分镜=${i.storyboardIds || "[]"}]`)
         .join("，")},
           **导演板使用规则**：如果存在章节导演板参考，默认把它作为空间、机位、角色站位、动作方向、场景连续性的第一参考；但角色最终外观、脸、服装、身体材质、比例和武器细节必须以资产参考图为最高优先级。导演板中的铅笔线稿、符号角色或简化角色只表达位置、朝向、动作和情绪，不可当作角色长相参考；不要让导演板里可能不准确的角色形象覆盖资产图。分镜图只作为更细的单镜首帧补充，不要让单镜首帧推翻导演板的空间连续性。
+          ${directorBoardVideoPromptRules}
           **分镜信息**：${storyboard.map(
           (i) => `<storyboardItem
   videoDesc='${i.videoDesc}'

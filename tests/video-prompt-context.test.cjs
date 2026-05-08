@@ -93,4 +93,38 @@ assertIncludes(
   'director board video prompt should map storyboard items to shot paragraphs'
 );
 
+// 9. Director-board references must hydrate their covered storyboards, otherwise prompt generation sees 0 shots
+assertIncludes(
+  generateVideoPromptSrc,
+  'parseNumberArray(board.storyboardIds)',
+  'director board storyboardIds should be parsed'
+);
+assertIncludes(
+  generateVideoPromptSrc,
+  'loadStoryboardsWithAssets(directorBoardStoryboardIds, projectId)',
+  'director board storyboardIds should load storyboard text context'
+);
+assertIncludes(
+  generateVideoPromptSrc,
+  '**本次实际分镜数量**',
+  'prompt context should include the actual hydrated storyboard count'
+);
+
+// 10. Prompt generation should respect the selected video duration and project language
+assertIncludes(
+  generateVideoPromptSrc,
+  'duration: z.number().optional()',
+  'generateVideoPrompt should accept the selected video duration'
+);
+assertIncludes(
+  generateVideoPromptSrc,
+  'Video prompt output language override',
+  'English projects should override Chinese-only model prompt defaults'
+);
+assertIncludes(
+  generateVideoPromptSrc,
+  '目标时长=',
+  'prompt context should include target video duration'
+);
+
 console.log('video-prompt-context checks passed');

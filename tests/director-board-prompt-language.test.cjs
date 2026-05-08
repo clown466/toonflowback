@@ -106,6 +106,39 @@ function buildPrompt(language) {
   assert.match(englishPrompt, /Draw characters as simple pencil\/marker symbols/, "English prompt should use the simpler board style");
   assert.ok(englishPrompt.length < 3500, "English director board prompt should stay concise");
 
+  const englishTextStoryboardPrompt = service.buildChapterDirectorBoardPrompt({
+    project: {
+      id: 1,
+      name: "Fruit Crime",
+      type: "水果美剧",
+      videoRatio: "9:16",
+      artStyle: "cinematic animation",
+    },
+    script: {
+      id: 10,
+      name: "juben10",
+      content: "Chloe enters the warehouse and raises the shotgun.",
+    },
+    boardIndex: 0,
+    totalBoards: 1,
+    storyboards: [
+      {
+        id: 1,
+        index: 0,
+        videoDesc: "Chloe confronts Leo near the warehouse door.",
+        prompt: "wide shot, tense blocking",
+        duration: "5s",
+      },
+    ],
+    assets: [],
+    language: "english",
+    boardType: "textStoryboard",
+  });
+  assert.match(englishTextStoryboardPrompt, /text-rich storyboard director board/, "text storyboard type should use a richer board prompt");
+  assert.match(englishTextStoryboardPrompt, /All visible text must be English only/, "text storyboard must force English visible text");
+  assert.match(englishTextStoryboardPrompt, /Storyboard card content:/, "text storyboard should include per-card content");
+  assert.doesNotMatch(englishTextStoryboardPrompt, /分镜卡内容|版式要求/, "English text storyboard prompt should not include Chinese labels");
+
   const chinesePrompt = buildPrompt("chinese");
   assert.match(chinesePrompt, /简单版式：/, "Chinese director board prompt should use Chinese structure");
   assert.doesNotMatch(chinesePrompt, /Simple layout:/, "Chinese director board prompt should not use English structure");

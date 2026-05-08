@@ -62,6 +62,7 @@ export default async (knex: Knex): Promise<void> => {
       table.text("state");
       table.text("reason");
       table.text("model");
+      table.text("boardType");
       table.text("storyboardIds");
       table.text("assetIds");
       table.integer("flowId");
@@ -133,6 +134,7 @@ export default async (knex: Knex): Promise<void> => {
   await addColumn("o_agentDeploy", "maxOutputTokens", "integer");
   await addColumn("o_vendorConfig", "hiddenModels", "text");
   await addColumn("o_directorBoard", "flowId", "integer");
+  await addColumn("o_directorBoard", "boardType", "text");
 
   const baseAgentList = [
     {

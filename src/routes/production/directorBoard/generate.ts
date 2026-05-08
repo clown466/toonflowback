@@ -14,16 +14,18 @@ export default router.post(
     scriptId: z.number(),
     storyboardIds: z.array(z.number()).optional(),
     model: z.string().optional(),
+    boardType: z.enum(["continuity", "textStoryboard"]).optional(),
     shotsPerBoard: z.number().min(3).max(8).optional(),
     replace: z.boolean().optional(),
     generateImages: z.boolean().optional(),
   }),
   async (req, res) => {
     try {
-      const { projectId, scriptId, storyboardIds, model, shotsPerBoard, replace, generateImages } = req.body;
+      const { projectId, scriptId, storyboardIds, model, boardType, shotsPerBoard, replace, generateImages } = req.body;
       const rows = await queueDirectorBoardGeneration(projectId, scriptId, {
         storyboardIds,
         model,
+        boardType,
         shotsPerBoard,
         replace,
         generateImages,

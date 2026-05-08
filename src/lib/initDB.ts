@@ -466,6 +466,7 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
         table.text("state");
         table.text("reason");
         table.text("model");
+        table.text("boardType");
         table.text("storyboardIds");
         table.text("assetIds");
         table.integer("flowId");

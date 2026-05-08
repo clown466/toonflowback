@@ -65,6 +65,7 @@ async function createSchema(db) {
     table.text('state');
     table.text('reason');
     table.text('model');
+    table.text('boardType');
     table.text('storyboardIds');
     table.text('assetIds');
     table.integer('index');
@@ -144,6 +145,7 @@ async function main() {
 
   const rows = await service.queueDirectorBoardGeneration(1, 10, {
     storyboardIds: [1, 2, 3, 4, 5, 6, 7, 8],
+    boardType: 'textStoryboard',
     shotsPerBoard: 6,
     replace: true,
   });
@@ -153,6 +155,8 @@ async function main() {
   const savedRows = await db('o_directorBoard').orderBy('index', 'asc');
   assert.deepStrictEqual(savedRows.map((row) => row.state), ['未生成', '未生成']);
   assert.ok(savedRows.every((row) => row.prompt && row.storyboardIds), 'draft rows should keep prompts and covered storyboard ids');
+  assert.ok(savedRows.every((row) => row.boardType === 'textStoryboard'), 'draft rows should persist the selected board type');
+  assert.ok(savedRows.every((row) => row.prompt.includes('Storyboard card content:')), 'text storyboard boards should use the text-rich prompt');
 
   await db.destroy();
   console.log('Director board queue checks passed');

@@ -1,4 +1,4 @@
-// @db-hash 07926dd4f2df8b12832f971ec8d86597
+// @db-hash b346440a96356b280f00655be4d219e2
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -68,6 +68,7 @@ export interface o_assetsRole2Audio {
 }
 export interface o_directorBoard {
   'assetIds'?: string | null;
+  'boardType'?: string | null;
   'createTime'?: number | null;
   'filePath'?: string | null;
   'flowId'?: number | null;

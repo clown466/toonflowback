@@ -89,6 +89,7 @@ interface StoryboardPlanningHint {
 export interface GenerateProjectStoryboardWithSkillOptions extends GenerateProjectStoryboardDraftOptions {
   skillId?: string;
   userRequirement?: string;
+  abortSignal?: AbortSignal;
 }
 
 const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
@@ -134,6 +135,7 @@ const CJK_SLOW_CHARS_PER_SECOND = 2;
 const STORYBOARD_MODEL_KEY = "productionAgent:storyboardTableAgent";
 const MAX_MODEL_CONTEXT_ASSETS = 12;
 const MAX_STORYBOARD_SKILL_PROMPT_CHARS = 4200;
+const STORYBOARD_MODEL_TIMEOUT_MS = 180000;
 
 function fallback(projectId: number, options: GenerateProjectStoryboardWithSkillOptions, reason: string) {
   return generateProjectStoryboardDraft(projectId, options).then((result) => ({
@@ -144,6 +146,35 @@ function fallback(projectId: number, options: GenerateProjectStoryboardWithSkill
 
 function stopStructuredStoryboardWrite(reason: string): never {
   throw new Error(`结构化分镜生成失败：${reason}。已停止写入，避免生成三段式模板分镜。需要低保真占位稿时，请明确使用“快速草稿”。`);
+}
+
+function createStoryboardModelSignal(parent?: AbortSignal) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("storyboard_model_timeout"));
+  }, STORYBOARD_MODEL_TIMEOUT_MS);
+  const abortFromParent = () => {
+    controller.abort(parent?.reason ?? new Error("storyboard_generation_aborted"));
+  };
+
+  if (parent?.aborted) {
+    abortFromParent();
+  } else {
+    parent?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout);
+      parent?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
+function isAbortLikeError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.name === "AbortError" || /abort|aborted|cancel/i.test(error.message);
 }
 
 async function resolveStoryboardSkill(skillId?: string, requestText?: string): Promise<StoryboardGenerationSkill | null> {
@@ -911,7 +942,7 @@ function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: Story
   return "";
 }
 
-async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: Record<string, any>, retryReason?: string) {
+async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: Record<string, any>, retryReason?: string, abortSignal?: AbortSignal) {
   const planning = context.storyboardPlanning as StoryboardPlanningHint | undefined;
   const skillContent = compactText(skill.content, MAX_STORYBOARD_SKILL_PROMPT_CHARS);
   const prompt = [
@@ -977,10 +1008,21 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "上下文 JSON:",
     JSON.stringify(context, null, 2),
   ].join("\n");
-  const { textStream } = await u.Ai.Text(STORYBOARD_MODEL_KEY).stream({ prompt });
+  const timeout = createStoryboardModelSignal(abortSignal);
   let text = "";
-  for await (const chunk of textStream) {
-    text += chunk;
+  try {
+    const { textStream } = await u.Ai.Text(STORYBOARD_MODEL_KEY).stream({ prompt, abortSignal: timeout.signal });
+    for await (const chunk of textStream) {
+      text += chunk;
+    }
+  } catch (error) {
+    if (abortSignal?.aborted) throw error;
+    if (timeout.signal.aborted || isAbortLikeError(error)) {
+      throw new Error(`分镜模型响应超过 ${Math.round(STORYBOARD_MODEL_TIMEOUT_MS / 1000)} 秒，请检查当前文本模型是否可用，或切换更快的文本模型后重试`);
+    }
+    throw error;
+  } finally {
+    timeout.cleanup();
   }
   if (!nonEmpty(text)) throw new Error("模型未返回文本");
   return parseStoryboardJson(String(text));
@@ -1052,7 +1094,7 @@ export async function generateProjectStoryboardWithSkill(
   try {
     let retryReason = "";
     for (let attempt = 0; attempt < 3; attempt++) {
-      parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, retryReason || undefined), planning);
+      parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, retryReason || undefined, options.abortSignal), planning);
       parsed = normalizeStoryboardTimings(repairStoryboardQuality(parsed, planning), planning);
       const qualityReason = validateStoryboardQuality(parsed, planning);
       if (!qualityReason) break;

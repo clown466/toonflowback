@@ -318,9 +318,13 @@ function missingInfoReasons(missingInfo?: Array<WorkspaceMissingInfo | string>) 
 function resolveChapterCandidates(text: string, snapshot?: WorkspaceCommandSnapshot) {
   const resolved = getResolvedScope(text, snapshot);
   if (isWorkspaceResolvedScope(resolved)) {
+    const parsedIndexes = parseChapterIndexesFromText(text);
+    const idsFromParsedIndexes = normalizeChapterCandidates(snapshot?.novels)
+      .filter((candidate) => candidate.chapterIndex != null && parsedIndexes.includes(candidate.chapterIndex))
+      .map((candidate) => candidate.id);
     return {
-      chapterIndexes: parseChapterIndexesFromText(text),
-      chapterIds: resolved.chapters.novelIds,
+      chapterIndexes: parsedIndexes,
+      chapterIds: compactUnique([...resolved.chapters.novelIds, ...idsFromParsedIndexes]),
       chapterCandidates: mapScopeCandidates(resolved.chapters.candidates),
     };
   }
@@ -334,6 +338,15 @@ function resolveChapterCandidates(text: string, snapshot?: WorkspaceCommandSnaps
     chapterIds,
     chapterCandidates: sourceCandidates,
   };
+}
+
+function normalizeMissingInfoForResolvedChapter(
+  missingInfo: Array<WorkspaceMissingInfo | string> | undefined,
+  chapters: ReturnType<typeof resolveChapterCandidates>,
+) {
+  if (!missingInfo?.length) return missingInfo;
+  if (!chapters.chapterIds.length && !chapters.chapterIndexes.length) return missingInfo;
+  return missingInfo.filter((item) => typeof item === "string" || item.field !== "chapter");
 }
 
 function assetTypeLabel(assetType?: WorkspaceAssetType) {
@@ -437,8 +450,8 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
 
 function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: WorkspaceCommandSnapshot): WorkspaceCommandPlan {
   const resolved = getResolvedScope(text, snapshot);
-  const missingInfo = isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo;
   const chapters = resolveChapterCandidates(text, snapshot);
+  const missingInfo = normalizeMissingInfoForResolvedChapter(isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo, chapters);
   const skillId = parseSkillIdFromText(text);
   const force = /(重新|重做|覆盖|替换|清空|清除|删除|删掉|重置|再生成|重建|重新推理|重推)/i.test(text);
   const scopeBase: Omit<WorkspaceCommandScope, "summary"> = {
@@ -484,8 +497,8 @@ function buildStoryboardPlan(text: string, signal: IntentSignal, snapshot?: Work
 
 function buildStoryboardClearPlan(text: string, signal: IntentSignal, snapshot?: WorkspaceCommandSnapshot): WorkspaceCommandPlan {
   const resolved = getResolvedScope(text, snapshot);
-  const missingInfo = isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo;
   const chapters = resolveChapterCandidates(text, snapshot);
+  const missingInfo = normalizeMissingInfoForResolvedChapter(isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo, chapters);
   const scopeBase: Omit<WorkspaceCommandScope, "summary"> = {
     kind: "storyboard",
     chapterIndexes: chapters.chapterIndexes,
@@ -520,8 +533,8 @@ function buildStoryboardClearPlan(text: string, signal: IntentSignal, snapshot?:
 
 function buildAssetExtractionPlan(text: string, signal: IntentSignal, snapshot?: WorkspaceCommandSnapshot): WorkspaceCommandPlan {
   const resolved = getResolvedScope(text, snapshot);
-  const missingInfo = isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo;
   const chapters = resolveChapterCandidates(text, snapshot);
+  const missingInfo = normalizeMissingInfoForResolvedChapter(isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo, chapters);
   const scopeBase: Omit<WorkspaceCommandScope, "summary"> = {
     kind: chapters.chapterIndexes.length || chapters.chapterCandidates.length ? "chapter" : "project",
     chapterIndexes: chapters.chapterIndexes,

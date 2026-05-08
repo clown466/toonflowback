@@ -11,6 +11,7 @@ export interface ToolConfig {
   resTool: ResTool;
   toolsNames?: string[];
   msg: ReturnType<ResTool["newMessage"]>;
+  abortSignal?: AbortSignal;
 }
 
 const assetTypeSchema = z.enum(["role", "scene", "tool", "other"]);
@@ -558,7 +559,9 @@ export async function runProjectStoryboardDraftFastPath(
 ) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
+  msg.updateStatus("streaming");
   const thinking = msg.thinking("正在生成生产分镜草案...");
+  thinking.updateTitle("正在调用分镜模型生成结构化分镜...");
 
   const result = await generateProjectStoryboardWithSkill(projectId, {
     sourceText: options?.sourceText,
@@ -569,6 +572,7 @@ export async function runProjectStoryboardDraftFastPath(
     append: options?.append,
     novelIds: options?.novelIds,
     chapterIndexes: options?.chapterIndexes,
+    abortSignal: config.abortSignal,
   });
 
   thinking.appendText(

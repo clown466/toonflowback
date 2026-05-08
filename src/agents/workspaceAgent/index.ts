@@ -128,8 +128,8 @@ export async function runDecisionAI(ctx: AgentContext) {
     abortSignal,
     tools: {
       ...memory.getTools(),
-      ...useTools({ resTool: ctx.resTool, msg: ctx.msg }),
-      ...useNovelWorkflowTools({ resTool: ctx.resTool, msg: ctx.msg }),
+      ...useTools({ resTool: ctx.resTool, msg: ctx.msg, abortSignal: ctx.abortSignal }),
+      ...useNovelWorkflowTools({ resTool: ctx.resTool, msg: ctx.msg, abortSignal: ctx.abortSignal }),
       ...(await createSubAgent(ctx)),
     },
     onFinish: async (completion) => {
@@ -176,8 +176,8 @@ async function createSubAgent(parentCtx: AgentContext) {
       abortSignal,
       tools: {
         ...extraTools,
-        ...useTools({ resTool, msg: subMsg }),
-        ...useNovelWorkflowTools({ resTool, msg: subMsg }),
+        ...useTools({ resTool, msg: subMsg, abortSignal }),
+        ...useNovelWorkflowTools({ resTool, msg: subMsg, abortSignal }),
       },
     });
 

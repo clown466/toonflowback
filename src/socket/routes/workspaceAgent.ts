@@ -122,7 +122,7 @@ export default (nsp: Namespace) => {
 
       console.log("[workspaceAgent] workspace command pipeline 执行计划", { intent: plan.intent, confirmationPolicy: plan.confirmationPolicy });
       const userMessageTime = ctx.userMessageTime ?? Date.now();
-      await runCommandWithMemory(ctx.text, userMessageTime, () => executeWorkspaceCommandPlan({ resTool: ctx.resTool, msg: ctx.msg }, plan));
+      await runCommandWithMemory(ctx.text, userMessageTime, () => executeWorkspaceCommandPlan({ resTool: ctx.resTool, msg: ctx.msg, abortSignal: ctx.abortSignal }, plan));
       return true;
     }
 

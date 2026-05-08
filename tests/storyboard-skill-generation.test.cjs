@@ -410,17 +410,16 @@ async function main() {
     force: true,
   });
 
-  assert.strictEqual(dialogueResult.createdCount, 8, 'dialogue-heavy chapter should retry and split long dialogue across fast cuts');
-  assert.strictEqual(capturedPrompts.length, 2, 'bad low-count/short-duration output should trigger one retry');
-  assert.deepStrictEqual(capturedModelKeys, ['productionAgent:storyboardTableAgent', 'productionAgent:storyboardTableAgent']);
+  assert.strictEqual(dialogueResult.createdCount, 7, 'dialogue-heavy chapter should locally split long dialogue across fast cuts');
+  assert.strictEqual(capturedPrompts.length, 1, 'oversized dialogue should be repaired locally without another model retry');
+  assert.deepStrictEqual(capturedModelKeys, ['productionAgent:storyboardTableAgent']);
   assert.ok(capturedPrompts[0].includes('dialogueTimingRules'), 'prompt context should include front-loaded dialogue timing rules');
   assert.ok(capturedPrompts[0].includes('sourceDialogueFastCutChunks'), 'prompt context should include pre-split dialogue chunks');
   assert.ok(capturedPrompts[0].includes('maxDialogueSecondsPerShot'), 'prompt context should expose the per-shot dialogue cap');
   assert.ok(capturedPrompts[0].includes('不要把 selectedChapters.chapterData 里的完整长句复制进单个镜头'), 'prompt should explicitly forbid copying long raw dialogue into one shot');
-  assert.ok(capturedPrompts[1].includes('上一次输出不合格'), 'retry prompt should explain the quality failure');
 
   const dialogueStoryboards = await db('o_storyboard').where({ projectId: 2, scriptId: dialogueResult.episodesId }).orderBy('index');
-  assert.strictEqual(dialogueStoryboards.length, 8);
+  assert.strictEqual(dialogueStoryboards.length, 7);
   assert.ok(dialogueStoryboards.every((row) => Number(row.duration) <= 4), 'dialogue shots should stay in 2-4s fast-cut rhythm');
   const totalDuration = dialogueStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
   assert.ok(totalDuration >= 20, `normalized total duration should be dialogue-aware, got ${totalDuration}s`);
@@ -470,8 +469,8 @@ async function main() {
     sourceText: '请针对 juben10 重新生成分镜',
     force: true,
   });
-  assert.ok(repairedDialogueResult.createdCount > 1, 'final quality pass should split an oversized monologue instead of failing');
-  assert.strictEqual(capturedPrompts.length, 3, 'the model should get retry chances before deterministic repair');
+  assert.ok(repairedDialogueResult.createdCount > 1, 'local quality repair should split an oversized monologue instead of failing');
+  assert.strictEqual(capturedPrompts.length, 1, 'oversized monologue should be repaired locally without repeated model retries');
   const repairedStoryboards = await db('o_storyboard').where({ projectId: 7, scriptId: repairedDialogueResult.episodesId }).orderBy('index');
   assert.ok(repairedStoryboards.every((row) => Number(row.duration) <= 4), 'repaired dialogue cuts should stay within the fast-cut shot cap');
   assert.ok(repairedStoryboards.some((row) => String(row.videoDesc).includes('fast dialogue cut')), 'repaired rows should mark the fast-cut split');
@@ -529,10 +528,9 @@ async function main() {
     force: true,
   });
   assert.strictEqual(variedTimingResult.createdCount, 6);
-  assert.strictEqual(capturedPrompts.length, 2, 'flat all-2s timing should trigger a retry');
-  assert.ok(capturedPrompts[1].includes('分镜时长过于机械'), 'retry prompt should explain flat timing');
+  assert.strictEqual(capturedPrompts.length, 1, 'flat all-2s timing should be repaired locally without another model retry');
   const variedTimingRows = await db('o_storyboard').where({ projectId: 8, scriptId: variedTimingResult.episodesId }).orderBy('index');
-  assert.deepStrictEqual(variedTimingRows.map((row) => Number(row.duration)), [2, 3, 4, 3, 3, 4]);
+  assert.deepStrictEqual(variedTimingRows.map((row) => Number(row.duration)), [2, 3, 4, 3, 2, 3]);
 
   await db('o_project').insert({
     id: 5,
@@ -623,28 +621,18 @@ async function main() {
         dialogue: '无台词',
       })),
     },
-    {
-      storyboardTable: '',
-      shots: Array.from({ length: 33 }, (_, index) => ({
-        duration: 3,
-        videoDesc: `Dense but varied cut ${index + 1}.`,
-        imagePrompt: `Chloe dense varied cut ${index + 1}`,
-        associateAssetNames: ['Chloe', 'campus'],
-        dialogue: '无台词',
-      })),
-    },
   ];
 
   const hardCapResult = await service.generateProjectStoryboardWithSkill(6, {
     sourceText: '请针对 juben10 重新生成分镜',
     force: true,
   });
-  assert.strictEqual(hardCapResult.createdCount, 33);
-  assert.strictEqual(capturedPrompts.length, 2, '60 all-2s shots should be rejected and retried');
-  assert.ok(capturedPrompts[1].includes('分镜拆分过多') || capturedPrompts[1].includes('分镜时长过于机械'), 'retry prompt should reject too many flat 2s shots');
+  assert.ok(hardCapResult.createdCount <= 40, `60 all-2s shots should be merged under the shot budget, got ${hardCapResult.createdCount}`);
+  assert.strictEqual(capturedPrompts.length, 1, '60 all-2s shots should be repaired locally without another model retry');
   const hardCapStoryboards = await db('o_storyboard').where({ projectId: 6, scriptId: hardCapResult.episodesId }).orderBy('index');
   const hardCapTotal = hardCapStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
   assert.ok(hardCapTotal <= 120, `chapter storyboard total must never exceed 120s, got ${hardCapTotal}s`);
+  assert.ok(hardCapStoryboards.some((row) => Number(row.duration) === 4), 'local repair should merge some flat 2s cuts into 4s beats');
 
   await db.destroy();
   console.log('Storyboard skill generation checks passed');

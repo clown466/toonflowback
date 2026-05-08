@@ -468,6 +468,118 @@ function splitOversizedDialogueShots(parsed: SkillStoryboardJson, planning?: Sto
   return changed ? { ...parsed, storyboardTable: "", shots: shots.slice(0, MAX_STORYBOARD_SHOTS) } : parsed;
 }
 
+function joinShotText(parts: Array<string | undefined>, separator = "；") {
+  return uniqueTextParts(parts.map((part) => nonEmpty(part) ?? "").filter(Boolean)).join(separator);
+}
+
+function mergeShotDialogue(first?: string, second?: string): string {
+  const firstText = nonEmpty(first);
+  const secondText = nonEmpty(second);
+  const hasFirst = Boolean(firstText && !isNoDialogueText(firstText));
+  const hasSecond = Boolean(secondText && !isNoDialogueText(secondText));
+  if (hasFirst && hasSecond) return joinShotText([firstText, secondText], "\n");
+  if (hasFirst) return firstText || "无台词";
+  if (hasSecond) return secondText || "无台词";
+  return "无台词";
+}
+
+function mergeAssociateAssetNames(first: string[], second: string[]) {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const name of [...first, ...second]) {
+    const cleaned = cleanName(name);
+    const key = cleaned.toLowerCase();
+    if (!cleaned || seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+  }
+  return result;
+}
+
+function mergeStoryboardShots(first: SkillShot, second: SkillShot): SkillShot {
+  const role1 = first.role1 || second.role1;
+  const role2 = first.role2 || (second.role1 && assetNameKey(second.role1) !== assetNameKey(role1) ? second.role1 : second.role2);
+  return {
+    ...first,
+    duration: clamp(Number(first.duration || 0) + Number(second.duration || 0), 2, PREFERRED_STORYBOARD_SHOT_MAX),
+    videoDesc: joinShotText([first.videoDesc, second.videoDesc]),
+    imagePrompt: joinShotText([first.imagePrompt, second.imagePrompt], "; "),
+    associateAssetNames: mergeAssociateAssetNames(first.associateAssetNames || [], second.associateAssetNames || []),
+    shouldGenerateImage: first.shouldGenerateImage || second.shouldGenerateImage,
+    narrativeFunction: joinShotText([first.narrativeFunction, second.narrativeFunction]),
+    pictureDescription: joinShotText([first.pictureDescription, second.pictureDescription]),
+    role1,
+    role1Description: first.role1Description || second.role1Description,
+    role2,
+    role2Description: first.role2Description || second.role2Description,
+    reference: joinShotText([first.reference, second.reference]),
+    scene: first.scene || second.scene,
+    shotSize: first.shotSize || second.shotSize,
+    cameraMove: joinShotText([first.cameraMove, second.cameraMove]),
+    action: joinShotText([first.action, second.action]),
+    emotion: first.emotion || second.emotion,
+    lighting: first.lighting || second.lighting,
+    sound: joinShotText([first.sound, second.sound]),
+    dialogue: mergeShotDialogue(first.dialogue, second.dialogue),
+    beat: joinShotText([first.beat, second.beat]),
+    videoMotionPrompt: joinShotText([first.videoMotionPrompt, second.videoMotionPrompt]),
+  };
+}
+
+function mergePairPenalty(first: SkillShot, second: SkillShot) {
+  const dialogue = mergeShotDialogue(first.dialogue, second.dialogue);
+  const dialoguePenalty = !isNoDialogueText(dialogue) && estimateSpeechDurationSeconds(dialogue, first.emotion || second.emotion) > MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT ? 100 : 0;
+  return Number(first.duration || DEFAULT_STORYBOARD_SHOT_DURATION) + Number(second.duration || DEFAULT_STORYBOARD_SHOT_DURATION) + dialoguePenalty;
+}
+
+function coalesceStoryboardShotsToCount(shots: SkillShot[], targetCount: number) {
+  const result = shots.map((shot) => ({ ...shot }));
+  while (result.length > targetCount && result.length > 1) {
+    let mergeIndex = 0;
+    let bestPenalty = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < result.length - 1; index++) {
+      const penalty = mergePairPenalty(result[index], result[index + 1]);
+      if (penalty < bestPenalty) {
+        bestPenalty = penalty;
+        mergeIndex = index;
+      }
+    }
+    result.splice(mergeIndex, 2, mergeStoryboardShots(result[mergeIndex], result[mergeIndex + 1]));
+  }
+  return result;
+}
+
+function repairExcessiveStoryboardCount(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint): SkillStoryboardJson {
+  if (planning?.explicitShotCount || !planning?.estimatedMaximumShots || parsed.shots.length <= planning.estimatedMaximumShots) return parsed;
+  return {
+    ...parsed,
+    storyboardTable: "",
+    shots: coalesceStoryboardShotsToCount(parsed.shots, planning.estimatedMaximumShots),
+  };
+}
+
+function varyFlatStoryboardTiming(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint): SkillStoryboardJson {
+  if (!hasFlatTwoSecondTiming(parsed, planning)) return parsed;
+  const targetMax = planning?.targetDurationMax || CHAPTER_DURATION_HARD_CAP_SECONDS;
+  let total = getTotalDuration(parsed);
+  const pattern = [2, 3, 4, 3];
+  const shots = parsed.shots.map((shot, index) => {
+    const desired = pattern[index % pattern.length] ?? DEFAULT_STORYBOARD_SHOT_DURATION;
+    const delta = desired - shot.duration;
+    if (delta <= 0 || total + delta > targetMax) return shot;
+    total += delta;
+    return { ...shot, duration: desired };
+  });
+  return { ...parsed, storyboardTable: "", shots };
+}
+
+function repairStoryboardQuality(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint): SkillStoryboardJson {
+  let repaired = splitOversizedDialogueShots(parsed, planning);
+  repaired = repairExcessiveStoryboardCount(repaired, planning);
+  repaired = varyFlatStoryboardTiming(repaired, planning);
+  return repaired;
+}
+
 function getSourceDialogue(novels: NovelRow[]) {
   const text = novels
     .map((novel) => [novel.event, novel.chapterData].filter(Boolean).join("\n"))
@@ -941,10 +1053,11 @@ export async function generateProjectStoryboardWithSkill(
     let retryReason = "";
     for (let attempt = 0; attempt < 3; attempt++) {
       parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, retryReason || undefined), planning);
+      parsed = normalizeStoryboardTimings(repairStoryboardQuality(parsed, planning), planning);
       const qualityReason = validateStoryboardQuality(parsed, planning);
       if (!qualityReason) break;
       if (attempt === 2) {
-        const repaired = normalizeStoryboardTimings(splitOversizedDialogueShots(parsed, planning), planning);
+        const repaired = normalizeStoryboardTimings(repairStoryboardQuality(parsed, planning), planning);
         const repairReason = validateStoryboardQuality(repaired, planning);
         if (!repairReason) {
           parsed = repaired;

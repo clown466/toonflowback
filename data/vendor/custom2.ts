@@ -132,11 +132,11 @@ declare const exports: {
 // ============================================================
 
 const vendor: VendorConfig = {
-  id: "custom1",
+  id: "custom2",
   version: "2.0",
   author: "Toonflow",
-  name: "uocode",
-  description: "## uocode 模型服务模板，OpenAI 兼容接口，可自行配置请求地址和模型。",
+  name: "aipaiai",
+  description: "## 自定义2 模型服务模板，OpenAI 兼容接口，可自行配置请求地址和模型。",
   inputs: [
     { key: "apiKey", label: "API密钥", type: "password", required: true },
     { key: "baseUrl", label: "请求地址", type: "url", required: true, placeholder: "示例：https://api.openai.com/v1" },
@@ -149,82 +149,10 @@ const vendor: VendorConfig = {
 // 适配器函数
 // ============================================================
 
-function isStreamRequest(init: any) {
-  try {
-    const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
-    return body?.stream === true;
-  } catch {
-    return false;
-  }
-}
-
-function parseSseChatCompletion(text: string, modelName: string) {
-  const dataLines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.replace(/^data:\s*/, ""))
-    .filter((line) => line && line !== "[DONE]");
-
-  let id = "";
-  let created = Math.floor(Date.now() / 1000);
-  let content = "";
-  let usage: any = undefined;
-
-  for (const line of dataLines) {
-    let chunk: any;
-    try {
-      chunk = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    id = chunk.id || id;
-    created = chunk.created || created;
-    usage = chunk.usage || usage;
-
-    for (const choice of chunk.choices ?? []) {
-      const delta = choice.delta ?? {};
-      const message = choice.message ?? {};
-      content += delta.content ?? message.content ?? choice.text ?? "";
-    }
-  }
-
-  return {
-    id: id || `chatcmpl-${Date.now()}`,
-    object: "chat.completion",
-    created,
-    model: modelName,
-    choices: [
-      {
-        index: 0,
-        message: { role: "assistant", content },
-        finish_reason: "stop",
-      },
-    ],
-    usage,
-  };
-}
-
 const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3) => {
   if (!vendor.inputValues.apiKey) throw new Error("缺少API Key");
   const apiKey = vendor.inputValues.apiKey.replace(/^Bearer\s+/i, "");
-  return createOpenAI({
-    baseURL: vendor.inputValues.baseUrl,
-    apiKey,
-    fetch: async (input: any, init: any) => {
-      const response = await fetch(input, init);
-      const contentType = response.headers?.get?.("content-type") || "";
-      if (isStreamRequest(init) || !contentType.includes("text/event-stream")) return response;
-
-      const responseText = await response.text();
-      const json = parseSseChatCompletion(responseText, model.modelName);
-      return new Response(JSON.stringify(json), {
-        status: response.status,
-        statusText: response.statusText,
-        headers: new Headers({ "content-type": "application/json" }),
-      });
-    },
-  }).chat(model.modelName);
+  return createOpenAICompatible({ baseURL: vendor.inputValues.baseUrl, apiKey }).chat(model.modelName);
 };
 
 const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<string> => {
@@ -234,19 +162,11 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   const imageBase64List = (config.referenceList ?? []).map((r: any) => r.base64).filter(Boolean);
 
   const sizeMap: Record<string, Record<string, string>> = {
-    "1:1": { "1K": "1024x1024", "2K": "2048x2048", "4K": "4096x4096" },
-    "16:9": { "1K": "1024x576", "2K": "2048x1152", "4K": "4096x2304" },
-    "9:16": { "1K": "576x1024", "2K": "1152x2048", "4K": "2304x4096" },
+    "1:1": { "1K": "1024x1024", "2K": "2048x2048", "4K": "2880x2880" },
+    "16:9": { "1K": "1536x864", "2K": "2048x1152", "4K": "3840x2160" },
+    "9:16": { "1K": "864x1536", "2K": "1152x2048", "4K": "2160x3840" },
   };
-  const resolvedSize = sizeMap[config.aspectRatio]?.[config.size] || (config.aspectRatio === "9:16" ? "1024x1792" : "1792x1024");
-
-  const body: Record<string, any> = {
-    model: model.modelName,
-    prompt: config.prompt,
-    size: resolvedSize,
-    n: 1,
-  };
-  if (imageBase64List.length) body.image = imageBase64List.length === 1 ? imageBase64List[0] : imageBase64List;
+  const resolvedSize = sizeMap[config.aspectRatio]?.[config.size] || (config.aspectRatio === "9:16" ? "1024x1536" : "1536x1024");
 
   const pickImageResult = (data: any): string | undefined => {
     const first = data?.data?.[0] || data?.data || data;
@@ -259,27 +179,79 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     return `data:image/png;base64,${raw}`;
   };
 
-  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} refs=${imageBase64List.length}`);
+  const parseDataUrlImage = (base64: string, index: number) => {
+    const match = base64.match(/^data:(image\/[-+.\w]+);base64,(.+)$/);
+    const mime = match?.[1] || "image/png";
+    const payload = match?.[2] || base64.replace(/^data:[^;]+;base64,/, "");
+    const ext = mime.includes("jpeg") ? "jpg" : mime.split("/")[1]?.replace(/\W+/g, "") || "png";
+    return {
+      buffer: Buffer.from(payload, "base64"),
+      filename: `reference-${index + 1}.${ext}`,
+      contentType: mime,
+    };
+  };
+
+  const parseResponse = async (response: any, endpoint: string): Promise<string> => {
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(`custom2图片请求失败，接口: ${endpoint}, 状态码: ${response.status}, 错误信息: ${responseText}`);
+    }
+    let data: any;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error(`custom2图片响应不是JSON: ${responseText.slice(0, 500)}`);
+    }
+    const raw = pickImageResult(data);
+    if (!raw || typeof raw !== "string") {
+      throw new Error(`custom2图片响应中未找到图片URL/base64: ${JSON.stringify(data).slice(0, 800)}`);
+    }
+    return await normalizeImageResult(raw);
+  };
+
+  if (imageBase64List.length) {
+    const form = new FormData();
+    form.append("model", model.modelName);
+    form.append("prompt", config.prompt);
+    form.append("size", resolvedSize);
+    form.append("n", "1");
+    if (/^gpt-image/i.test(model.modelName)) form.append("quality", "high");
+    imageBase64List.forEach((base64, index) => {
+      const imageFile = parseDataUrlImage(base64, index);
+      form.append("image[]", imageFile.buffer, { filename: imageFile.filename, contentType: imageFile.contentType });
+    });
+    logger(`[custom2 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${/^gpt-image/i.test(model.modelName) ? "high" : "default"} refs=${imageBase64List.length}`);
+    const response = await axios.post(`${baseUrl}/images/edits`, form, {
+      headers: { Authorization: `Bearer ${apiKey}`, ...form.getHeaders() },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      validateStatus: () => true,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`custom2图片请求失败，接口: /images/edits, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
+    }
+    const raw = pickImageResult(response.data);
+    if (!raw || typeof raw !== "string") {
+      throw new Error(`custom2图片响应中未找到图片URL/base64: ${JSON.stringify(response.data).slice(0, 800)}`);
+    }
+    return await normalizeImageResult(raw);
+  }
+
+  const body: Record<string, any> = {
+    model: model.modelName,
+    prompt: config.prompt,
+    size: resolvedSize,
+    n: 1,
+  };
+  if (/^gpt-image/i.test(model.modelName)) body.quality = "high";
+
+  logger(`[custom2 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${body.quality || "default"} refs=0`);
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const responseText = await response.text();
-  if (!response.ok) {
-    throw new Error(`custom1图片请求失败，状态码: ${response.status}, 错误信息: ${responseText}`);
-  }
-  let data: any;
-  try {
-    data = JSON.parse(responseText);
-  } catch {
-    throw new Error(`custom1图片响应不是JSON: ${responseText.slice(0, 500)}`);
-  }
-  const raw = pickImageResult(data);
-  if (!raw || typeof raw !== "string") {
-    throw new Error(`custom1图片响应中未找到图片URL/base64: ${JSON.stringify(data).slice(0, 800)}`);
-  }
-  return await normalizeImageResult(raw);
+  return await parseResponse(response, "/images/generations");
 };
 
 const videoRequest = async (config: VideoConfig, model: VideoModel): Promise<string> => {

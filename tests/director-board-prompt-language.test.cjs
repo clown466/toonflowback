@@ -100,10 +100,13 @@ function buildPrompt(language) {
   );
 
   const englishPrompt = buildPrompt("english");
-  assert.match(englishPrompt, /Simple layout:/, "English director board prompt should use English structure");
+  assert.match(englishPrompt, /Use the fixed layout below exactly/, "English director board prompt should force a fixed structure");
+  assert.match(englishPrompt, /Use the attached reference images in order:/, "English director board prompt should use short ordered refs");
+  assert.match(englishPrompt, /Center bottom: 6 storyboard panels/, "English director board prompt should keep a stable six-panel layout");
   assert.doesNotMatch(englishPrompt, /简单版式：/, "English director board prompt should not use Chinese structure");
-  assert.match(englishPrompt, /English only/, "English prompt should constrain visible labels");
-  assert.match(englishPrompt, /Draw characters as simple pencil\/marker symbols/, "English prompt should use the simpler board style");
+  assert.match(englishPrompt, /All visible text must be English only/, "English prompt should constrain visible labels");
+  assert.match(englishPrompt, /simple readable colored pencil figures/, "English prompt should use the simpler board style");
+  assert.doesNotMatch(englishPrompt, /[\u3400-\u9fff]/, "English prompt should not keep Chinese source text");
   assert.ok(englishPrompt.length < 3500, "English director board prompt should stay concise");
 
   const englishTextStoryboardPrompt = service.buildChapterDirectorBoardPrompt({
@@ -140,7 +143,8 @@ function buildPrompt(language) {
   assert.doesNotMatch(englishTextStoryboardPrompt, /分镜卡内容|版式要求/, "English text storyboard prompt should not include Chinese labels");
 
   const chinesePrompt = buildPrompt("chinese");
-  assert.match(chinesePrompt, /简单版式：/, "Chinese director board prompt should use Chinese structure");
+  assert.match(chinesePrompt, /固定结构：/, "Chinese director board prompt should use a fixed structure");
+  assert.match(chinesePrompt, /中下：6 个连续分镜小格/, "Chinese director board prompt should keep a stable six-panel layout");
   assert.doesNotMatch(chinesePrompt, /Simple layout:/, "Chinese director board prompt should not use English structure");
   assert.match(chinesePrompt, /画面文字保持简短可读，并统一使用中文/, "Chinese prompt should constrain visible labels");
   assert.match(chinesePrompt, /角色只画成简单铅笔\/马克笔符号或剪影/, "Chinese prompt should use the simpler board style");

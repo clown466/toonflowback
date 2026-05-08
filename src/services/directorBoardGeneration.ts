@@ -99,6 +99,18 @@ function clean(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function firstReadableClause(value: unknown, maxLength = 155) {
+  const text = clean(value)
+    .replace(/[#*_`>]+/g, "")
+    .replace(/\b(?:prompt|description|describe|role facts?|identity symbols?|negative facts?)\s*[:：]/gi, "")
+    .replace(/(?:角色事实|角色描述|资产提示词|提示词|描述|身份符号|禁止误读)\s*[:：]/g, "")
+    .trim();
+  if (!text) return "";
+  const sentence = text.split(/(?<=[.!?。！？])\s+/)[0] || text;
+  const clauses = sentence.split(/[;；]\s*/).filter(Boolean).slice(0, 2).join("; ");
+  return compact(clauses || sentence, maxLength);
+}
+
 function countCjk(text: string) {
   return text.match(/[\u3400-\u9fff\uf900-\ufaff]/g)?.length ?? 0;
 }
@@ -258,6 +270,45 @@ function nameKey(value: unknown) {
   return clean(value).toLowerCase();
 }
 
+function assetBrief(asset: AssetRow, isChinese: boolean, maxLength = 155) {
+  const source = asset.roleFacts || asset.describe || asset.prompt;
+  const brief = firstReadableClause(source, maxLength);
+  if (brief) {
+    if (!isChinese && countCjk(brief) >= 2) {
+      if (isRoleAsset(asset)) return asset.filePath ? "attached role reference image; use only the strongest visible identity symbols." : "simple symbolic character based on the storyboard context.";
+      if (isSceneAsset(asset)) return asset.filePath ? "attached scene reference image; use its layout, colors, entrances, lighting, and props." : "scene based on the storyboard context.";
+      return asset.filePath ? "attached visual reference image." : "supporting asset from the storyboard context.";
+    }
+    return brief;
+  }
+  if (asset.filePath) return isChinese ? "已附加参考图，只提取最显著身份符号。" : "attached reference image, use only the strongest identity symbols.";
+  return isChinese ? "按分镜上下文保持简洁一致。" : "keep simple and consistent with the storyboard context.";
+}
+
+function languageSafeBrief(value: unknown, isChinese: boolean, englishFallback: string, chineseFallback: string, maxLength = 220) {
+  const brief = firstReadableClause(value, maxLength);
+  if (!brief) return isChinese ? chineseFallback : englishFallback;
+  if (!isChinese && countCjk(brief) >= 2) return englishFallback;
+  if (isChinese && countLatinLetters(brief) > Math.max(80, countCjk(brief) * 2)) return chineseFallback;
+  return brief;
+}
+
+function buildReferenceLines(assets: AssetRow[], isChinese: boolean) {
+  const referencedAssets = assets.filter((asset) => asset.filePath).slice(0, 12);
+  const source = referencedAssets.length ? referencedAssets : assets.slice(0, 12);
+  return source.map((asset, index) => {
+    const name = asset.name || (isChinese ? "未命名素材" : "Unnamed asset");
+    return `${isChinese ? "参考" : "Ref"} ${index + 1}: ${name}. ${assetBrief(asset, isChinese)}`;
+  });
+}
+
+function buildCharacterLabelLines(assets: AssetRow[], isChinese: boolean) {
+  return assets.filter(isRoleAsset).map((asset, index) => {
+    const name = asset.name || (isChinese ? "未命名角色" : "Unnamed character");
+    return `C${index + 1} ${name}`;
+  });
+}
+
 export function buildChapterDirectorBoardPrompt(input: {
   project: ProjectRow;
   script: ScriptRow;
@@ -287,39 +338,33 @@ export function buildChapterDirectorBoardPrompt(input: {
     ].filter(Boolean).join(" | ");
   });
 
+  const referenceLines = buildReferenceLines(assets, isChinese);
+  const characterLabelLines = buildCharacterLabelLines(assets, isChinese);
   const otherAssetLines = assets.filter((asset) => !isRoleAsset(asset) && !isSceneAsset(asset)).map((asset, index) => {
     return [
       `${isChinese ? "参考" : "Ref"} ${index + 1}`,
       `id=${asset.id}`,
       `${isChinese ? "类型" : "type"}=${asset.type || (isChinese ? "素材" : "asset")}`,
       `${isChinese ? "名称" : "name"}=${asset.name || (isChinese ? "未命名" : "unnamed")}`,
-      `${isChinese ? "描述" : "description"}=${compact(asset.prompt || asset.describe, 220)}`,
+      `${isChinese ? "描述" : "description"}=${assetBrief(asset, isChinese, 130)}`,
     ].join(" | ");
-  });
-  const roleLines = assets.filter(isRoleAsset).map((asset, index) => {
-    return [
-      `C${index + 1}`,
-      `${isChinese ? "名称" : "name"}=${asset.name || (isChinese ? "未命名角色" : "unnamed role")}`,
-      `${isChinese ? "身份符号" : "identity symbols"}=${compact(
-        asset.roleFacts ||
-          asset.prompt ||
-          asset.describe ||
-          (asset.filePath ? (isChinese ? "已附加角色参考图；只提取可见的符号身份标记" : "attached role reference image; extract only visible symbolic identity markers") : ""),
-        280,
-      )}`,
-      asset.negativeRoleFacts ? `${isChinese ? "禁止误读" : "negative facts"}=${compact(asset.negativeRoleFacts, 180)}` : "",
-    ]
-      .filter(Boolean)
-      .join(" | ");
   });
   const sceneLines = assets.filter(isSceneAsset).map((asset, index) => {
     return [
       `${isChinese ? "场景" : "Scene"} ${index + 1}`,
       `${isChinese ? "名称" : "name"}=${asset.name || (isChinese ? "未命名场景" : "unnamed scene")}`,
       `${isChinese ? "参考" : "reference"}=${asset.filePath ? (isChinese ? "已附加场景参考图" : "attached scene reference image is available") : isChinese ? "无图片参考" : "no image reference"}`,
-      `${isChinese ? "描述" : "description"}=${compact(asset.prompt || asset.describe, 260)}`,
+      `${isChinese ? "描述" : "description"}=${assetBrief(asset, isChinese, 150)}`,
     ].join(" | ");
   });
+  const projectTypeText = languageSafeBrief(project.type, isChinese, "English-language short drama", "短剧", 120);
+  const visualStyleText = languageSafeBrief(
+    [project.artStyle, project.directorManual].filter(Boolean).join("; "),
+    isChinese,
+    "cinematic animation",
+    "电影化动画",
+    260,
+  );
 
   if (isChinese) {
     if (boardType === "textStoryboard") {
@@ -346,11 +391,14 @@ export function buildChapterDirectorBoardPrompt(input: {
         `工作区：${script.name || `script ${script.id}`}`,
         `导演板：${boardIndex + 1}/${totalBoards}`,
         `视频画幅比例：${project.videoRatio || "9:16"}`,
-        `项目类型：${project.type || "短剧"}`,
-        `视觉风格：${compact([project.artStyle, project.directorManual].filter(Boolean).join("; "), 360) || "电影化动画"}`,
+        `项目类型：${projectTypeText}`,
+        `视觉风格：${visualStyleText}`,
         "",
         "角色图例：",
-        roleLines.length ? roleLines.join("\n") : "没有关联角色资产。请从分镜描述中推导临时 C编号，并在本张导演板内保持稳定。",
+        referenceLines.length ? referenceLines.join("\n") : "无可用参考图。",
+        "",
+        "角色标签：",
+        characterLabelLines.length ? characterLabelLines.join("\n") : "没有关联角色资产。请从分镜描述中推导临时 C编号，并在本张导演板内保持稳定。",
         "",
         "场景参考：",
         sceneLines.length ? sceneLines.join("\n") : "没有关联场景资产。只根据分镜描述构建场景。",
@@ -366,13 +414,15 @@ export function buildChapterDirectorBoardPrompt(input: {
     return [
       "生成一张横向 16:9 章节导演板，用于给视频模型参考。",
       "它不是最终画面，只表达本组镜头的空间、机位、角色位置、动作连续、灯光和节奏。",
+      "必须严格使用下面的固定结构生成，不要自行改成其他版式。",
       "",
-      "简单版式：",
-      "左侧：角色图例和主要场景参考。",
-      "中上：彩色俯视调度图，标出场景布局、角色位置、摄像机、运动箭头和光源。",
-      "中下：4-6 个连续分镜小格，每格写镜头号、时间、景别、镜头运动和核心动作。",
-      "右侧：很简洁的动作流/位置变化草图。",
-      "底部：少量灯光、道具、颜色和连续性备注。",
+      "固定结构：",
+      `顶部：短标题栏 “Chapter Director Board B${String(boardIndex + 1).padStart(2, "0")}”。`,
+      "左侧：小参考图例，列出 C1/C2/C3 等角色和一个场景缩略区。",
+      "中上：彩色俯视调度图，显示场景布局、角色位置、摄像机位置、运动箭头、视线和主要光源方向。",
+      "中下：6 个连续分镜小格，按本组镜头顺序排列；镜头少于 6 个时留空位，不改变版式。",
+      "右侧：简单动作流草图，显示镜头之间的位置变化。",
+      "底部：短连续性备注，只写灯光、道具、机位和情绪。",
       "",
       "画面风格：",
       "彩色场景、浅色纸张背景、细黑分隔线、干净的导演标注。",
@@ -382,18 +432,22 @@ export function buildChapterDirectorBoardPrompt(input: {
       "角色事实卡和角色参考图只用于识别身份符号；不要把柠檬画成青柠，不要把水蜜桃画成草莓，不要发明新角色设计。",
       "场景参考图用于确定环境布局、色彩、入口、桌面、墙面、灯光和道具。",
       "画面文字保持简短可读，并统一使用中文；角色名、C编号和必要专有名词可保留原文。",
+      "不要在图里写长段落；角色只用短标签：C1 名称、C2 名称、C3 名称。",
       "不要画成漫画页、海报或 UI 截图。",
+      "",
+      "按顺序使用附加参考图：",
+      referenceLines.length ? referenceLines.join("\n") : "无可用参考图。",
+      "",
+      "角色短标签：",
+      characterLabelLines.length ? characterLabelLines.join("\n") : "无角色参考；从分镜中提取临时 C编号。",
       "",
       "项目信息：",
       `标题：${project.name || "未命名"}`,
       `工作区：${script.name || `script ${script.id}`}`,
       `导演板：${boardIndex + 1}/${totalBoards}`,
       `视频画幅比例：${project.videoRatio || "9:16"}`,
-      `项目类型：${project.type || "短剧"}`,
-      `视觉风格：${compact([project.artStyle, project.directorManual].filter(Boolean).join("; "), 360) || "电影化动画"}`,
-      "",
-      "角色图例：",
-      roleLines.length ? roleLines.join("\n") : "没有关联角色资产。请从分镜描述中推导临时 C编号，并在本张导演板内保持稳定。",
+      `项目类型：${projectTypeText}`,
+      `视觉风格：${visualStyleText}`,
       "",
       "场景参考：",
       sceneLines.length ? sceneLines.join("\n") : "没有关联场景资产。只根据分镜描述构建场景。",
@@ -433,11 +487,14 @@ export function buildChapterDirectorBoardPrompt(input: {
       `workspace: ${script.name || `script ${script.id}`}`,
       `board: ${boardIndex + 1}/${totalBoards}`,
       `video aspect ratio: ${project.videoRatio || "9:16"}`,
-      `project type: ${project.type || "short drama"}`,
-      `visual style: ${compact([project.artStyle, project.directorManual].filter(Boolean).join("; "), 360) || "cinematic animation"}`,
+      `project type: ${projectTypeText}`,
+      `visual style: ${visualStyleText}`,
       "",
       "Character legend:",
-      roleLines.length ? roleLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
+      referenceLines.length ? referenceLines.join("\n") : "No attached references.",
+      "",
+      "Character labels:",
+      characterLabelLines.length ? characterLabelLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
       "",
       "Scene references:",
       sceneLines.length ? sceneLines.join("\n") : "No scene asset is linked. Build a scene only from the storyboard descriptions.",
@@ -451,35 +508,41 @@ export function buildChapterDirectorBoardPrompt(input: {
   }
 
   return [
-    "Create one wide 16:9 chapter director board for video-generation reference.",
-    "It is not a final video frame. It only shows space, camera blocking, character positions, action continuity, lighting, and pacing for these shots.",
+    "Create a clean cinematic chapter director board, single wide 16:9 image.",
+    "This is a director planning board for AI video generation, not final character art. Keep characters as simple readable colored pencil figures, not polished portraits.",
+    "Use the fixed layout below exactly. Do not redesign the board structure.",
     "",
-    "Simple layout:",
-    "Left: character legend and main scene reference.",
-    "Center top: colored overhead blocking map with scene layout, character positions, cameras, movement arrows, and light direction.",
-    "Center bottom: 4-6 sequential shot panels. Each panel has shot number, time, framing, camera move, and core action.",
-    "Right: very simple action-flow / position-change sketches.",
-    "Bottom: a few lighting, prop, color, and continuity notes.",
+    "Use the attached reference images in order:",
+    referenceLines.length ? referenceLines.join("\n") : "No attached references.",
+    "",
+    "Board purpose:",
+    "This board only explains blocking, camera, movement, lighting, props, and continuity for the video model.",
+    "",
+    "Layout:",
+    `Top: short title bar: "Chapter Director Board B${String(boardIndex + 1).padStart(2, "0")}".`,
+    "Left: small reference legend with C1/C2/C3 character labels and one scene thumbnail area.",
+    "Center top: colored overhead blocking map, showing scene layout, character positions, camera positions, movement arrows, eye lines, and light direction.",
+    "Center bottom: 6 storyboard panels for the covered shots in timeline order. If fewer than 6 shots are covered, leave empty slots instead of changing the structure.",
+    "Right: simple action-flow sketches showing how positions change between shots.",
+    "Bottom: short continuity notes for lighting, props, camera, and mood.",
     "",
     "Image style:",
-    "colored scenes, light paper background, thin black dividers, clean director notes.",
-    "Draw characters as simple pencil/marker symbols or silhouettes, not detailed portraits or final character art.",
-    "Every character figure must have a nearby C-number + name label, for example C1 Chloe. Use one stable high-contrast color marker per character.",
-    "Differentiate characters with only the strongest identity symbols: fruit/species color, body scale, fixed outfit, key prop, weapon, or tool.",
-    "Use role facts and role reference images only for symbolic identity. Do not turn lemon into lime, peach into strawberry, or invent a new final design.",
-    "Use scene reference images for environment layout, colors, entrances, tables, walls, lighting, and props.",
-    "Keep all visible board text short and readable. English only. Do not make a comic page, poster, or UI screenshot.",
+    "Colored production storyboard sheet, pencil-and-marker planning look, thin black panel lines, light paper background, cinematic but simple.",
+    "The environment should be colored and readable. Characters should be simplified but clearly identifiable by fruit shape, color, label, and prop.",
+    "Use only short character labels: C1 Name, C2 Name, C3 Name. Do not write long paragraphs inside the image.",
+    "All visible text must be English only. Do not use subtitles, UI, watermark, or dense text.",
+    "Do not redesign the characters. Do not turn lemon into lime, peach into strawberry, or a fruit character into a human.",
+    "",
+    "Character labels:",
+    characterLabelLines.length ? characterLabelLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
     "",
     "Project:",
     `title: ${project.name || "Untitled"}`,
     `workspace: ${script.name || `script ${script.id}`}`,
     `board: ${boardIndex + 1}/${totalBoards}`,
     `video aspect ratio: ${project.videoRatio || "9:16"}`,
-    `project type: ${project.type || "short drama"}`,
-    `visual style: ${compact([project.artStyle, project.directorManual].filter(Boolean).join("; "), 360) || "cinematic animation"}`,
-    "",
-    "Character legend:",
-    roleLines.length ? roleLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
+    `project type: ${projectTypeText}`,
+    `visual style: ${visualStyleText}`,
     "",
     "Scene references:",
     sceneLines.length ? sceneLines.join("\n") : "No scene asset is linked. Build a scene only from the storyboard descriptions.",

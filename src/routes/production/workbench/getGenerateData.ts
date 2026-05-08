@@ -34,6 +34,17 @@ interface TrackItem {
   videoList: VideoItem[];
 }
 
+function parseNumberArray(value: unknown): number[] {
+  if (Array.isArray(value)) return value.map(Number).filter((item) => Number.isFinite(item));
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(Number).filter((item) => Number.isFinite(item));
+  } catch {
+    return [];
+  }
+}
+
 export default router.post(
   "/",
   validateFields({
@@ -121,6 +132,35 @@ export default router.post(
         i.src = i.filePath ? await u.oss.getSmallImageUrl(i.filePath) : "";
       }),
     );
+    const directorBoardAssetIds = Array.from(new Set(directorBoardList.flatMap((board) => parseNumberArray(board.assetIds))));
+    const directorBoardAssetMap = new Map<number, any>();
+    if (directorBoardAssetIds.length) {
+      const boardAssets = await u
+        .db("o_assets")
+        .leftJoin("o_image", "o_image.id", "o_assets.imageId")
+        .where("o_assets.projectId", projectId)
+        .whereIn("o_assets.id", directorBoardAssetIds)
+        .select("o_assets.id", "o_assets.name", "o_assets.describe", "o_assets.prompt", "o_assets.type", "o_image.filePath");
+      await Promise.all(
+        boardAssets.map(async (asset) => {
+          directorBoardAssetMap.set(Number(asset.id), {
+            id: asset.id,
+            name: asset.name,
+            describe: asset.describe,
+            prompt: asset.prompt,
+            type: asset.type,
+            fileType: "image",
+            sources: "assets",
+            src: asset.filePath ? await u.oss.getSmallImageUrl(asset.filePath) : "",
+          });
+        }),
+      );
+    }
+    directorBoardList.forEach((board) => {
+      board.assetRefs = parseNumberArray(board.assetIds)
+        .map((id) => directorBoardAssetMap.get(id))
+        .filter((asset) => asset?.src);
+    });
     const directorBoardMedias: TrackMedia[] = directorBoardList
       .filter((item) => item.state === "已完成" && item.src)
       .map((item) => ({

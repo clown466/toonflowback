@@ -246,18 +246,59 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     size: resolvedSize,
     n: 1,
   };
-  if (/^gpt-image/i.test(model.modelName)) body.quality = "high";
+  const isGptImageModel = /^gpt-image/i.test(model.modelName);
+  if (isGptImageModel) {
+    body.quality = "high";
+    body.stream = true;
+    body.partial_images = 1;
+  }
   if (imageBase64List.length) body.image = imageBase64List.length === 1 ? imageBase64List[0] : imageBase64List;
 
-  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${body.quality || "default"} refs=${imageBase64List.length}`);
+  const pickImageResult = (data: any): string | undefined => {
+    const first = data?.data?.[0] || data?.data || data;
+    return first?.b64_json || first?.base64 || first?.url || first?.image_url || data?.b64_json || data?.base64 || data?.url;
+  };
+
+  const extractImageFromSse = (text: string): string | undefined => {
+    let latestImage: string | undefined;
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.replace(/^data:\s*/, "");
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const event = JSON.parse(payload);
+        const image = pickImageResult(event);
+        if (image) latestImage = image;
+      } catch {
+        continue;
+      }
+    }
+    return latestImage;
+  };
+
+  const normalizeImageResult = async (raw: string): Promise<string> => {
+    if (raw.startsWith("http")) return await urlToBase64(raw);
+    if (raw.startsWith("data:image/")) return raw;
+    return `data:image/png;base64,${raw}`;
+  };
+
+  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${body.quality || "default"} stream=${body.stream ? "true" : "false"} refs=${imageBase64List.length}`);
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: body.stream ? "text/event-stream, application/json" : "application/json" },
     body: JSON.stringify(body),
   });
   const responseText = await response.text();
   if (!response.ok) {
+    if (response.status === 524) {
+      throw new Error(`uocode图片请求超时(524)：GPT Image high 在当前尺寸/参考图数量下超过上游网关等待时间。请求参数: model=${model.modelName}, size=${resolvedSize}, refs=${imageBase64List.length}, stream=${body.stream ? "true" : "false"}。上游返回: ${responseText.slice(0, 500)}`);
+    }
     throw new Error(`custom1图片请求失败，状态码: ${response.status}, 错误信息: ${responseText}`);
+  }
+  if (body.stream) {
+    const streamedImage = extractImageFromSse(responseText);
+    if (streamedImage) return await normalizeImageResult(streamedImage);
   }
   let data: any;
   try {
@@ -265,14 +306,11 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   } catch {
     throw new Error(`custom1图片响应不是JSON: ${responseText.slice(0, 500)}`);
   }
-  const first = data?.data?.[0] || data?.data || data;
-  const raw = first?.b64_json || first?.base64 || first?.url || first?.image_url || data?.b64_json || data?.base64 || data?.url;
+  const raw = pickImageResult(data);
   if (!raw || typeof raw !== "string") {
     throw new Error(`custom1图片响应中未找到图片URL/base64: ${JSON.stringify(data).slice(0, 800)}`);
   }
-  if (raw.startsWith("http")) return await urlToBase64(raw);
-  if (raw.startsWith("data:image/")) return raw;
-  return `data:image/png;base64,${raw}`;
+  return await normalizeImageResult(raw);
 };
 
 const videoRequest = async (config: VideoConfig, model: VideoModel): Promise<string> => {

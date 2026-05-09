@@ -308,10 +308,8 @@ function nameKey(value: unknown) {
 
 function assetBrief(asset: AssetRow, isChinese: boolean, maxLength = 155) {
   const source = [asset.roleFacts, asset.prompt, asset.describe].map(clean).filter(Boolean).join(" ");
-  if (!isChinese && isRoleAsset(asset) && source) {
-    const negative = buildEnglishNegativeRoleBrief(asset, [asset.negativeRoleFacts, source].map(clean).filter(Boolean).join(" "));
-    const brief = buildEnglishRoleBrief(asset, source);
-    return compact(negative ? `${brief} Avoid: ${negative}.` : brief, maxLength);
+  if (isRoleAsset(asset)) {
+    return compact(buildMinimalRoleBrief(asset, source, isChinese), maxLength);
   }
   const brief = firstReadableClause(source, maxLength);
   if (brief) {
@@ -338,69 +336,22 @@ function hasAnyText(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-function buildEnglishRoleBrief(asset: AssetRow, source: string) {
+function buildMinimalRoleBrief(asset: AssetRow, source: string, isChinese: boolean) {
   const name = clean(asset.name);
   const lowerName = name.toLowerCase();
-  const parts: string[] = [];
+  let identity: string;
+  if (/leo/.test(lowerName) || /柠檬|lemon/i.test(source)) identity = isChinese ? "明亮的黄色柠檬形象" : "a bright yellow lemon figure";
+  else if (/chloe/.test(lowerName) || /桃子|水蜜桃|peach/i.test(source)) identity = isChinese ? "水蜜桃角色形象" : "a peach figure";
+  else if (/bob/.test(lowerName) || /橙子|橙色果皮|orange/i.test(source)) identity = isChinese ? "橙子士兵形象" : "an orange soldier figure";
+  else if (/zombie|丧尸/i.test(source)) identity = isChinese ? "丧尸角色形象" : "a zombie figure";
+  else if (/monster|怪物/i.test(source)) identity = isChinese ? "怪物角色形象" : "a monster figure";
+  else if (/水果|果|fruit/i.test(source)) identity = isChinese ? "拟人化水果形象" : "an anthropomorphic fruit figure";
+  else identity = isChinese ? "参考图中的角色形象" : "the character shown in the reference image";
 
-  if (/chloe/.test(lowerName) || /桃子|水蜜桃|peach/i.test(source)) parts.push("a peach fruit woman");
-  else if (/bob/.test(lowerName) || /橙子|橙色果皮|orange/i.test(source)) parts.push("a stocky orange fruit soldier");
-  else if (/leo/.test(lowerName) || /柠檬|lemon/i.test(source)) parts.push("a yellow lemon fruit man");
-  else if (/zombie|丧尸/i.test(source)) parts.push("an anthropomorphic zombie character");
-  else if (/monster|怪物/i.test(source)) parts.push("a stylized monster character");
-  else if (/水果|果|fruit/i.test(source)) parts.push("an anthropomorphic fruit character");
-  else parts.push("the character shown in the reference image");
-
-  const traits: string[] = [];
-  if (hasAnyText(source, [/粉橙|桃红|pink-orange|peach head/i])) traits.push("pink-orange peach head");
-  if (hasAnyText(source, [/桃子纵向凹沟|桃子.*凹沟|peach groove/i])) traits.push("clear peach groove");
-  if (hasAnyText(source, [/橙色果皮|柑橘果皮|orange peel/i])) traits.push("orange peel body");
-  if (hasAnyText(source, [/鲜明柠檬黄|亮黄色|黄色柠檬|yellow lemon|lemon yellow/i])) traits.push("bright yellow lemon body");
-  if (hasAnyText(source, [/绿色叶子|叶子|果梗|短果梗|green leaf|stem/i])) traits.push("green leaf and short stem on top");
-  if (hasAnyText(source, [/半睁|疲倦|疲惫|half-lidded|tired|sleepy/i])) traits.push("half-lidded tired eyes");
-  if (hasAnyText(source, [/头盔|耳状凸起|耳朵|cat.?ear|helmet/i])) traits.push("yellow helmet or cat-ear-like head silhouette");
-  if (hasAnyText(source, [/黑色边缘|黑色.*结构|strap|rim|visor/i])) traits.push("black helmet rim or strap detail");
-  if (hasAnyText(source, [/防毒面具|gas mask/i])) traits.push("gas mask");
-  if (hasAnyText(source, [/战术背心|防弹背心|tactical vest/i])) traits.push("tactical vest");
-  if (hasAnyText(source, [/迷彩|军装|military|soldier/i])) traits.push("military gear");
-  if (hasAnyText(source, [/霰弹枪|长枪|shotgun|gun/i])) traits.push("shotgun or long gun");
-  if (hasAnyText(source, [/小刀|knife/i])) traits.push("small knife");
-  if (hasAnyText(source, [/平底锅|frying pan/i])) traits.push("frying pan");
-  if (hasAnyText(source, [/连帽|夹克|hoodie|jacket/i])) traits.push("simple yellow jacket");
-  if (hasAnyText(source, [/黑色长裤|black pants/i])) traits.push("black pants");
-  if (hasAnyText(source, [/白色运动鞋|运动鞋|sneakers|shoes/i])) traits.push("white sneakers with yellow accents");
-
-  const attitudes: string[] = [];
-  if (hasAnyText(source, [/自信|讽刺|坏笑|sarcastic|confident/i])) attitudes.push("confident sarcastic attitude");
-  if (hasAnyText(source, [/严肃|警觉|practical|tense/i])) attitudes.push("tense and practical");
-  if (hasAnyText(source, [/冷静|吐槽|疲倦|deadpan|calm/i])) attitudes.push("calm deadpan attitude");
-
-  const detailText = [...new Set(traits)].slice(0, 4).concat(attitudes.slice(0, 1)).join(", ");
-  const referenceRule = asset.filePath ? "use attached role reference as final design" : "";
-  return [detailText ? `${parts[0]}, ${detailText}` : parts[0], referenceRule].filter(Boolean).join(", ") + ".";
-}
-
-function buildEnglishNegativeRoleBrief(asset: AssetRow, source: string) {
-  if (!source) return "";
-  const name = clean(asset.name);
-  const lowerName = name.toLowerCase();
-  const constraints: string[] = [];
-
-  if (/leo/.test(lowerName) || /柠檬|lemon/i.test(source)) {
-    if (hasAnyText(source, [/青柠|绿色水果|绿色身体|lime|green/i])) constraints.push("do not make Leo a green lime or green fruit");
-    if (hasAnyText(source, [/Bob|橙子|orange/i])) constraints.push("do not make Leo orange like Bob");
+  if (asset.filePath) {
+    return isChinese ? `${identity}；最终造型以附加角色参考图为准。` : `${identity}; final design from attached role reference.`;
   }
-  if (/chloe/.test(lowerName) || /桃子|水蜜桃|peach/i.test(source)) {
-    if (hasAnyText(source, [/草莓|strawberry/i])) constraints.push("do not make Chloe a strawberry");
-  }
-  if (/bob/.test(lowerName) || /橙子|orange/i.test(source)) {
-    if (hasAnyText(source, [/桃子|水蜜桃|peach|柠檬|lemon/i])) constraints.push("do not make Bob a peach or lemon");
-  }
-  if (hasAnyText(source, [/普通人类|人类|human/i])) constraints.push("do not turn the fruit character into a normal human");
-  if (hasAnyText(source, [/省略|缺少|omit|missing/i])) constraints.push("do not omit the core identity markers");
-  if (hasAnyText(source, [/redesign|重新设计|发明|invent/i])) constraints.push("do not redesign the character");
-
-  return [...new Set(constraints)].slice(0, 4).join("; ");
+  return isChinese ? `${identity}。` : `${identity}.`;
 }
 
 function buildReferenceLines(assets: AssetRow[], isChinese: boolean) {
@@ -408,7 +359,7 @@ function buildReferenceLines(assets: AssetRow[], isChinese: boolean) {
   const source = referencedAssets.length ? referencedAssets : assets.slice(0, 12);
   return source.map((asset, index) => {
     const name = asset.name || (isChinese ? "未命名素材" : "Unnamed asset");
-    const maxLength = isRoleAsset(asset) ? 180 : 155;
+    const maxLength = isRoleAsset(asset) ? 120 : 155;
     return `${isChinese ? "参考" : "Ref"} ${index + 1}: ${name}. ${assetBrief(asset, isChinese, maxLength)}`;
   });
 }
@@ -455,7 +406,9 @@ function sanitizeRoleAppearanceCue(value: unknown, roleAssets: AssetRow[], isChi
   text = text
     .replace(/\b(?:yellow lemon character|peach character|peach heroine|orange fruit soldier)\b/gi, "")
     .replace(/\b(?:in a hoodie|in hoodie|wearing a hoodie|wearing hoodie)\b/gi, "")
+    .replace(/\b(?:tired half-lidded eyes|half-lidded eyes|bright yellow lemon|yellow lemon|pink-orange peach|peach silhouette|orange peel)\b/gi, "")
     .replace(/\s+([,.;|])/g, "$1")
+    .replace(/,\s*(?=,|$)/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 

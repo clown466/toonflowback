@@ -234,19 +234,11 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   const imageBase64List = (config.referenceList ?? []).map((r: any) => r.base64).filter(Boolean);
 
   const sizeMap: Record<string, Record<string, string>> = {
-    "1:1": { "1K": "1024x1024", "2K": "2048x2048", "4K": "4096x4096" },
-    "16:9": { "1K": "1024x576", "2K": "2048x1152", "4K": "4096x2304" },
-    "9:16": { "1K": "576x1024", "2K": "1152x2048", "4K": "2304x4096" },
+    "1:1": { "1K": "1024x1024", "2K": "2048x2048", "4K": "2880x2880" },
+    "16:9": { "1K": "1536x864", "2K": "2048x1152", "4K": "3840x2160" },
+    "9:16": { "1K": "864x1536", "2K": "1152x2048", "4K": "2160x3840" },
   };
-  const resolvedSize = sizeMap[config.aspectRatio]?.[config.size] || (config.aspectRatio === "9:16" ? "1024x1792" : "1792x1024");
-
-  const body: Record<string, any> = {
-    model: model.modelName,
-    prompt: config.prompt,
-    size: resolvedSize,
-    n: 1,
-  };
-  if (imageBase64List.length) body.image = imageBase64List.length === 1 ? imageBase64List[0] : imageBase64List;
+  const resolvedSize = sizeMap[config.aspectRatio]?.[config.size] || (config.aspectRatio === "9:16" ? "1024x1536" : "1536x1024");
 
   const pickImageResult = (data: any): string | undefined => {
     const first = data?.data?.[0] || data?.data || data;
@@ -259,27 +251,77 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     return `data:image/png;base64,${raw}`;
   };
 
-  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} refs=${imageBase64List.length}`);
+  const parseDataUrlImage = (base64: string, index: number) => {
+    const match = base64.match(/^data:(image\/[-+.\w]+);base64,(.+)$/);
+    const mime = match?.[1] || "image/png";
+    const payload = match?.[2] || base64.replace(/^data:[^;]+;base64,/, "");
+    const ext = mime.includes("jpeg") ? "jpg" : mime.split("/")[1]?.replace(/\W+/g, "") || "png";
+    return {
+      buffer: Buffer.from(payload, "base64"),
+      filename: `reference-${index + 1}.${ext}`,
+      contentType: mime,
+    };
+  };
+
+  const parseResponse = async (response: any, endpoint: string): Promise<string> => {
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(`custom1图片请求失败，接口: ${endpoint}, 状态码: ${response.status}, 错误信息: ${responseText}`);
+    }
+    let data: any;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error(`custom1图片响应不是JSON: ${responseText.slice(0, 500)}`);
+    }
+    const raw = pickImageResult(data);
+    if (!raw || typeof raw !== "string") {
+      throw new Error(`custom1图片响应中未找到图片URL/base64: ${JSON.stringify(data).slice(0, 800)}`);
+    }
+    return await normalizeImageResult(raw);
+  };
+
+  if (imageBase64List.length) {
+    const form = new FormData();
+    form.append("model", model.modelName);
+    form.append("prompt", config.prompt);
+    form.append("size", resolvedSize);
+    form.append("n", "1");
+    imageBase64List.forEach((base64, index) => {
+      const imageFile = parseDataUrlImage(base64, index);
+      form.append("image[]", imageFile.buffer, { filename: imageFile.filename, contentType: imageFile.contentType });
+    });
+    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} refs=${imageBase64List.length}`);
+    const response = await axios.post(`${baseUrl}/images/edits`, form, {
+      headers: { Authorization: `Bearer ${apiKey}`, ...form.getHeaders() },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      validateStatus: () => true,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`custom1图片请求失败，接口: /images/edits, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
+    }
+    const raw = pickImageResult(response.data);
+    if (!raw || typeof raw !== "string") {
+      throw new Error(`custom1图片响应中未找到图片URL/base64: ${JSON.stringify(response.data).slice(0, 800)}`);
+    }
+    return await normalizeImageResult(raw);
+  }
+
+  const body: Record<string, any> = {
+    model: model.modelName,
+    prompt: config.prompt,
+    size: resolvedSize,
+    n: 1,
+  };
+
+  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} refs=0`);
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const responseText = await response.text();
-  if (!response.ok) {
-    throw new Error(`custom1图片请求失败，状态码: ${response.status}, 错误信息: ${responseText}`);
-  }
-  let data: any;
-  try {
-    data = JSON.parse(responseText);
-  } catch {
-    throw new Error(`custom1图片响应不是JSON: ${responseText.slice(0, 500)}`);
-  }
-  const raw = pickImageResult(data);
-  if (!raw || typeof raw !== "string") {
-    throw new Error(`custom1图片响应中未找到图片URL/base64: ${JSON.stringify(data).slice(0, 800)}`);
-  }
-  return await normalizeImageResult(raw);
+  return await parseResponse(response, "/images/generations");
 };
 
 const videoRequest = async (config: VideoConfig, model: VideoModel): Promise<string> => {

@@ -507,7 +507,7 @@ export function buildChapterDirectorBoardPrompt(input: {
         "",
         "版式要求：",
         "顶部标题栏：写明导演板编号、总时长、覆盖镜头范围和项目名。",
-        "主体：按时间顺序排列 4-6 个竖向分镜卡。每张卡上半部分是彩色关键画面，下半部分是结构化文字表格。",
+        "主体：优先固定排列 6 个竖向分镜卡；不足 6 个镜头时保留空位，不要改变 16:9 横向整板比例。每张卡上半部分是彩色关键画面，下半部分是结构化文字表格。",
         "每张卡的文字字段：镜号、时间/时长、景别、镜头运动、画面、角色/位置、动作、情绪、环境/灯光、音效、对白。",
         "底部：连续性备注，列出角色位置变化、重要道具、光线方向、身份保持原则。",
         "",
@@ -608,7 +608,7 @@ export function buildChapterDirectorBoardPrompt(input: {
       "",
       "Layout:",
       "Top title bar: board number, total duration, covered shot range, and project title.",
-      "Main body: 4-6 vertical storyboard cards in timeline order. Each card has a colored keyframe thumbnail on top and a structured text table underneath.",
+      "Main body: exactly 6 vertical portrait storyboard cards in timeline order when six shots are available. If fewer than 6 shots are covered, leave empty slots instead of changing the wide 16:9 board ratio. Each card has a colored keyframe thumbnail on top and a structured text table underneath.",
       "Each card text fields: shot number, time/duration, framing, camera move, visual, characters/position, action, emotion, environment/lighting, sound, dialogue.",
       "Bottom strip: continuity notes listing character position changes, important props, light direction, and identity-preservation rules.",
       "",
@@ -839,7 +839,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
 
   const shotsPerBoard = Math.min(Math.max(Number(options.shotsPerBoard || 6), 1), 8);
   const chunks = chunkStoryboardsForDirectorBoards(storyboards, {
-    maxDuration: MAX_DIRECTOR_BOARD_DURATION_SECONDS,
+    maxDuration: boardType === "textStoryboard" ? Number.POSITIVE_INFINITY : MAX_DIRECTOR_BOARD_DURATION_SECONDS,
     maxShots: shotsPerBoard,
   });
   if (options.replace !== false) {
@@ -925,6 +925,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
   if (!model) throw new Error("项目未配置出图模型，无法重绘章节导演板。");
 
   await u.db("o_directorBoard").where("id", boardId).update({
+    name: `${boardType === "textStoryboard" ? "文字分镜导演板" : "章节导演板"} ${boardIndex + 1}/${totalBoards}`,
     prompt,
     filePath: null,
     state: "生成中",

@@ -85,6 +85,38 @@ export type DirectorBoardType = "continuity" | "textStoryboard";
 const MAX_DIRECTOR_BOARD_DURATION_SECONDS = 15;
 const DEFAULT_DIRECTOR_BOARD_TYPE: DirectorBoardType = "continuity";
 
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableDirectorBoardImageError(error: unknown) {
+  const message = u.error(error).message;
+  return /状态码:\s*(429|500|502|503|504|524)|\b(429|500|502|503|504|524)\b|do_request_failed|负载|饱和|稍后|timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|temporarily|rate limit/i.test(message);
+}
+
+async function runDirectorBoardImageTaskWithRetry(rowId: number, task: () => Promise<void>, maxAttempts = 3) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await task();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetryableDirectorBoardImageError(error)) break;
+      const delayMs = 15000 * attempt;
+      const reason = `${u.error(error).message}\n正在自动重试 ${attempt + 1}/${maxAttempts}，等待 ${Math.round(delayMs / 1000)} 秒。`;
+      await u.db("o_directorBoard").where("id", rowId).update({
+        state: "生成中",
+        reason,
+        updateTime: Date.now(),
+      });
+      console.warn(`[directorBoardGeneration] image request failed, retrying in ${delayMs}ms (${attempt}/${maxAttempts})`, u.error(error).message);
+      await wait(delayMs);
+    }
+  }
+  throw lastError;
+}
+
 function normalizeDirectorBoardType(value: unknown): DirectorBoardType {
   return value === "textStoryboard" ? "textStoryboard" : DEFAULT_DIRECTOR_BOARD_TYPE;
 }
@@ -681,32 +713,34 @@ async function runDirectorBoardImageTask(
   const { project, script, storyboards, assets, prompt, promptLanguage, model } = data;
   const savePath = `/${project.id}/directorBoard/${script.id}/${uuidv4()}.jpg`;
   try {
-    const finalPrompt = await normalizeDirectorBoardPromptLanguage(prompt, promptLanguage);
-    if (finalPrompt !== prompt) {
-      await u.db("o_directorBoard").where("id", rowId).update({
-        prompt: finalPrompt,
-        updateTime: Date.now(),
-      });
-    }
-    const image = await u.Ai.Image(model as `${string}:${string}`).run(
-      {
-        prompt: finalPrompt,
-        referenceList: await getAssetReferenceImages(assets),
-        size: (project.imageQuality || "1K") as "1K" | "2K" | "4K",
-        aspectRatio: "16:9",
-      },
-      {
-        taskClass: "章节导演板生成",
-        describe: "章节导演板生成",
-        relatedObjects: JSON.stringify({
+    await runDirectorBoardImageTaskWithRetry(rowId, async () => {
+      const finalPrompt = await normalizeDirectorBoardPromptLanguage(prompt, promptLanguage);
+      if (finalPrompt !== prompt) {
+        await u.db("o_directorBoard").where("id", rowId).update({
+          prompt: finalPrompt,
+          updateTime: Date.now(),
+        });
+      }
+      const image = await u.Ai.Image(model as `${string}:${string}`).run(
+        {
+          prompt: finalPrompt,
+          referenceList: await getAssetReferenceImages(assets),
+          size: (project.imageQuality || "1K") as "1K" | "2K" | "4K",
+          aspectRatio: "16:9",
+        },
+        {
+          taskClass: "章节导演板生成",
+          describe: "章节导演板生成",
+          relatedObjects: JSON.stringify({
+            projectId: project.id,
+            scriptId: script.id,
+            storyboardIds: storyboards.map((item) => item.id),
+          }),
           projectId: project.id,
-          scriptId: script.id,
-          storyboardIds: storyboards.map((item) => item.id),
-        }),
-        projectId: project.id,
-      },
-    );
-    await image.save(savePath);
+        },
+      );
+      await image.save(savePath);
+    });
     await u.db("o_directorBoard").where("id", rowId).update({
       filePath: savePath,
       state: "已完成",

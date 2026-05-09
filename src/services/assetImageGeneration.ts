@@ -128,7 +128,7 @@ function wait(ms: number) {
 
 function isRetryableImageError(error: unknown) {
   const message = u.error(error).message;
-  return /429|负载|饱和|稍后|timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|temporarily|rate limit/i.test(message);
+  return /状态码:\s*(429|500|502|503|504|524)|\b(429|500|502|503|504|524)\b|do_request_failed|负载|饱和|稍后|timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|temporarily|rate limit/i.test(message);
 }
 
 function notifyStatusChange(input: SubmitAssetImageGenerationInput, event: AssetImageGenerationStatusEvent) {

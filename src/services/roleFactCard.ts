@@ -39,6 +39,16 @@ function unique(items: string[]) {
   return [...new Set(items.map(clean).filter(Boolean))];
 }
 
+export function stripIdentityNegativeClauses(value: unknown) {
+  return clean(value)
+    .replace(/(?:不要|禁止|严禁|避免|不得|不能|不应|勿)[^。；;\n.]+[。；;\n.]?/g, " ")
+    .replace(/不是[^，。；;\n.]+[，。；;\n.]?/g, " ")
+    .replace(/\b(?:do\s+not|don't|never|avoid|must\s+not|should\s+not)\b[^.;\n]*/gi, " ")
+    .replace(/\bnot\s+(?:a|an|the)?\s*[^.;\n]*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseJsonObject(text: string): any | null {
   const cleaned = stripThink(text).replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
   try {
@@ -56,13 +66,19 @@ function parseJsonObject(text: string): any | null {
 
 function buildFallbackRoleFactCard(asset: AssetForRoleCard, sourceType: string): RoleFactCardDraft {
   const name = clean(asset.name) || "Unnamed role";
-  const source = [asset.name, asset.prompt, asset.describe].map(clean).filter(Boolean).join(" ");
-  const lowerName = name.toLowerCase();
+  const source = stripIdentityNegativeClauses([asset.prompt, asset.describe].map(clean).filter(Boolean).join(" "));
 
   let identity = "anthropomorphic character";
-  if (/chloe/.test(lowerName) || /桃子|水蜜桃|peach/i.test(source)) identity = "peach fruit woman";
-  else if (/bob/.test(lowerName) || /橙子|橙色果皮|orange/i.test(source)) identity = "stocky orange fruit soldier";
-  else if (/leo/.test(lowerName) || /柠檬|lemon/i.test(source)) identity = "yellow lemon fruit man";
+  if (/桃子|水蜜桃|peach/i.test(source)) identity = "peach fruit character";
+  else if (/草莓|strawberry/i.test(source)) identity = "strawberry fruit character";
+  else if (/柠檬|lemon/i.test(source)) identity = "yellow lemon fruit character";
+  else if (/橙子|橙色果皮|orange/i.test(source)) identity = /士兵|军装|军事|soldier|military/i.test(source) ? "orange fruit soldier" : "orange fruit character";
+  else if (/青柠|lime/i.test(source)) identity = "lime fruit character";
+  else if (/苹果|apple/i.test(source)) identity = "apple fruit character";
+  else if (/香蕉|banana/i.test(source)) identity = "banana fruit character";
+  else if (/葡萄|grape/i.test(source)) identity = "grape fruit character";
+  else if (/芒果|mango/i.test(source)) identity = "mango fruit character";
+  else if (/西瓜|watermelon/i.test(source)) identity = "watermelon fruit character";
   else if (/水果|果|fruit/i.test(source)) identity = "anthropomorphic fruit character";
 
   const features: string[] = [];
@@ -96,10 +112,12 @@ function buildFallbackRoleFactCard(asset: AssetForRoleCard, sourceType: string):
     factParts.length ? `Key visual facts: ${factParts.join("; ")}.` : "",
   ].filter(Boolean).join(" ");
 
-  const negative: string[] = ["do not redesign the character", "do not turn into a normal human"];
-  if (/leo/i.test(name) || /柠檬|lemon/i.test(source)) negative.push("do not make Leo a green lime", "do not make Leo orange like Bob");
-  if (/chloe/i.test(name) || /桃子|水蜜桃|peach/i.test(source)) negative.push("do not make Chloe a strawberry");
-  if (/bob/i.test(name) || /橙子|orange/i.test(source)) negative.push("do not make Bob a peach or lemon");
+  const negative: string[] = [
+    "preserve the uploaded/selected character identity",
+    "do not redesign the character",
+    "do not replace the species or object identity",
+    "do not change fixed outfit, silhouette, or key props",
+  ];
 
   return {
     facts,
@@ -153,12 +171,13 @@ async function inferRoleFactCardWithVision(asset: AssetForRoleCard, imageBase64:
     "You are creating a role fact card for an AI short-drama production pipeline.",
     "Read the uploaded character reference image as the highest visual authority.",
     "Return JSON only, with this schema:",
-    '{"facts":"English concise visual facts. Mention species/object identity, strongest colors/shapes, outfit, key prop, face/eye expression, silhouette markers. 45-90 words.","negativeFacts":"English constraints for what must not be changed or confused.","confidence":0.0}',
+    '{"facts":"English concise visual facts. Mention species/object identity, strongest colors/shapes, outfit, key prop, face/eye expression, silhouette markers. 45-90 words.","negativeFacts":"English generic preservation constraints. Do not list unrelated alternative species/object names.","confidence":0.0}',
     "",
     `Role name: ${name}`,
     context ? `Existing asset text:\n${context}` : "Existing asset text: empty",
     "",
     "Do not invent details that are not visible or not supported by the existing asset text.",
+    "For negativeFacts, do not write examples such as 'not X fruit' or name any unrelated species. Only say to preserve the referenced identity, outfit, silhouette, and key props.",
   ].join("\n");
 
   const result = await u.Ai.Text("universalAi").invoke({

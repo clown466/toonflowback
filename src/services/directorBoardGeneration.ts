@@ -309,7 +309,7 @@ function nameKey(value: unknown) {
 function assetBrief(asset: AssetRow, isChinese: boolean, maxLength = 155) {
   const source = [asset.roleFacts, asset.prompt, asset.describe].map(clean).filter(Boolean).join(" ");
   if (isRoleAsset(asset)) {
-    return compact(buildMinimalRoleBrief(asset, source, isChinese), maxLength);
+    return compact(buildMinimalRoleBrief(asset, stripIdentityNegativeClauses(source), isChinese), maxLength);
   }
   const brief = firstReadableClause(source, maxLength);
   if (brief) {
@@ -336,13 +336,28 @@ function hasAnyText(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+export function stripIdentityNegativeClauses(value: unknown) {
+  return clean(value)
+    .replace(/(?:不要|禁止|严禁|避免|不得|不能|不应|勿)[^。；;\n.]+[。；;\n.]?/g, " ")
+    .replace(/不是[^，。；;\n.]+[，。；;\n.]?/g, " ")
+    .replace(/\b(?:do\s+not|don't|never|avoid|must\s+not|should\s+not)\b[^.;\n]*/gi, " ")
+    .replace(/\bnot\s+(?:a|an|the)?\s*[^.;\n]*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function buildMinimalRoleBrief(asset: AssetRow, source: string, isChinese: boolean) {
-  const name = clean(asset.name);
-  const lowerName = name.toLowerCase();
   let identity: string;
-  if (/leo/.test(lowerName) || /柠檬|lemon/i.test(source)) identity = isChinese ? "明亮的黄色柠檬形象" : "a bright yellow lemon figure";
-  else if (/chloe/.test(lowerName) || /桃子|水蜜桃|peach/i.test(source)) identity = isChinese ? "水蜜桃角色形象" : "a peach figure";
-  else if (/bob/.test(lowerName) || /橙子|橙色果皮|orange/i.test(source)) identity = isChinese ? "橙子士兵形象" : "an orange soldier figure";
+  if (/桃子|水蜜桃|peach/i.test(source)) identity = isChinese ? "水蜜桃角色形象" : "a peach figure";
+  else if (/草莓|strawberry/i.test(source)) identity = isChinese ? "草莓角色形象" : "a strawberry figure";
+  else if (/柠檬|lemon/i.test(source)) identity = isChinese ? "明亮的黄色柠檬形象" : "a bright yellow lemon figure";
+  else if (/橙子|橙色果皮|orange/i.test(source)) identity = /士兵|军装|军事|soldier|military/i.test(source) ? (isChinese ? "橙子士兵形象" : "an orange soldier figure") : (isChinese ? "橙子角色形象" : "an orange figure");
+  else if (/青柠|lime/i.test(source)) identity = isChinese ? "青柠角色形象" : "a lime figure";
+  else if (/苹果|apple/i.test(source)) identity = isChinese ? "苹果角色形象" : "an apple figure";
+  else if (/香蕉|banana/i.test(source)) identity = isChinese ? "香蕉角色形象" : "a banana figure";
+  else if (/葡萄|grape/i.test(source)) identity = isChinese ? "葡萄角色形象" : "a grape figure";
+  else if (/芒果|mango/i.test(source)) identity = isChinese ? "芒果角色形象" : "a mango figure";
+  else if (/西瓜|watermelon/i.test(source)) identity = isChinese ? "西瓜角色形象" : "a watermelon figure";
   else if (/zombie|丧尸/i.test(source)) identity = isChinese ? "丧尸角色形象" : "a zombie figure";
   else if (/monster|怪物/i.test(source)) identity = isChinese ? "怪物角色形象" : "a monster figure";
   else if (/水果|果|fruit/i.test(source)) identity = isChinese ? "拟人化水果形象" : "an anthropomorphic fruit figure";
@@ -491,13 +506,13 @@ export function buildChapterDirectorBoardPrompt(input: {
         "顶部标题栏：写明导演板编号、总时长、覆盖镜头范围和项目名。",
         "主体：按时间顺序排列 4-6 个竖向分镜卡。每张卡上半部分是彩色关键画面，下半部分是结构化文字表格。",
         "每张卡的文字字段：镜号、时间/时长、景别、镜头运动、画面、角色/位置、动作、情绪、环境/灯光、音效、对白。",
-        "底部：连续性备注，列出角色位置变化、重要道具、光线方向、禁止误读。",
+        "底部：连续性备注，列出角色位置变化、重要道具、光线方向、身份保持原则。",
         "",
         "画面风格：",
         "像导演工作台上的精致分镜板，深色或浅色纸张均可，清晰网格、细线分隔、可读小字、电影化彩色缩略图。",
         "场景必须是彩色的，并尽量参考场景资产；角色可以简化，但必须用 C编号+名称+高对比色标记，不能分不清谁是谁。",
         "角色外观只取最显著身份符号：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
-        "角色事实卡和参考图是身份最高依据；不要把柠檬画成青柠，不要把水蜜桃画成草莓，不要发明新角色设计。",
+        "角色事实卡和参考图是身份最高依据；保持每个角色的物种/物体身份、固定造型、服装、轮廓和关键道具，不要发明新角色设计。",
         "分镜的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
         "所有可见文字统一使用中文；角色名、C编号和必要专有名词可保留原文。",
         "不要画成漫画页、海报或软件 UI 截图。",
@@ -545,7 +560,7 @@ export function buildChapterDirectorBoardPrompt(input: {
       "角色只画成简单铅笔/马克笔符号或剪影，不画精细脸部和最终角色立绘。",
       "每次角色出现都在旁边标 C编号+名称，例如 C1 Chloe；同一角色全图使用同一个高对比色标记。",
       "用最明显的身份符号区分角色：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
-      "角色事实卡和角色参考图只用于识别身份符号；不要把柠檬画成青柠，不要把水蜜桃画成草莓，不要发明新角色设计。",
+      "角色事实卡和角色参考图只用于识别身份符号；保持每个角色的物种/物体身份、固定造型、服装、轮廓和关键道具，不要发明新角色设计。",
       "覆盖镜头里的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
       "场景参考图用于确定环境布局、色彩、入口、桌面、墙面、灯光和道具。",
       "画面文字保持简短可读，并统一使用中文；角色名、C编号和必要专有名词可保留原文。",
@@ -590,13 +605,13 @@ export function buildChapterDirectorBoardPrompt(input: {
       "Top title bar: board number, total duration, covered shot range, and project title.",
       "Main body: 4-6 vertical storyboard cards in timeline order. Each card has a colored keyframe thumbnail on top and a structured text table underneath.",
       "Each card text fields: shot number, time/duration, framing, camera move, visual, characters/position, action, emotion, environment/lighting, sound, dialogue.",
-      "Bottom strip: continuity notes listing character position changes, important props, light direction, and negative constraints.",
+      "Bottom strip: continuity notes listing character position changes, important props, light direction, and identity-preservation rules.",
       "",
       "Image style:",
       "polished director's storyboard sheet on paper, clear grid, thin dividers, readable small typography, cinematic colored thumbnails.",
       "Scenes must be colored and should follow scene references. Characters may be simplified, but each character must be identifiable with C-number + name + high-contrast color marker.",
       "Use only the strongest character identity symbols: fruit/species color, body scale, fixed outfit, key prop, weapon, or tool.",
-      "Role fact cards and role references are the highest authority for identity. Do not turn lemon into lime, peach into strawberry, or invent a new final design.",
+      "Role fact cards and role references are the highest authority for identity. Preserve each character's species/object identity, fixed outfit, silhouette, key prop, and final referenced design.",
       "Storyboard composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
       "Do not make a comic page, poster, software UI screenshot, or final video frame.",
       "",
@@ -649,7 +664,7 @@ export function buildChapterDirectorBoardPrompt(input: {
     "The environment should be colored and readable. Characters should be simplified but clearly identifiable by fruit shape, color, label, and prop.",
     "Use only short character labels: C1 Name, C2 Name, C3 Name. Do not write long paragraphs inside the image.",
     "All visible text must be English only. Do not use subtitles, UI, watermark, or dense text.",
-    "Do not redesign the characters. Do not turn lemon into lime, peach into strawberry, or a fruit character into a human.",
+    "Do not redesign the characters. Preserve each character's species/object identity, fixed outfit, silhouette, key prop, and final referenced design.",
     "Covered-shot composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
     "",
     "Character labels:",

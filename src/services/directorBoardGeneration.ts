@@ -131,6 +131,10 @@ function clean(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function firstReadableClause(value: unknown, maxLength = 155) {
   const text = clean(value)
     .replace(/[#*_`>]+/g, "")
@@ -371,8 +375,9 @@ function buildEnglishRoleBrief(asset: AssetRow, source: string) {
   if (hasAnyText(source, [/严肃|警觉|practical|tense/i])) attitudes.push("tense and practical");
   if (hasAnyText(source, [/冷静|吐槽|疲倦|deadpan|calm/i])) attitudes.push("calm deadpan attitude");
 
-  const detailText = [...new Set(traits)].slice(0, 7).concat(attitudes.slice(0, 1)).join(", ");
-  return detailText ? `${parts[0]}, ${detailText}.` : `${parts[0]}.`;
+  const detailText = [...new Set(traits)].slice(0, 4).concat(attitudes.slice(0, 1)).join(", ");
+  const referenceRule = asset.filePath ? "use attached role reference as final design" : "";
+  return [detailText ? `${parts[0]}, ${detailText}` : parts[0], referenceRule].filter(Boolean).join(", ") + ".";
 }
 
 function buildEnglishNegativeRoleBrief(asset: AssetRow, source: string) {
@@ -403,7 +408,7 @@ function buildReferenceLines(assets: AssetRow[], isChinese: boolean) {
   const source = referencedAssets.length ? referencedAssets : assets.slice(0, 12);
   return source.map((asset, index) => {
     const name = asset.name || (isChinese ? "未命名素材" : "Unnamed asset");
-    const maxLength = isRoleAsset(asset) ? 260 : 155;
+    const maxLength = isRoleAsset(asset) ? 180 : 155;
     return `${isChinese ? "参考" : "Ref"} ${index + 1}: ${name}. ${assetBrief(asset, isChinese, maxLength)}`;
   });
 }
@@ -413,6 +418,56 @@ function buildCharacterLabelLines(assets: AssetRow[], isChinese: boolean) {
     const name = asset.name || (isChinese ? "未命名角色" : "Unnamed character");
     return `C${index + 1} ${name}`;
   });
+}
+
+const ENGLISH_ACTION_VERBS =
+  "holding|holds|hold|wiping|wipes|wipe|raising|raises|raise|standing|stands|stand|sitting|sits|sit|walking|walks|walk|running|runs|run|turning|turns|turn|moving|moves|move|entering|enters|enter|leaning|leans|lean|recoiling|recoils|recoil|pointing|points|point|closing|closes|close|slamming|slams|slam|gesturing|gestures|gesture|looking|looks|look|watching|watches|watch|asking|asks|ask|squeezed|crossed|smirking|smirks";
+
+const CHINESE_ACTION_VERBS =
+  "拿着|握着|擦拭|抬眼|抬头|站着|站立|坐着|走向|进入|转身|靠近|后仰|指向|关闭|合上|拍下|猛拍|做手势|看向|询问|挤在|交叉双臂|坏笑";
+
+function sanitizeRoleAppearanceCue(value: unknown, roleAssets: AssetRow[], isChinese: boolean) {
+  let text = clean(value);
+  if (!text) return "";
+
+  roleAssets.forEach((asset, index) => {
+    const name = clean(asset.name);
+    if (!name) return;
+    const label = `C${index + 1} ${name}`;
+    const escapedName = escapeRegExp(name);
+
+    if (isChinese) {
+      const actionPattern = new RegExp(`${escapedName}[^,，。；;|]{0,80}?(${CHINESE_ACTION_VERBS})`, "gi");
+      text = text.replace(actionPattern, `${label}$1`);
+      const appearancePattern = new RegExp(`${escapedName}(?:的)?(?:黄色柠檬|水蜜桃|桃子|橙子|拟人化|角色|人物|士兵|英雄|剪影|穿[^,，。；;|]{1,30})+`, "gi");
+      text = text.replace(appearancePattern, label);
+    } else {
+      const actionPattern = new RegExp(`\\b${escapedName}\\b[^,.;|]{0,90}?\\b(${ENGLISH_ACTION_VERBS})\\b`, "gi");
+      text = text.replace(actionPattern, `${label} $1`);
+      const appearancePattern = new RegExp(
+        `\\b${escapedName}\\b\\s+(?:yellow\\s+lemon|peach|orange|fruit|anthropomorphic|cartoon|character|hero(?:ine)?|soldier|silhouette|in\\s+[^,.;|]{1,35}|wearing\\s+[^,.;|]{1,35})+`,
+        "gi",
+      );
+      text = text.replace(appearancePattern, label);
+    }
+  });
+
+  text = text
+    .replace(/\b(?:yellow lemon character|peach character|peach heroine|orange fruit soldier)\b/gi, "")
+    .replace(/\b(?:in a hoodie|in hoodie|wearing a hoodie|wearing hoodie)\b/gi, "")
+    .replace(/\s+([,.;|])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return text;
+}
+
+function buildShotVisualCue(shot: StoryboardRow, roleAssets: AssetRow[], isChinese: boolean) {
+  const sanitizedPrompt = sanitizeRoleAppearanceCue(shot.prompt, roleAssets, isChinese);
+  if (sanitizedPrompt) return compact(sanitizedPrompt, 220);
+  return isChinese
+    ? "仅按镜头动作、构图、场景和道具理解；角色最终外观以角色参考图为准。"
+    : "Use only shot composition, action, scene, and props; final character appearance comes from the role references.";
 }
 
 export function buildChapterDirectorBoardPrompt(input: {
@@ -429,6 +484,7 @@ export function buildChapterDirectorBoardPrompt(input: {
   const language = input.language || detectDirectorBoardPromptLanguage({ project, script, storyboards });
   const boardType = normalizeDirectorBoardType(input.boardType);
   const isChinese = language === "chinese";
+  const roleAssets = assets.filter(isRoleAsset);
   const startSecond = storyboards.reduce((sum, shot, index) => (index === 0 ? 0 : sum + parseDuration(storyboards[index - 1]?.duration)), 0);
   let cursor = startSecond;
   const shotLines = storyboards.map((shot) => {
@@ -439,7 +495,7 @@ export function buildChapterDirectorBoardPrompt(input: {
       `${isChinese ? "镜头" : "Shot"} ${String((shot.index ?? 0) + 1).padStart(2, "0")}`,
       `${isChinese ? "时间" : "time"}=${start}-${cursor}s`,
       `${isChinese ? "动作" : "action"}=${compact(shot.videoDesc, 320)}`,
-      `${isChinese ? "画面线索" : "visual cue"}=${compact(shot.prompt, 220)}`,
+      `${isChinese ? "构图动作线索" : "composition/action cue"}=${buildShotVisualCue(shot, roleAssets, isChinese)}`,
       boardType === "textStoryboard" ? `${isChinese ? "时长" : "duration"}=${duration}s` : "",
     ].filter(Boolean).join(" | ");
   });
@@ -489,6 +545,7 @@ export function buildChapterDirectorBoardPrompt(input: {
         "场景必须是彩色的，并尽量参考场景资产；角色可以简化，但必须用 C编号+名称+高对比色标记，不能分不清谁是谁。",
         "角色外观只取最显著身份符号：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
         "角色事实卡和参考图是身份最高依据；不要把柠檬画成青柠，不要把水蜜桃画成草莓，不要发明新角色设计。",
+        "分镜的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
         "所有可见文字统一使用中文；角色名、C编号和必要专有名词可保留原文。",
         "不要画成漫画页、海报或软件 UI 截图。",
         "",
@@ -536,6 +593,7 @@ export function buildChapterDirectorBoardPrompt(input: {
       "每次角色出现都在旁边标 C编号+名称，例如 C1 Chloe；同一角色全图使用同一个高对比色标记。",
       "用最明显的身份符号区分角色：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
       "角色事实卡和角色参考图只用于识别身份符号；不要把柠檬画成青柠，不要把水蜜桃画成草莓，不要发明新角色设计。",
+      "覆盖镜头里的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
       "场景参考图用于确定环境布局、色彩、入口、桌面、墙面、灯光和道具。",
       "画面文字保持简短可读，并统一使用中文；角色名、C编号和必要专有名词可保留原文。",
       "不要在图里写长段落；角色只用短标签：C1 名称、C2 名称、C3 名称。",
@@ -586,6 +644,7 @@ export function buildChapterDirectorBoardPrompt(input: {
       "Scenes must be colored and should follow scene references. Characters may be simplified, but each character must be identifiable with C-number + name + high-contrast color marker.",
       "Use only the strongest character identity symbols: fruit/species color, body scale, fixed outfit, key prop, weapon, or tool.",
       "Role fact cards and role references are the highest authority for identity. Do not turn lemon into lime, peach into strawberry, or invent a new final design.",
+      "Storyboard composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
       "Do not make a comic page, poster, software UI screenshot, or final video frame.",
       "",
       "Project:",
@@ -638,6 +697,7 @@ export function buildChapterDirectorBoardPrompt(input: {
     "Use only short character labels: C1 Name, C2 Name, C3 Name. Do not write long paragraphs inside the image.",
     "All visible text must be English only. Do not use subtitles, UI, watermark, or dense text.",
     "Do not redesign the characters. Do not turn lemon into lime, peach into strawberry, or a fruit character into a human.",
+    "Covered-shot composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
     "",
     "Character labels:",
     characterLabelLines.length ? characterLabelLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",

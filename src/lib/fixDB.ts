@@ -74,6 +74,23 @@ export default async (knex: Knex): Promise<void> => {
     });
   }
 
+  if (!(await knex.schema.hasTable("o_roleFactCards"))) {
+    await knex.schema.createTable("o_roleFactCards", (table) => {
+      table.text("id").notNullable();
+      table.integer("projectId").notNullable();
+      table.integer("assetId");
+      table.text("roleName").notNullable();
+      table.text("facts").notNullable();
+      table.text("negativeFacts");
+      table.text("sourceType").notNullable();
+      table.float("confidence").defaultTo(0);
+      table.integer("createdAt").notNullable();
+      table.integer("updatedAt").notNullable();
+      table.primary(["id"]);
+      table.unique(["id"]);
+    });
+  }
+
   const addColumn = async (table: string, column: string, type: string) => {
     if (!(await knex.schema.hasTable(table))) return;
     if (!(await knex.schema.hasColumn(table, column))) {
@@ -135,6 +152,9 @@ export default async (knex: Knex): Promise<void> => {
   await addColumn("o_vendorConfig", "hiddenModels", "text");
   await addColumn("o_directorBoard", "flowId", "integer");
   await addColumn("o_directorBoard", "boardType", "text");
+  await addColumn("o_roleFactCards", "assetId", "integer");
+  await addColumn("o_roleFactCards", "negativeFacts", "text");
+  await addColumn("o_roleFactCards", "confidence", "float");
 
   const baseAgentList = [
     {

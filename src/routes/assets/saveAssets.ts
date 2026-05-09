@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { error, success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
 import sharp from "sharp";
+import { queueRoleFactCardVisionRefresh, syncRoleFactCardFallback, type SyncRoleFactCardResult } from "@/services/roleFactCard";
 const router = express.Router();
 
 // 保存资产图片
@@ -20,6 +21,7 @@ export default router.post(
   }),
   async (req, res) => {
     const { id, base64, type, prompt, projectId, imageId } = req.body;
+    let roleFactCardResult: SyncRoleFactCardResult | null = null;
     if (base64) {
       //自定义上传选择的图片
       const matches = base64.match(/^data:image\/\w+;base64,(.+)$/);
@@ -49,6 +51,10 @@ export default router.post(
           prompt: prompt ?? "",
           imageId: idData,
         });
+      if (type === "role") {
+        roleFactCardResult = await syncRoleFactCardFallback(id, projectId);
+        queueRoleFactCardVisionRefresh(id, projectId, `data:image/png;base64,${imageBuffer.toString("base64")}`);
+      }
     } else {
       await u
         .db("o_assets")
@@ -57,7 +63,11 @@ export default router.post(
           prompt: prompt ?? "",
           imageId: imageId,
         });
+      if (type === "role") {
+        roleFactCardResult = await syncRoleFactCardFallback(id, projectId);
+        queueRoleFactCardVisionRefresh(id, projectId);
+      }
     }
-    res.status(200).send(success({ message: "保存资产图片成功" }));
+    res.status(200).send(success({ message: "保存资产图片成功", roleFactCard: roleFactCardResult?.card ?? null }));
   },
 );

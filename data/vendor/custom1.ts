@@ -54,7 +54,14 @@ interface VendorConfig {
   author: string; //作者
   description?: string; //描述，支持Markdown格式
   icon?: string; //图标，仅支持Base64格式，建议尺寸为128x128像素
-  inputs: { key: string; label: string; type: "text" | "password" | "url"; required: boolean; placeholder?: string }[];
+  inputs: {
+    key: string;
+    label: string;
+    type: "text" | "password" | "url" | "select";
+    required: boolean;
+    placeholder?: string;
+    options?: { label: string; value: string }[];
+  }[];
   inputValues: Record<string, string>;
   models: (TextModel | ImageModel | VideoModel | TTSModel)[];
 }
@@ -140,8 +147,21 @@ const vendor: VendorConfig = {
   inputs: [
     { key: "apiKey", label: "API密钥", type: "password", required: true },
     { key: "baseUrl", label: "请求地址", type: "url", required: true, placeholder: "示例：https://api.openai.com/v1" },
+    {
+      key: "imageQuality",
+      label: "GPT Image 质量",
+      type: "select",
+      required: false,
+      placeholder: "uocode 若不支持 high，请选择 auto",
+      options: [
+        { label: "自动 auto", value: "auto" },
+        { label: "低 low", value: "low" },
+        { label: "中 medium", value: "medium" },
+        { label: "高 high", value: "high" },
+      ],
+    },
   ],
-  inputValues: { apiKey: "", baseUrl: "https://api.openai.com/v1" },
+  inputValues: { apiKey: "", baseUrl: "https://api.openai.com/v1", imageQuality: "auto" },
   models: [{ name: "GPT-4o", modelName: "gpt-4o", type: "text", think: false }],
 };
 
@@ -239,6 +259,9 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     "9:16": { "1K": "864x1536", "2K": "1152x2048", "4K": "2160x3840" },
   };
   const resolvedSize = sizeMap[config.aspectRatio]?.[config.size] || (config.aspectRatio === "9:16" ? "1024x1536" : "1536x1024");
+  const qualityValue = String(vendor.inputValues.imageQuality || "auto").trim().toLowerCase();
+  const resolvedQuality = ["low", "medium", "high", "auto"].includes(qualityValue) ? qualityValue : "auto";
+  const shouldSendQuality = /^gpt-image/i.test(model.modelName);
 
   const pickImageResult = (data: any): string | undefined => {
     const first = data?.data?.[0] || data?.data || data;
@@ -287,11 +310,12 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     form.append("prompt", config.prompt);
     form.append("size", resolvedSize);
     form.append("n", "1");
+    if (shouldSendQuality) form.append("quality", resolvedQuality);
     imageBase64List.forEach((base64, index) => {
       const imageFile = parseDataUrlImage(base64, index);
       form.append("image[]", imageFile.buffer, { filename: imageFile.filename, contentType: imageFile.contentType });
     });
-    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} refs=${imageBase64List.length}`);
+    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageBase64List.length}`);
     const response = await axios.post(`${baseUrl}/images/edits`, form, {
       headers: { Authorization: `Bearer ${apiKey}`, ...form.getHeaders() },
       maxBodyLength: Infinity,
@@ -314,8 +338,9 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     size: resolvedSize,
     n: 1,
   };
+  if (shouldSendQuality) body.quality = resolvedQuality;
 
-  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} refs=0`);
+  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${body.quality || "default"} refs=0`);
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },

@@ -14,9 +14,10 @@ export default router.post("/", async (req, res) => {
           await u.db("o_vendorConfig").where("id", item.id).delete();
           return null
         };
+        const savedInputValues = JSON.parse(item.inputValues ?? "{}");
         return {
           ...item,
-          inputValues: JSON.parse(item.inputValues ?? "{}"),
+          inputValues: { ...(vendor.inputValues ?? {}), ...savedInputValues },
           models: await u.vendor.getModelList(item.id!),
           code: u.vendor.getCode(item.id!),
           description: vendor.description ?? "",

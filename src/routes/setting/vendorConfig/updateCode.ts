@@ -17,9 +17,10 @@ const vendorConfigSchema = z.object({
     z.object({
       key: z.string(),
       label: z.string(),
-      type: z.enum(["text", "password", "url"]),
+      type: z.enum(["text", "password", "url", "select"]),
       required: z.boolean(),
       placeholder: z.string().optional(),
+      options: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
     }),
   ),
   inputValues: z.record(z.string(), z.string()),

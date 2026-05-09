@@ -1,4 +1,4 @@
-// @routes-hash 753febe0eae16d3b37a59ce9da8a8998
+// @routes-hash e1f79a88c82b9da0272d64cb078eeafb
 import { Express } from "express";
 
 import route1 from "./routes/agents/clearMemory";
@@ -165,13 +165,13 @@ import route161 from "./routes/setting/vendorConfig/modelTest/textTest";
 import route162 from "./routes/setting/vendorConfig/modelTest/videoTest";
 import route163 from "./routes/setting/vendorConfig/updateCode";
 import route164 from "./routes/setting/vendorConfig/updateVendorInputs";
-import route165 from "./routes/setting/vendorConfig/upVendorModel";
-import route166 from "./routes/task/getProject";
-import route167 from "./routes/task/getTaskApi";
-import route168 from "./routes/task/getTaskCategories";
-import route169 from "./routes/task/taskDetails";
-import route170 from "./routes/test/test";
-import route171 from "./routes/production/directorBoard/updateUrl";
+import route165 from "./routes/setting/vendorConfig/updateVendorName";
+import route166 from "./routes/setting/vendorConfig/upVendorModel";
+import route167 from "./routes/task/getProject";
+import route168 from "./routes/task/getTaskApi";
+import route169 from "./routes/task/getTaskCategories";
+import route170 from "./routes/task/taskDetails";
+import route171 from "./routes/test/test";
 
 export default async (app: Express) => {
   app.use("/api/agents/clearMemory", route1);
@@ -338,11 +338,11 @@ export default async (app: Express) => {
   app.use("/api/setting/vendorConfig/modelTest/videoTest", route162);
   app.use("/api/setting/vendorConfig/updateCode", route163);
   app.use("/api/setting/vendorConfig/updateVendorInputs", route164);
-  app.use("/api/setting/vendorConfig/upVendorModel", route165);
-  app.use("/api/task/getProject", route166);
-  app.use("/api/task/getTaskApi", route167);
-  app.use("/api/task/getTaskCategories", route168);
-  app.use("/api/task/taskDetails", route169);
-  app.use("/api/test/test", route170);
-  app.use("/api/production/directorBoard/updateUrl", route171);
+  app.use("/api/setting/vendorConfig/updateVendorName", route165);
+  app.use("/api/setting/vendorConfig/upVendorModel", route166);
+  app.use("/api/task/getProject", route167);
+  app.use("/api/task/getTaskApi", route168);
+  app.use("/api/task/getTaskCategories", route169);
+  app.use("/api/task/taskDetails", route170);
+  app.use("/api/test/test", route171);
 }

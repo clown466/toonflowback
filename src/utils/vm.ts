@@ -12,6 +12,7 @@ import { createXai } from "@ai-sdk/xai";
 import { createMinimax } from "vercel-minimax-ai-provider";
 import FormData from "form-data";
 import jsonwebtoken from "jsonwebtoken";
+import crypto from "node:crypto";
 import u from "@/utils";
 export default function runCode(code: string, vendor?: Record<string, any>) {
   code = code.replace(/export\s*\{\s*\};?/g, ""); // 去掉 export {} 以免沙盒环境报错
@@ -30,6 +31,7 @@ export default function runCode(code: string, vendor?: Record<string, any>) {
     zipImage,
     zipImageResolution,
     urlToBase64,
+    base64ToPublicUrl,
     mergeImages,
     pollTask,
     fetch: fetch,
@@ -84,6 +86,34 @@ export async function urlToBase64(url: string): Promise<string> {
   const mime = res.headers["content-type"] || "image/jpeg";
   const b64 = Buffer.from(res.data).toString("base64");
   return `data:${mime};base64,${b64}`;
+}
+
+export async function base64ToPublicUrl(completeBase64: string, mediaType = "image", publicBaseUrl = ""): Promise<string> {
+  const match = String(completeBase64 || "").match(/^data:([^;]+);base64,(.+)$/);
+  const mime = match?.[1] || (mediaType === "audio" ? "audio/mpeg" : mediaType === "video" ? "video/mp4" : "image/png");
+  const payload = match?.[2] || String(completeBase64 || "").replace(/^data:[^;]+;base64,/, "");
+  const extMap: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "video/mp4": "mp4",
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/wav": "wav",
+  };
+  const ext = extMap[mime] || mime.split("/")[1]?.replace(/\W+/g, "") || "bin";
+  const filename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+  const relPath = `vendor-references/${filename}`;
+  await u.oss.writeFile(relPath, Buffer.from(payload, "base64"));
+  if (publicBaseUrl.trim()) {
+    return `${publicBaseUrl.replace(/\/+$/, "")}/oss/${relPath}`;
+  }
+  const publicUrl = await u.oss.getFileUrl(relPath);
+  if (!/^https?:\/\//i.test(publicUrl)) {
+    throw new Error("当前未配置 OSSURL，无法向中转站提供公开参考图 URL。请把 OSSURL 设置为可公网访问的 Toonflow 地址后重启，或将自定义模型的参考图传输方式改回 multipart。");
+  }
+  return publicUrl;
 }
 
 export async function pollTask(

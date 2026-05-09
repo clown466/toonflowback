@@ -114,6 +114,7 @@ declare const zipImage: (base64: string, size: number) => Promise<string>; // �
 declare const zipImageResolution: (base64: string, w: number, h: number) => Promise<string>; // 图片分辨率调整函数，返回有头base64字符串
 declare const mergeImages: (base64Arr: string[], maxSize?: string) => Promise<string>; // 图片合成函数，返回有头base64字符串
 declare const urlToBase64: (url: string) => Promise<string>; // URL转Base64函数，返回有头base64字符串
+declare const base64ToPublicUrl: (base64: string, mediaType?: string, publicBaseUrl?: string) => Promise<string>; // Base64转公开URL，用于只接受公网图链的中转站
 declare const pollTask: (fn: () => Promise<PollResult>, interval?: number, timeout?: number) => Promise<PollResult>; // 轮询函数，fn为异步函数，interval为轮询间隔，timeout为超时时间，返回fn的结果
 declare const createOpenAI: any;
 declare const createDeepSeek: any;
@@ -160,8 +161,21 @@ const vendor: VendorConfig = {
         { label: "高 high", value: "high" },
       ],
     },
+    {
+      key: "imageReferenceTransport",
+      label: "参考图传输方式",
+      type: "select",
+      required: false,
+      placeholder: "中转站要求公网图链时选择公开 URL",
+      options: [
+        { label: "文件上传 multipart", value: "multipart" },
+        { label: "公开 URL JSON", value: "publicUrlJson" },
+        { label: "公开 URL 表单", value: "publicUrlForm" },
+      ],
+    },
+    { key: "publicOssBaseUrl", label: "公开资源地址", type: "url", required: false, placeholder: "示例：http://你的服务器:10588" },
   ],
-  inputValues: { apiKey: "", baseUrl: "https://api.openai.com/v1", imageQuality: "high" },
+  inputValues: { apiKey: "", baseUrl: "https://api.openai.com/v1", imageQuality: "high", imageReferenceTransport: "multipart", publicOssBaseUrl: "" },
   models: [{ name: "GPT-4o", modelName: "gpt-4o", type: "text", think: false }],
 };
 
@@ -190,6 +204,7 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   const qualityValue = String(vendor.inputValues.imageQuality || "high").trim().toLowerCase();
   const resolvedQuality = ["low", "medium", "high", "auto"].includes(qualityValue) ? qualityValue : "high";
   const shouldSendQuality = /^gpt-image/i.test(model.modelName);
+  const referenceTransport = String(vendor.inputValues.imageReferenceTransport || "multipart");
 
   const pickImageResult = (data: any): string | undefined => {
     const first = data?.data?.[0] || data?.data || data;
@@ -231,6 +246,60 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     }
     return await normalizeImageResult(raw);
   };
+
+  if (imageBase64List.length && referenceTransport === "publicUrlJson") {
+    const imageUrls = await Promise.all(imageBase64List.map((base64) => base64ToPublicUrl(base64, "image", vendor.inputValues.publicOssBaseUrl || "")));
+    const body: Record<string, any> = {
+      model: model.modelName,
+      prompt: config.prompt,
+      size: resolvedSize,
+      n: 1,
+      image: imageUrls.length === 1 ? imageUrls[0] : imageUrls,
+      image_urls: imageUrls,
+    };
+    if (shouldSendQuality) body.quality = resolvedQuality;
+    logger(`[custom3 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=publicUrlJson`);
+    const response = await axios.post(`${baseUrl}/images/edits`, body, {
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      validateStatus: () => true,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`custom3图片请求失败，接口: /images/edits, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
+    }
+    const raw = pickImageResult(response.data);
+    if (!raw || typeof raw !== "string") {
+      throw new Error(`custom3图片响应中未找到图片URL/base64: ${JSON.stringify(response.data).slice(0, 800)}`);
+    }
+    return await normalizeImageResult(raw);
+  }
+
+  if (imageBase64List.length && referenceTransport === "publicUrlForm") {
+    const imageUrls = await Promise.all(imageBase64List.map((base64) => base64ToPublicUrl(base64, "image", vendor.inputValues.publicOssBaseUrl || "")));
+    const form = new FormData();
+    form.append("model", model.modelName);
+    form.append("prompt", config.prompt);
+    form.append("size", resolvedSize);
+    form.append("n", "1");
+    if (shouldSendQuality) form.append("quality", resolvedQuality);
+    imageUrls.forEach((url) => form.append("image[]", url));
+    logger(`[custom3 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=publicUrlForm`);
+    const response = await axios.post(`${baseUrl}/images/edits`, form, {
+      headers: { Authorization: `Bearer ${apiKey}`, ...form.getHeaders() },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      validateStatus: () => true,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`custom3图片请求失败，接口: /images/edits, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
+    }
+    const raw = pickImageResult(response.data);
+    if (!raw || typeof raw !== "string") {
+      throw new Error(`custom3图片响应中未找到图片URL/base64: ${JSON.stringify(response.data).slice(0, 800)}`);
+    }
+    return await normalizeImageResult(raw);
+  }
 
   if (imageBase64List.length) {
     const form = new FormData();

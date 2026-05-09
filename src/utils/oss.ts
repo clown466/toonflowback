@@ -52,7 +52,7 @@ class OSS {
     const safePath = normalizeUserPath(userRelPath);
     // URL 始终使用 /，所以这里需要将系统分隔符转回 /
     let url = `/${prefix}/`;
-    const ossURL = process.env.ossURL?.replace(/\/+$/, "");
+    const ossURL = (process.env.OSSURL || process.env.ossURL)?.replace(/\/+$/, "");
     if (ossURL) url = `${ossURL}/${prefix}/`;
     else if (isEletron()) url = `http://localhost:${process.env.PORT || 10588}/${prefix}/`;
     return `${url}${safePath.split(path.sep).join("/")}`;

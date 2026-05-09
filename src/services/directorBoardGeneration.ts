@@ -372,17 +372,20 @@ function buildMinimalRoleBrief(asset: AssetRow, source: string, isChinese: boole
 function buildReferenceLines(assets: AssetRow[], isChinese: boolean) {
   const referencedAssets = assets.filter((asset) => asset.filePath).slice(0, 12);
   const source = referencedAssets.length ? referencedAssets : assets.slice(0, 12);
+  const roleAssets = assets.filter(isRoleAsset);
   return source.map((asset, index) => {
     const name = asset.name || (isChinese ? "未命名素材" : "Unnamed asset");
     const maxLength = isRoleAsset(asset) ? 120 : 155;
-    return `${isChinese ? "参考" : "Ref"} ${index + 1}: ${name}. ${assetBrief(asset, isChinese, maxLength)}`;
+    const roleIndex = isRoleAsset(asset) ? roleAssets.findIndex((role) => Number(role.id) === Number(asset.id) || nameKey(role.name) === nameKey(asset.name)) : -1;
+    const roleLabel = roleIndex >= 0 ? ` (C${roleIndex + 1})` : "";
+    return `${isChinese ? "参考" : "Ref"} ${index + 1}${roleLabel}: ${name}. ${assetBrief(asset, isChinese, maxLength)}`;
   });
 }
 
 function buildCharacterLabelLines(assets: AssetRow[], isChinese: boolean) {
   return assets.filter(isRoleAsset).map((asset, index) => {
     const name = asset.name || (isChinese ? "未命名角色" : "Unnamed character");
-    return `C${index + 1} ${name}`;
+    return `C${index + 1} ${name} = ${assetBrief(asset, isChinese, 95)}`;
   });
 }
 
@@ -513,6 +516,7 @@ export function buildChapterDirectorBoardPrompt(input: {
         "场景必须是彩色的，并尽量参考场景资产；角色可以简化，但必须用 C编号+名称+高对比色标记，不能分不清谁是谁。",
         "角色外观只取最显著身份符号：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
         "角色事实卡和参考图是身份最高依据；保持每个角色的物种/物体身份、固定造型、服装、轮廓和关键道具，不要发明新角色设计。",
+        "C编号是强绑定身份：同一个 C编号在所有分镜卡里必须始终对应同一个角色，不能把 C1/C2/C3 的外形互换。",
         "分镜的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
         "所有可见文字统一使用中文；角色名、C编号和必要专有名词可保留原文。",
         "不要画成漫画页、海报或软件 UI 截图。",
@@ -561,6 +565,7 @@ export function buildChapterDirectorBoardPrompt(input: {
       "每次角色出现都在旁边标 C编号+名称，例如 C1 Chloe；同一角色全图使用同一个高对比色标记。",
       "用最明显的身份符号区分角色：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
       "角色事实卡和角色参考图只用于识别身份符号；保持每个角色的物种/物体身份、固定造型、服装、轮廓和关键道具，不要发明新角色设计。",
+      "C编号是强绑定身份：同一个 C编号在全图必须始终对应同一个角色，不能把 C1/C2/C3 的外形互换。",
       "覆盖镜头里的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
       "场景参考图用于确定环境布局、色彩、入口、桌面、墙面、灯光和道具。",
       "画面文字保持简短可读，并统一使用中文；角色名、C编号和必要专有名词可保留原文。",
@@ -612,6 +617,7 @@ export function buildChapterDirectorBoardPrompt(input: {
       "Scenes must be colored and should follow scene references. Characters may be simplified, but each character must be identifiable with C-number + name + high-contrast color marker.",
       "Use only the strongest character identity symbols: fruit/species color, body scale, fixed outfit, key prop, weapon, or tool.",
       "Role fact cards and role references are the highest authority for identity. Preserve each character's species/object identity, fixed outfit, silhouette, key prop, and final referenced design.",
+      "C-number identity is binding: the same C-number must always be the same character across every storyboard card. Never swap C1/C2/C3 appearances.",
       "Storyboard composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
       "Do not make a comic page, poster, software UI screenshot, or final video frame.",
       "",
@@ -665,6 +671,7 @@ export function buildChapterDirectorBoardPrompt(input: {
     "Use only short character labels: C1 Name, C2 Name, C3 Name. Do not write long paragraphs inside the image.",
     "All visible text must be English only. Do not use subtitles, UI, watermark, or dense text.",
     "Do not redesign the characters. Preserve each character's species/object identity, fixed outfit, silhouette, key prop, and final referenced design.",
+    "C-number identity is binding: the same C-number must always be the same character across the whole board. Never swap C1/C2/C3 appearances.",
     "Covered-shot composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
     "",
     "Character labels:",

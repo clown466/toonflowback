@@ -254,8 +254,7 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
       prompt: config.prompt,
       size: resolvedSize,
       n: 1,
-      image: imageUrls.length === 1 ? imageUrls[0] : imageUrls,
-      image_urls: imageUrls,
+      images: imageUrls.map((imageUrl) => ({ image_url: imageUrl })),
     };
     if (shouldSendQuality) body.quality = resolvedQuality;
     logger(`[custom2 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=publicUrlJson`);

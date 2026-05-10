@@ -155,6 +155,7 @@ const vendor: VendorConfig = {
       required: false,
       placeholder: "uocode 若不支持 high，请选择 auto",
       options: [
+        { label: "默认/不传", value: "default" },
         { label: "自动 auto", value: "auto" },
         { label: "低 low", value: "low" },
         { label: "中 medium", value: "medium" },
@@ -175,7 +176,7 @@ const vendor: VendorConfig = {
     },
     { key: "publicOssBaseUrl", label: "公开资源地址", type: "url", required: false, placeholder: "示例：http://你的服务器:10588" },
   ],
-  inputValues: { apiKey: "", baseUrl: "https://api.openai.com/v1", imageQuality: "auto", imageReferenceTransport: "multipart", publicOssBaseUrl: "" },
+  inputValues: { apiKey: "", baseUrl: "https://api.openai.com/v1", imageQuality: "default", imageReferenceTransport: "multipart", publicOssBaseUrl: "" },
   models: [{ name: "GPT-4o", modelName: "gpt-4o", type: "text", think: false }],
 };
 
@@ -273,10 +274,14 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     "9:16": { "1K": "864x1536", "2K": "1152x2048", "4K": "2160x3840" },
   };
   const resolvedSize = sizeMap[config.aspectRatio]?.[config.size] || (config.aspectRatio === "9:16" ? "1024x1536" : "1536x1024");
-  const qualityValue = String(vendor.inputValues.imageQuality || "auto").trim().toLowerCase();
-  const resolvedQuality = ["low", "medium", "high", "auto"].includes(qualityValue) ? qualityValue : "auto";
-  const shouldSendQuality = /^gpt-image/i.test(model.modelName);
+  const usesAspectResolutionParams = /airelayzone\.com/i.test(baseUrl);
+  const requestSize = usesAspectResolutionParams ? config.aspectRatio : resolvedSize;
+  const requestResolution = usesAspectResolutionParams ? String(config.size || "1K").toLowerCase() : "";
+  const qualityValue = String(vendor.inputValues.imageQuality || "default").trim().toLowerCase();
+  const resolvedQuality = ["low", "medium", "high", "auto"].includes(qualityValue) ? qualityValue : "";
+  const shouldSendQuality = /^gpt-image/i.test(model.modelName) && Boolean(resolvedQuality);
   const referenceTransport = String(vendor.inputValues.imageReferenceTransport || "multipart");
+  const usesAirelayzoneGenerationReferences = /airelayzone\.com/i.test(baseUrl);
 
   const pickImageResult = (data: any): string | undefined => {
     const first = data?.data?.[0] || data?.data || data;
@@ -319,17 +324,50 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     return await normalizeImageResult(raw);
   };
 
+  const parseAxiosResponse = async (response: any, endpoint: string): Promise<string> => {
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`custom1图片请求失败，接口: ${endpoint}, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
+    }
+    const raw = pickImageResult(response.data);
+    if (!raw || typeof raw !== "string") {
+      throw new Error(`custom1图片响应中未找到图片URL/base64: ${JSON.stringify(response.data).slice(0, 800)}`);
+    }
+    return await normalizeImageResult(raw);
+  };
+
+  if (imageBase64List.length && usesAirelayzoneGenerationReferences) {
+    const imageUrls = await Promise.all(imageBase64List.map((base64) => base64ToPublicUrl(base64, "image", vendor.inputValues.publicOssBaseUrl || "")));
+    const body: Record<string, any> = {
+      model: model.modelName,
+      prompt: config.prompt,
+      size: requestSize,
+      n: 1,
+      image_urls: imageUrls,
+    };
+    if (requestResolution) body.resolution = requestResolution;
+    if (shouldSendQuality) body.quality = resolvedQuality;
+    logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=airelayzoneImageUrls`);
+    const response = await axios.post(`${baseUrl}/images/generations`, body, {
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      validateStatus: () => true,
+    });
+    return await parseAxiosResponse(response, "/images/generations");
+  }
+
   if (imageBase64List.length && referenceTransport === "publicUrlJson") {
     const imageUrls = await Promise.all(imageBase64List.map((base64) => base64ToPublicUrl(base64, "image", vendor.inputValues.publicOssBaseUrl || "")));
     const body: Record<string, any> = {
       model: model.modelName,
       prompt: config.prompt,
-      size: resolvedSize,
+      size: requestSize,
       n: 1,
       images: imageUrls.map((imageUrl) => ({ image_url: imageUrl })),
     };
+    if (requestResolution) body.resolution = requestResolution;
     if (shouldSendQuality) body.quality = resolvedQuality;
-    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=publicUrlJson`);
+    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=publicUrlJson`);
     const response = await axios.post(`${baseUrl}/images/edits`, body, {
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       maxBodyLength: Infinity,
@@ -351,11 +389,12 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     const form = new FormData();
     form.append("model", model.modelName);
     form.append("prompt", config.prompt);
-    form.append("size", resolvedSize);
+    form.append("size", requestSize);
     form.append("n", "1");
+    if (requestResolution) form.append("resolution", requestResolution);
     if (shouldSendQuality) form.append("quality", resolvedQuality);
     imageUrls.forEach((url) => form.append("image[]", url));
-    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=publicUrlForm`);
+    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=publicUrlForm`);
     const response = await axios.post(`${baseUrl}/images/edits`, form, {
       headers: { Authorization: `Bearer ${apiKey}`, ...form.getHeaders() },
       maxBodyLength: Infinity,
@@ -376,14 +415,15 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     const form = new FormData();
     form.append("model", model.modelName);
     form.append("prompt", config.prompt);
-    form.append("size", resolvedSize);
+    form.append("size", requestSize);
     form.append("n", "1");
+    if (requestResolution) form.append("resolution", requestResolution);
     if (shouldSendQuality) form.append("quality", resolvedQuality);
     imageBase64List.forEach((base64, index) => {
       const imageFile = parseDataUrlImage(base64, index);
       form.append("image[]", imageFile.buffer, { filename: imageFile.filename, contentType: imageFile.contentType });
     });
-    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageBase64List.length}`);
+    logger(`[custom1 imageRequest] POST /images/edits baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageBase64List.length}`);
     const response = await axios.post(`${baseUrl}/images/edits`, form, {
       headers: { Authorization: `Bearer ${apiKey}`, ...form.getHeaders() },
       maxBodyLength: Infinity,
@@ -403,12 +443,13 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   const body: Record<string, any> = {
     model: model.modelName,
     prompt: config.prompt,
-    size: resolvedSize,
+    size: requestSize,
     n: 1,
   };
+  if (requestResolution) body.resolution = requestResolution;
   if (shouldSendQuality) body.quality = resolvedQuality;
 
-  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${resolvedSize} quality=${body.quality || "default"} refs=0`);
+  logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${body.quality || "default"} refs=0`);
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },

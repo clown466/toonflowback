@@ -32,6 +32,12 @@ export interface ProjectAssetImageGenerationOptions {
   disableNaturalLanguageScopeParsing?: boolean;
 }
 
+export interface NovelAssetExtractionOptions {
+  sourceText?: string;
+  novelIds?: number[];
+  chapterIndexes?: number[];
+}
+
 const assetInputSchema = z.object({
   name: z.string().min(1).describe("资产名称"),
   type: assetTypeSchema.describe("资产类型：role角色 / scene场景 / tool道具 / other其他"),
@@ -120,6 +126,33 @@ function parseLimitFromText(text: string): number | undefined {
   return undefined;
 }
 
+function parseChapterIndexesFromText(text: string): number[] {
+  const indexes: number[] = [];
+  const numberToken = String.raw`(\d{1,4}|[零〇一二两三四五六七八九十百]{1,8})`;
+  const rangePattern = new RegExp(String.raw`(?:juben\s*)?${numberToken}\s*(?:到|至|-|~)\s*(?:juben\s*)?${numberToken}|第?\s*${numberToken}\s*(?:章|章节|集|条)?\s*(?:到|至|-|~)\s*第?\s*${numberToken}\s*(?:章|章节|集|条)?`, "gi");
+  for (const match of text.matchAll(rangePattern)) {
+    const start = normalizePositiveLimit(match[1] ?? match[3]);
+    const end = normalizePositiveLimit(match[2] ?? match[4]);
+    if (!start || !end) continue;
+    const min = Math.min(start, end);
+    const max = Math.max(start, end);
+    for (let index = min; index <= max && indexes.length < 100; index += 1) indexes.push(index);
+  }
+
+  const singlePatterns = [
+    new RegExp(String.raw`\bjuben\s*${numberToken}\b`, "gi"),
+    new RegExp(String.raw`第?\s*${numberToken}\s*(?:章|章节|集|条)`, "gi"),
+  ];
+  for (const pattern of singlePatterns) {
+    for (const match of text.matchAll(pattern)) {
+      const index = normalizePositiveLimit(match[1]);
+      if (index) indexes.push(index);
+    }
+  }
+
+  return Array.from(new Set(indexes)).sort((a, b) => a - b);
+}
+
 export function parseAssetImageRequestScope(sourceText?: string): Pick<ProjectAssetImageGenerationOptions, "assetType" | "limit"> {
   const text = sourceText ?? "";
   return {
@@ -159,7 +192,7 @@ function mergeSource(current: unknown, addition: string) {
   return oldText.includes(addition) ? oldText : `${oldText}；${addition}`;
 }
 
-async function writeProjectAssets(projectId: number, assets: AssetInput[]) {
+async function writeProjectAssets(projectId: number, assets: AssetInput[], options: { skipExisting?: boolean } = {}) {
   const now = Date.now();
   const normalizedAssets = Array.from(new Map(assets.map((asset) => [normalizeAssetKey(asset), asset])).values());
   const existingAssets = await u
@@ -181,6 +214,10 @@ async function writeProjectAssets(projectId: number, assets: AssetInput[]) {
     const source = nonEmpty(asset.source);
 
     if (existing?.id) {
+      if (options.skipExisting) {
+        skipped.push(asset);
+        continue;
+      }
       const patch: Record<string, unknown> = {};
       if (describe && describe !== existing.describe) patch.describe = describe;
       if (prompt && prompt !== existing.prompt) patch.prompt = prompt;
@@ -224,7 +261,16 @@ async function writeProjectAssets(projectId: number, assets: AssetInput[]) {
 function extractCandidateAssetsFromNovel(novels: any[]): { assets: AssetInput[]; reason?: string } {
   const text = novels.map((n) => `${n.chapter ?? ""}\n${n.event ?? ""}\n${n.chapterData ?? ""}`).join("\n");
   const assets: AssetInput[] = [];
-  const add = (name: string, type: AssetInput["type"], describe: string, source: string) => assets.push({ name, type, describe, source });
+  const sourceLabel =
+    novels
+      .map((novel) => {
+        const chapterIndex = novel.chapterIndex ?? novel.id;
+        const chapter = nonEmpty(novel.chapter);
+        return `第${chapterIndex}章${chapter ? ` ${chapter}` : ""}`;
+      })
+      .filter(Boolean)
+      .join("、") || "小说事件/章节原文";
+  const add = (name: string, type: AssetInput["type"], describe: string) => assets.push({ name, type, describe, source: sourceLabel });
 
   const zombieCampusSignals = [
     /\bChloe\b/i,
@@ -247,6 +293,7 @@ function extractCandidateAssetsFromNovel(novels: any[]): { assets: AssetInput[];
     [/\bBob\b/i, "Bob", "持枪、经验丰富的水果小队成员，负责火力和战术支援"],
     [/\bLeo\b/i, "Leo", "冷静吐槽、擅长观察和利用规则漏洞的水果小队成员"],
     [/\bCyber Ghost\b|\bEugene\b/i, "Eugene / Cyber Ghost", "宅系黑客盟友，抱着电脑和动漫抱枕，负责追踪病毒来源和系统入侵"],
+    [/\bTiffany\b/i, "Tiffany / Mutated Tiffany", "Shining Glow Labs 的美妆 CEO 变异 Boss，四条细长手臂、巨大绿色眼睛、发光绿色指甲，执迷塑形和完美对称"],
     [/Thesis Zombies|student zombies/i, "Thesis Zombies", "被论文和成绩焦虑驱动的学生丧尸群，携带课本和学术压力感"],
     [/Gamer Zombie/i, "Gamer Zombie", "沉迷游戏和 Wi-Fi 的高速闪避丧尸，穿格子衫，动作像滑行玩家"],
     [/Professor Zombies/i, "Professor Zombies", "执着批改和逻辑秩序的教授丧尸群，被混乱音乐干扰"],
@@ -254,7 +301,7 @@ function extractCandidateAssetsFromNovel(novels: any[]): { assets: AssetInput[];
     [/Austin Zombie/i, "Austin Zombie", "网红式变异丧尸，使用直播、粉色灯光、快递盒和粉丝群攻击"],
     [/Fan Zombies/i, "Fan Zombies", "受 Austin Zombie 影响的粉丝丧尸群，像直播间观众一样蜂拥而上"],
   ];
-  for (const [regex, name, desc] of roleRules) if (regex.test(text)) add(name, "role", desc, "小说事件/章节原文");
+  for (const [regex, name, desc] of roleRules) if (regex.test(text)) add(name, "role", desc);
 
   const sceneRules: Array<[RegExp, string, string]> = [
     [/bunker/i, "Safe Bunker", "幸存者小队出发前的安全地堡，末日避难空间"],
@@ -262,12 +309,15 @@ function extractCandidateAssetsFromNovel(novels: any[]): { assets: AssetInput[];
     [/library/i, "College Library", "校园图书馆，救援 Cyber Ghost 的关键室内场景"],
     [/basement|supercomputer center/i, "Basement Supercomputer Center", "阴冷地下超级计算机中心，旧书、咖啡和压力气味浓重"],
     [/Shining Glow Labs|pink factory/i, "Shining Glow Labs Pink Factory", "病毒源头的粉色工厂/实验室入口，带商业化美妆饮品风格"],
+    [/deepest part of Shining Glow Labs|giant,\s*pure white lab|pure white lab|deepest lab/i, "Shining Glow Labs Deep White Lab", "Shining Glow Labs 最深处的纯白 Boss 实验室，粉色 CEO 椅、监控屏、医美气味和陷阱装置集中出现"],
     [/armored truck|truck/i, "Armored Truck", "小队穿越校园和工厂战斗时使用的装甲卡车"],
   ];
-  for (const [regex, name, desc] of sceneRules) if (regex.test(text)) add(name, "scene", desc, "小说事件/章节原文");
+  for (const [regex, name, desc] of sceneRules) if (regex.test(text)) add(name, "scene", desc);
 
   const toolRules: Array<[RegExp, string, string]> = [
     [/marked paper|paper with red marks|80% copied/i, "Marked Paper", "带红色批注/抄袭标记的论文纸，用来击溃学生丧尸的学术焦虑"],
+    [/Chloe[\s\S]{0,80}shotgun|shotgun[\s\S]{0,80}Chloe/i, "Chloe's Shotgun", "Chloe 近战和火力压制使用的霰弹枪，Boss 战中用于快速开火和制造冲击"],
+    [/Leo[\s\S]{0,80}(pan|frying pan)|frying pan[\s\S]{0,80}Leo/i, "Leo's Frying Pan", "Leo 标志性的平底锅武器，用来格挡针刺、制造喜剧式反击和保护队友"],
     [/gun|shotgun|bullets/i, "Bob's Gun", "Bob 使用的枪械火力道具，用于对抗丧尸"],
     [/power strip|unplug/i, "Power Strip", "Chloe 拔掉的电源排插，用来冻结沉迷 Wi-Fi 的 Gamer Zombie"],
     [/PA system|speakers|techno|EDM|anime techno/i, "PA System with Anime Techno Music", "播放混乱动漫电子乐的广播系统，用来干扰教授丧尸"],
@@ -276,30 +326,67 @@ function extractCandidateAssetsFromNovel(novels: any[]): { assets: AssetInput[];
     [/dynamite/i, "Dynamite", "Chloe 用来摧毁 Austin Zombie 的炸药"],
     [/delivery boxes|boxes/i, "Delivery Boxes", "Austin Zombie 从机器中发射的重型快递盒攻击物"],
     [/diet tea/i, "Failed Diet Tea", "Shining Glow Labs 失败实验的减肥茶，病毒源头线索"],
+    [/Botox gas|gas vents?|pink gas|gas filled/i, "Botox Gas Trap", "Tiffany 实验室释放的粉色 Botox 毒气陷阱，会困住小队并制造窒息压迫感"],
+    [/laser|lasers/i, "Laser Trap Grid", "Shining Glow Labs Boss 战中的激光陷阱网，封锁出口并压缩角色行动空间"],
+    [/green nails|needles?|needle-thin|glowing green/i, "Tiffany's Green Needle Nails", "Tiffany 四只手上的发光绿色针状指甲，用于高速突刺攻击 Chloe"],
+    [/pink leather chair|chair slowly turned/i, "Pink CEO Chair", "Tiffany 登场使用的粉色皮革 CEO 椅，背对监控屏旋转揭示 Boss 形态"],
+    [/monitors?|screens?|camera feeds?|heart stickers?/i, "Filtered Zombie Monitor Wall", "实验室监控墙，显示带粉色滤镜和爱心贴纸的僵尸直播画面"],
   ];
-  for (const [regex, name, desc] of toolRules) if (regex.test(text)) add(name, "tool", desc, "小说事件/章节原文");
+  for (const [regex, name, desc] of toolRules) if (regex.test(text)) add(name, "tool", desc);
 
   return { assets };
 }
 
-export async function runNovelAssetExtractionFastPath(config: ToolConfig) {
+function shouldOnlyCreateNewAssets(sourceText?: string) {
+  return /新增|新出现|新角色|新场景|新道具|只.*新/i.test(sourceText ?? "");
+}
+
+function describeNovelScope(novels: any[]) {
+  if (!novels.length) return "当前小说章节";
+  return novels
+    .map((novel) => {
+      const chapterIndex = novel.chapterIndex ?? novel.id;
+      const chapter = nonEmpty(novel.chapter);
+      return `第${chapterIndex}章${chapter ? ` ${chapter}` : ""}`;
+    })
+    .join("、");
+}
+
+export async function runNovelAssetExtractionFastPath(config: ToolConfig, options: NovelAssetExtractionOptions = {}) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
   const thinking = msg.thinking("正在直接读取小说并提取资产...");
 
-  const novels = await u
+  const allNovels = await u
     .db("o_novel")
     .where("projectId", projectId)
     .select("id", "chapter", "chapterIndex", "eventState", "event", "chapterData")
     .orderBy("chapterIndex", "asc");
+  const requestedNovelIds = Array.from(new Set((options.novelIds ?? []).map(Number).filter((id) => Number.isInteger(id) && id > 0)));
+  const requestedChapterIndexes = Array.from(
+    new Set([...(options.chapterIndexes ?? []), ...parseChapterIndexesFromText(options.sourceText ?? "")].map(Number).filter((index) => Number.isInteger(index) && index > 0)),
+  );
+  let novels = allNovels;
+  if (requestedNovelIds.length) novels = allNovels.filter((novel: any) => requestedNovelIds.includes(Number(novel.id)));
+  else if (requestedChapterIndexes.length) novels = allNovels.filter((novel: any) => requestedChapterIndexes.includes(Number(novel.chapterIndex)));
 
-  if (!novels.length) {
+  if (!allNovels.length) {
     thinking.updateTitle("未找到小说章节");
     thinking.complete();
     const text = msg.text("当前项目没有小说章节，无法基于原文提取资产。请先上传/导入小说。");
     text.complete();
     msg.complete();
     return { handled: true, reason: "no_novel" };
+  }
+
+  if (!novels.length) {
+    thinking.updateTitle("未匹配到指定章节");
+    thinking.complete();
+    const requested = requestedChapterIndexes.length ? `第 ${requestedChapterIndexes.join("、")} 章` : requestedNovelIds.length ? `小说记录 ${requestedNovelIds.join("、")}` : "指定章节";
+    const text = msg.text(`没有匹配到${requested}，已停止资产提取，避免把其他章节资产写入当前资产库。`);
+    text.complete();
+    msg.complete();
+    return { handled: true, reason: "chapter_not_found", extractedCandidates: 0 };
   }
 
   const extraction = extractCandidateAssetsFromNovel(novels);
@@ -313,7 +400,8 @@ export async function runNovelAssetExtractionFastPath(config: ToolConfig) {
     msg.complete();
     return { handled: true, reason: "rule_extraction_skipped", extractedCandidates: 0 };
   }
-  const result = await writeProjectAssets(projectId, candidateAssets);
+  const onlyNew = shouldOnlyCreateNewAssets(options.sourceText);
+  const result = await writeProjectAssets(projectId, candidateAssets, { skipExisting: onlyNew });
   const assetRows = await u.db("o_assets").where("projectId", projectId).whereNull("assetsId").select("type").count({ count: "id" }).groupBy("type");
   const summary = summarizeByAssetType(assetRows as Array<{ type?: string | null; count?: unknown }>);
 
@@ -322,10 +410,11 @@ export async function runNovelAssetExtractionFastPath(config: ToolConfig) {
   thinking.complete();
 
   const lines = [
-    `已直接从当前小说章节写入资产库，不再等待大模型决策。`,
+    `已直接从${describeNovelScope(novels)}写入资产库，不再等待大模型决策。`,
+    onlyNew ? `已按“新增资产”模式处理：已有资产只跳过，不再更新。` : "",
     `本次候选资产 ${candidateAssets.length} 个：新建 ${result.createdCount}，更新 ${result.updatedCount}，跳过 ${result.skippedCount}。`,
     `当前资产库：角色 ${summary.role}，场景 ${summary.scene}，道具 ${summary.tool}，其他 ${summary.other}。`,
-  ];
+  ].filter(Boolean);
   if (result.createdCount || result.updatedCount) {
     const changed = [...result.created, ...result.updated].slice(0, 24).map((item: any) => `- ${item.name}（${item.type}）`);
     lines.push("\n已处理资产：", ...changed);

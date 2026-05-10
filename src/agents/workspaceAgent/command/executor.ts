@@ -211,7 +211,14 @@ export async function executeWorkspaceCommandPlan(config: ToolConfig, plan: Work
   }
 
   if (plan.intent === "asset_extraction") {
-    return wrapExecution(preflightSummary, await runNovelAssetExtractionFastPath(config));
+    return wrapExecution(
+      preflightSummary,
+      await runNovelAssetExtractionFastPath(config, {
+        sourceText,
+        novelIds: plan.scope?.chapterIds,
+        chapterIndexes: plan.scope?.chapterIndexes,
+      }),
+    );
   }
 
   return {

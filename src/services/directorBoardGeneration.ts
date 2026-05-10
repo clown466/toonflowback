@@ -77,11 +77,13 @@ export interface QueueDirectorBoardOptions {
   shotsPerBoard?: number;
   replace?: boolean;
   generateImages?: boolean;
+  usePreviousBoardReference?: boolean;
 }
 
 export interface RegenerateDirectorBoardOptions {
   model?: string;
   boardType?: DirectorBoardType;
+  usePreviousBoardReference?: boolean;
 }
 
 export type DirectorBoardPromptLanguage = "english" | "chinese";
@@ -462,6 +464,7 @@ export function buildChapterDirectorBoardPrompt(input: {
   assets: AssetRow[];
   language?: DirectorBoardPromptLanguage;
   boardType?: DirectorBoardType;
+  usePreviousBoardReference?: boolean;
 }) {
   const { project, script, boardIndex, totalBoards, storyboards, assets } = input;
   const language = input.language || detectDirectorBoardPromptLanguage({ project, script, storyboards });
@@ -521,15 +524,17 @@ export function buildChapterDirectorBoardPrompt(input: {
     "电影化动画",
     260,
   );
-  const previousBoardReferenceNote = isChinese
-    ? [
-        "前文导演板参考：",
-        "如果附加参考图中存在上一张导演板图，它通常排在资产参考图之后。只把它当作前文故事连续性、空间关系、角色站位、光线方向、板式风格参考；不要复制上一张的旧镜头内容，不要把旧镜头画成当前镜头。",
-      ].join("\n")
-    : [
-        "Previous-board reference:",
-        "If an additional previous director-board image is attached after the asset references, use it only for prior story continuity, spatial relation, character placement, lighting direction, and board style. Do not copy old shots from it into the current shots.",
-      ].join("\n");
+  const previousBoardReferenceNote = input.usePreviousBoardReference
+    ? isChinese
+      ? [
+          "前文导演板参考：",
+          "如果附加参考图中存在上一张导演板图，它通常排在资产参考图之后。只把它当作前文故事连续性、空间关系、角色站位、光线方向、板式风格参考；不要复制上一张的旧镜头内容，不要把旧镜头画成当前镜头。",
+        ].join("\n")
+      : [
+          "Previous-board reference:",
+          "If an additional previous director-board image is attached after the asset references, use it only for prior story continuity, spatial relation, character placement, lighting direction, and board style. Do not copy old shots from it into the current shots.",
+        ].join("\n")
+    : "";
 
   if (isChinese) {
     if (boardType === "hybridStoryboard") {
@@ -943,9 +948,10 @@ async function runDirectorBoardImageTask(
     promptLanguage: DirectorBoardPromptLanguage;
     model: string;
     boardIndex: number;
+    usePreviousBoardReference: boolean;
   },
 ) {
-  const { project, script, storyboards, assets, prompt, promptLanguage, model, boardIndex } = data;
+  const { project, script, storyboards, assets, prompt, promptLanguage, model, boardIndex, usePreviousBoardReference } = data;
   const savePath = `/${project.id}/directorBoard/${script.id}/${uuidv4()}.jpg`;
   try {
     await runDirectorBoardImageTaskWithRetry(rowId, async () => {
@@ -956,7 +962,7 @@ async function runDirectorBoardImageTask(
           updateTime: Date.now(),
         });
       }
-      const previousBoardReference = await getPreviousDirectorBoardReference(project.id, script.id, boardIndex);
+      const previousBoardReference = usePreviousBoardReference ? await getPreviousDirectorBoardReference(project.id, script.id, boardIndex) : null;
       const referenceList = await getAssetReferenceImages(assets, previousBoardReference ? 11 : 12);
       if (previousBoardReference) referenceList.push(previousBoardReference);
       const image = await u.Ai.Image(model as `${string}:${string}`).run(
@@ -1000,6 +1006,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
   const script = (await u.db("o_script").where({ id: scriptId, projectId }).first()) as ScriptRow | undefined;
   if (!script?.id) throw new Error("章节工作区不存在，无法生成章节导演板。");
   const shouldGenerateImages = options.generateImages === true;
+  const usePreviousBoardReference = options.usePreviousBoardReference === true;
   const model = clean(options.model || project.imageModel);
   const boardType = normalizeDirectorBoardType(options.boardType);
   if (shouldGenerateImages && !model) throw new Error("项目未配置出图模型，无法生成章节导演板图片。");
@@ -1031,6 +1038,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
     promptLanguage: DirectorBoardPromptLanguage;
     model: string;
     boardIndex: number;
+    usePreviousBoardReference: boolean;
   }> = [];
   for (const [boardIndex, chunk] of chunks.entries()) {
     const assets = await getStoryboardAssets(projectId, chunk.map((item) => item.id));
@@ -1044,6 +1052,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
       assets,
       language: promptLanguage,
       boardType,
+      usePreviousBoardReference,
     });
     const [rowId] = await u.db("o_directorBoard").insert({
       projectId,
@@ -1063,7 +1072,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
     const row = (await u.db("o_directorBoard").where("id", rowId).first()) as DirectorBoardRow;
     created.push(row);
     if (shouldGenerateImages) {
-      imageTasks.push({ rowId: Number(rowId), project, script, storyboards: chunk, assets, prompt, promptLanguage, model, boardIndex });
+      imageTasks.push({ rowId: Number(rowId), project, script, storyboards: chunk, assets, prompt, promptLanguage, model, boardIndex, usePreviousBoardReference });
     }
   }
 
@@ -1104,6 +1113,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
   const assets = await getStoryboardAssets(projectId, storyboards.map((item) => item.id));
   const promptLanguage = detectDirectorBoardPromptLanguage({ project, script, storyboards });
   const boardType = normalizeDirectorBoardType(options.boardType || row.boardType);
+  const usePreviousBoardReference = options.usePreviousBoardReference === true;
   const prompt = buildChapterDirectorBoardPrompt({
     project,
     script,
@@ -1113,6 +1123,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
     assets,
     language: promptLanguage,
     boardType,
+    usePreviousBoardReference,
   });
   const model = clean(options.model || project.imageModel || row.model);
   if (!model) throw new Error("项目未配置出图模型，无法重绘章节导演板。");
@@ -1129,7 +1140,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
     updateTime: Date.now(),
   });
 
-  void runDirectorBoardImageTask(boardId, { project, script, storyboards, assets, prompt, promptLanguage, model, boardIndex });
+  void runDirectorBoardImageTask(boardId, { project, script, storyboards, assets, prompt, promptLanguage, model, boardIndex, usePreviousBoardReference });
   return (await u.db("o_directorBoard").where("id", boardId).first()) as DirectorBoardRow;
 }
 

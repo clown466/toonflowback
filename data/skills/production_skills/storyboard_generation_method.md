@@ -29,8 +29,8 @@ output: storyboard-table-json
 
 `storyboardTable` 必须是 Markdown 表格，字段固定为：
 
-| 镜号 | 时长 | 画面描述 | 角色1 | 角色描述1 | 角色图1 | 角色2 | 角色描述2 | 角色图2 | 参考 | 景别 | 角色动作 | 情绪 | 场景标签 | 光影氛围 | 音效 | 对白 | 分镜提示词 | 视频运动提示词 |
-| --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 镜号 | 时长 | 画面描述 | 角色1 | 角色描述1 | 角色图1 | 角色2 | 角色描述2 | 角色图2 | 参考 | 景别 | 运镜 | 焦距 | 光圈 | 快门 | ISO | 角色动作 | 情绪 | 场景标签 | 光影氛围 | 音效 | 对白 | 分镜提示词 | 视频运动提示词 |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 字段规则：
 
@@ -43,6 +43,7 @@ output: storyboard-table-json
 - **参考**：写场景、道具、分镜参考图或资产名。
 - **景别**：从大远景、远景、全景、中景、近景、特写、大特写中选择，不要连续 3 镜同景别。
 - **运镜**：写静止、推、拉、摇、移、跟拍、俯拍、仰拍等，并说明方向或起止点。
+- **焦距/光圈/快门/ISO**：每镜必须填写，用于视频模型理解镜头质感。常用参考：全景 24mm f/5.6 1/48 ISO 400，中景 35mm f/4 1/48 ISO 640，近景 50mm f/2.8 1/48 ISO 640，特写 85mm f/2.8 1/48 ISO 640，快速动作可用 1/96，夜景可提高到 ISO 800。
 - **角色动作**：只写物理动作链，必须照顾上一镜动作连续性。
 - **情绪**：写画面情绪，不写抽象心理解释。
 - **场景标签**：填具体场景名。
@@ -61,7 +62,7 @@ output: storyboard-table-json
 - `imagePrompt`：关键帧图像提示词，必须忠实于 `videoDesc`，用于生成单张分镜图。
 - `associateAssetNames`：只填写资产库存在且画面中可见的资产名称。
 - `shouldGenerateImage`：默认 `true`。
-- `pictureDescription`、`role1`、`role1Description`、`role2`、`role2Description`、`reference`、`scene`、`shotSize`、`cameraMove`、`action`、`emotion`、`lighting`、`sound`、`dialogue`、`beat`、`videoMotionPrompt`：尽量完整填写，系统会用这些字段生成更详细的表格。
+- `pictureDescription`、`role1`、`role1Description`、`role2`、`role2Description`、`reference`、`scene`、`shotSize`、`cameraMove`、`focalLength`、`aperture`、`shutterSpeed`、`iso`、`action`、`emotion`、`lighting`、`sound`、`dialogue`、`beat`、`videoMotionPrompt`：尽量完整填写，系统会用这些字段生成更详细的表格。
 
 ## 四、质量门
 

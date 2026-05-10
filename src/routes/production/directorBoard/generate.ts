@@ -14,7 +14,7 @@ export default router.post(
     scriptId: z.number(),
     storyboardIds: z.array(z.number()).optional(),
     model: z.string().optional(),
-    boardType: z.enum(["continuity", "textStoryboard"]).optional(),
+    boardType: z.enum(["continuity", "textStoryboard", "hybridStoryboard"]).optional(),
     shotsPerBoard: z.number().min(3).max(8).optional(),
     replace: z.boolean().optional(),
     generateImages: z.boolean().optional(),

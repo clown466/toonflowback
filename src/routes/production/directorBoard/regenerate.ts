@@ -14,7 +14,7 @@ export default router.post(
     scriptId: z.number(),
     boardId: z.number(),
     model: z.string().optional(),
-    boardType: z.enum(["continuity", "textStoryboard"]).optional(),
+    boardType: z.enum(["continuity", "textStoryboard", "hybridStoryboard"]).optional(),
   }),
   async (req, res) => {
     try {

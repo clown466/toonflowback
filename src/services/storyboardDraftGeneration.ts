@@ -57,6 +57,10 @@ export interface StoryboardDraftItem {
   reference?: string;
   shotSize?: string;
   cameraMove?: string;
+  focalLength?: string;
+  aperture?: string;
+  shutterSpeed?: string;
+  iso?: string;
   action?: string;
   emotion?: string;
   scene?: string;
@@ -132,6 +136,36 @@ export function cleanName(value: unknown) {
 function mdCell(value: unknown) {
   const text = String(value ?? "").replace(/\r?\n/g, "<br>").replace(/\|/g, "/").trim();
   return text || "-";
+}
+
+export function inferCameraTechnicalSettings(input: {
+  shotSize?: string | null;
+  cameraMove?: string | null;
+  lighting?: string | null;
+  action?: string | null;
+  focalLength?: string | null;
+  aperture?: string | null;
+  shutterSpeed?: string | null;
+  iso?: string | null;
+}) {
+  const text = [input.shotSize, input.cameraMove, input.lighting, input.action].map(cleanName).join(" ");
+  const isNight = /夜|暗|黑|low[-\s]?light|night|dark|dim/i.test(text);
+  const isFast = /快|甩|冲|跑|爆|撞|whip|fast|rush|run|impact|action/i.test(text);
+  const isWide = /远景|全景|wide|establishing|overhead|俯视/i.test(text);
+  const isClose = /特写|大特写|close|close-up|detail/i.test(text);
+  const isMediumClose = /近景|medium close|portrait/i.test(text);
+
+  let focalLength = isClose ? "85mm" : isMediumClose ? "50mm" : isWide ? "24mm" : "35mm";
+  let aperture = isClose ? "f/2.8" : isNight ? "f/2.8" : isWide ? "f/5.6" : "f/4";
+  let shutterSpeed = isFast ? "1/96" : "1/48";
+  let iso = isNight ? "ISO 800" : isWide ? "ISO 400" : "ISO 640";
+
+  focalLength = cleanName(input.focalLength) || focalLength;
+  aperture = cleanName(input.aperture) || aperture;
+  shutterSpeed = cleanName(input.shutterSpeed) || shutterSpeed;
+  iso = cleanName(input.iso) || iso;
+
+  return { focalLength, aperture, shutterSpeed, iso };
 }
 
 function listAssetNames(assets: AssetRow[]) {
@@ -583,6 +617,12 @@ function createDraftItems(project: ProjectRow, novels: NovelRow[], scriptContent
         reference: reference.join("、"),
         shotSize: cameraPlan.shotSize,
         cameraMove: cameraPlan.cameraMove,
+        ...inferCameraTechnicalSettings({
+          shotSize: cameraPlan.shotSize,
+          cameraMove: cameraPlan.cameraMove,
+          lighting: "遵循项目视觉手册，突出主体与冲突",
+          action: beat,
+        }),
         action: `${beat}｜朝向：按角色关系保持连续`,
         emotion: shotIndex === 0 ? "紧张铺垫" : shotIndex === 1 ? "动作推进" : "反应收束",
         scene,
@@ -661,6 +701,7 @@ export async function insertDraftItems(projectId: number, scriptId: number, item
   const now = Date.now();
 
   for (const item of items) {
+    const cameraTech = inferCameraTechnicalSettings(item);
     const [insertedId] = await u.db("o_storyboard").insert({
       prompt: item.prompt,
       duration: String(item.duration),
@@ -670,6 +711,10 @@ export async function insertDraftItems(projectId: number, scriptId: number, item
       track: item.track,
       trackId,
       videoDesc: item.videoDesc,
+      focalLength: cameraTech.focalLength,
+      aperture: cameraTech.aperture,
+      shutterSpeed: cameraTech.shutterSpeed,
+      iso: cameraTech.iso,
       shouldGenerateImage: item.shouldGenerateImage,
       index: startIndex + item.index,
       createTime: now + item.index,
@@ -694,10 +739,11 @@ export async function insertDraftItems(projectId: number, scriptId: number, item
 
 export function buildStoryboardTable(items: StoryboardDraftItem[]) {
   const rows = [
-    "| 镜号 | 时长 | 画面描述 | 角色1 | 角色描述1 | 角色图1 | 角色2 | 角色描述2 | 角色图2 | 参考 | 景别 | 角色动作 | 情绪 | 场景标签 | 光影氛围 | 音效 | 对白 | 分镜提示词 | 视频运动提示词 |",
-    "| --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| 镜号 | 时长 | 画面描述 | 角色1 | 角色描述1 | 角色图1 | 角色2 | 角色描述2 | 角色图2 | 参考 | 景别 | 运镜 | 焦距 | 光圈 | 快门 | ISO | 角色动作 | 情绪 | 场景标签 | 光影氛围 | 音效 | 对白 | 分镜提示词 | 视频运动提示词 |",
+    "| --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
   ];
   for (const item of items) {
+    const cameraTech = inferCameraTechnicalSettings(item);
     rows.push(`| ${[
       item.index + 1,
       `${item.duration}s`,
@@ -710,6 +756,11 @@ export function buildStoryboardTable(items: StoryboardDraftItem[]) {
       item.role2Image,
       item.reference || (item.associateAssetsIds.length ? `资产ID ${item.associateAssetsIds.join(", ")}` : ""),
       item.shotSize,
+      item.cameraMove,
+      cameraTech.focalLength,
+      cameraTech.aperture,
+      cameraTech.shutterSpeed,
+      cameraTech.iso,
       item.action,
       item.emotion,
       item.scene,

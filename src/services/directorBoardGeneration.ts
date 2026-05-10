@@ -1,5 +1,6 @@
 import u from "@/utils";
 import { stripThink } from "@/utils/stripThink";
+import { inferCameraTechnicalSettings } from "@/services/storyboardDraftGeneration";
 import { v4 as uuidv4 } from "uuid";
 
 interface ProjectRow {
@@ -28,6 +29,10 @@ interface StoryboardRow {
   duration?: string | null;
   filePath?: string | null;
   trackId?: number | null;
+  focalLength?: string | null;
+  aperture?: string | null;
+  shutterSpeed?: string | null;
+  iso?: string | null;
 }
 
 interface AssetRow {
@@ -80,10 +85,16 @@ export interface RegenerateDirectorBoardOptions {
 }
 
 export type DirectorBoardPromptLanguage = "english" | "chinese";
-export type DirectorBoardType = "continuity" | "textStoryboard";
+export type DirectorBoardType = "continuity" | "textStoryboard" | "hybridStoryboard";
 
 const MAX_DIRECTOR_BOARD_DURATION_SECONDS = 15;
 const DEFAULT_DIRECTOR_BOARD_TYPE: DirectorBoardType = "continuity";
+
+function directorBoardTypeName(boardType: DirectorBoardType) {
+  if (boardType === "textStoryboard") return "文字分镜导演板";
+  if (boardType === "hybridStoryboard") return "融合导演板";
+  return "章节导演板";
+}
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -118,6 +129,7 @@ async function runDirectorBoardImageTaskWithRetry(rowId: number, task: () => Pro
 }
 
 function normalizeDirectorBoardType(value: unknown): DirectorBoardType {
+  if (value === "hybridStoryboard") return "hybridStoryboard";
   return value === "textStoryboard" ? "textStoryboard" : DEFAULT_DIRECTOR_BOARD_TYPE;
 }
 
@@ -460,12 +472,23 @@ export function buildChapterDirectorBoardPrompt(input: {
   let cursor = startSecond;
   const shotLines = storyboards.map((shot) => {
     const duration = parseDuration(shot.duration);
+    const cameraTech = inferCameraTechnicalSettings({
+      shotSize: shot.videoDesc,
+      cameraMove: shot.videoDesc,
+      lighting: shot.videoDesc,
+      action: `${shot.videoDesc || ""} ${shot.prompt || ""}`,
+      focalLength: shot.focalLength,
+      aperture: shot.aperture,
+      shutterSpeed: shot.shutterSpeed,
+      iso: shot.iso,
+    });
     const start = cursor;
     cursor += duration;
     return [
       `${isChinese ? "镜头" : "Shot"} ${String((shot.index ?? 0) + 1).padStart(2, "0")}`,
       `${isChinese ? "时间" : "time"}=${start}-${cursor}s`,
       `${isChinese ? "动作" : "action"}=${compact(shot.videoDesc, 320)}`,
+      `${isChinese ? "摄影参数" : "camera settings"}=${cameraTech.focalLength}, ${cameraTech.aperture}, ${cameraTech.shutterSpeed}, ${cameraTech.iso}`,
       `${isChinese ? "构图动作线索" : "composition/action cue"}=${buildShotVisualCue(shot, roleAssets, isChinese)}`,
       boardType === "textStoryboard" ? `${isChinese ? "时长" : "duration"}=${duration}s` : "",
     ].filter(Boolean).join(" | ");
@@ -498,8 +521,69 @@ export function buildChapterDirectorBoardPrompt(input: {
     "电影化动画",
     260,
   );
+  const previousBoardReferenceNote = isChinese
+    ? [
+        "前文导演板参考：",
+        "如果附加参考图中存在上一张导演板图，它通常排在资产参考图之后。只把它当作前文故事连续性、空间关系、角色站位、光线方向、板式风格参考；不要复制上一张的旧镜头内容，不要把旧镜头画成当前镜头。",
+      ].join("\n")
+    : [
+        "Previous-board reference:",
+        "If an additional previous director-board image is attached after the asset references, use it only for prior story continuity, spatial relation, character placement, lighting direction, and board style. Do not copy old shots from it into the current shots.",
+      ].join("\n");
 
   if (isChinese) {
+    if (boardType === "hybridStoryboard") {
+      return [
+        "生成一张横向 16:9 融合型章节导演板，把“空间连续性导演板”和“文字分镜导演板”合并在同一张图里。",
+        "目标：既让视频模型看懂场景空间、角色站位、机位和运动，也能读到每个镜头的关键文字分镜信息。",
+        "不要使用 action flow 面板；不需要单独的动作流区域。",
+        "",
+        "固定版式：",
+        `顶部：印刷体标题栏 “Hybrid Chapter Director Board B${String(boardIndex + 1).padStart(2, "0")}”，并写项目名、镜头范围和总时长。`,
+        "左侧 35%：彩色俯视空间调度图。显示场景布局、入口/出口、角色 C编号位置、摄像机机位、运动箭头、视线、主光方向和关键道具。",
+        "右侧 65%：6 个竖向分镜卡，按时间顺序排成 2行 x 3列。每张卡上半部分是彩色关键画面缩略图，下半部分是正常印刷字表格。",
+        "底部：短连续性备注，只写角色位置变化、光线方向、道具状态、与上一张导演板的衔接。",
+        "",
+        "每张分镜卡必须包含这些印刷体字段：",
+        "Shot / Time / Framing / Camera Move / Lens / Aperture / Shutter / ISO / Action / Dialogue or Sound。",
+        "文字必须是清晰正常打印字、无衬线字体、黑色或深灰色，不要手写字、草绘字、潦草字、涂鸦字。视频模型必须能读清楚。",
+        "",
+        "画面风格：",
+        "场景必须彩色、清晰、有空间层次，尽量参考场景资产。",
+        "角色可以简化为清晰彩色符号或简笔人物，但必须通过 C编号+名称+高对比色标记明确区分。",
+        "角色只取最显著身份符号：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
+        "角色事实卡和角色参考图是身份最高依据；保持物种/物体身份、固定造型、服装、轮廓和关键道具，不要发明新角色设计。",
+        "C编号是强绑定身份：同一个 C编号在全图必须始终对应同一个角色，不能把 C1/C2/C3 的外形互换。",
+        "覆盖镜头里的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
+        "不要画成漫画页、海报或软件 UI 截图。",
+        "",
+        previousBoardReferenceNote,
+        "",
+        "按顺序使用附加参考图：",
+        referenceLines.length ? referenceLines.join("\n") : "无可用参考图。",
+        "",
+        "角色标签：",
+        characterLabelLines.length ? characterLabelLines.join("\n") : "没有关联角色资产。请从分镜描述中推导临时 C编号，并在本张导演板内保持稳定。",
+        "",
+        "项目信息：",
+        `标题：${project.name || "未命名"}`,
+        `工作区：${script.name || `script ${script.id}`}`,
+        `导演板：${boardIndex + 1}/${totalBoards}`,
+        `视频画幅比例：${project.videoRatio || "9:16"}`,
+        `项目类型：${projectTypeText}`,
+        `视觉风格：${visualStyleText}`,
+        "",
+        "场景参考：",
+        sceneLines.length ? sceneLines.join("\n") : "没有关联场景资产。只根据分镜描述构建场景。",
+        "",
+        "其他素材：",
+        otherAssetLines.length ? otherAssetLines.join("\n") : "无其他素材。",
+        "",
+        "分镜卡内容：",
+        shotLines.join("\n"),
+      ].join("\n");
+    }
+
     if (boardType === "textStoryboard") {
       return [
         "生成一张横向 16:9 文字分镜导演板，用于给视频模型和剪辑人员理解本组镜头。",
@@ -509,6 +593,7 @@ export function buildChapterDirectorBoardPrompt(input: {
         "顶部标题栏：写明导演板编号、总时长、覆盖镜头范围和项目名。",
         "主体：优先固定排列 6 个竖向分镜卡；不足 6 个镜头时保留空位，不要改变 16:9 横向整板比例。每张卡上半部分是彩色关键画面，下半部分是结构化文字表格。",
         "每张卡的文字字段：镜号、时间/时长、景别、镜头运动、画面、角色/位置、动作、情绪、环境/灯光、音效、对白。",
+        "每张卡还必须显示摄影技术参数：焦距、光圈、快门、ISO。",
         "底部：连续性备注，列出角色位置变化、重要道具、光线方向、身份保持原则。",
         "",
         "画面风格：",
@@ -518,8 +603,11 @@ export function buildChapterDirectorBoardPrompt(input: {
         "角色事实卡和参考图是身份最高依据；保持每个角色的物种/物体身份、固定造型、服装、轮廓和关键道具，不要发明新角色设计。",
         "C编号是强绑定身份：同一个 C编号在所有分镜卡里必须始终对应同一个角色，不能把 C1/C2/C3 的外形互换。",
         "分镜的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
+        "所有文字必须是清晰正常打印字，不要手写字、草绘字、潦草字或涂鸦字。",
         "所有可见文字统一使用中文；角色名、C编号和必要专有名词可保留原文。",
         "不要画成漫画页、海报或软件 UI 截图。",
+        "",
+        previousBoardReferenceNote,
         "",
         "项目信息：",
         `标题：${project.name || "未命名"}`,
@@ -569,8 +657,11 @@ export function buildChapterDirectorBoardPrompt(input: {
       "覆盖镜头里的构图动作线索只用于理解镜头、动作、场景和道具；若其中出现角色服装/外貌描述，与角色参考图或事实卡冲突时必须忽略。",
       "场景参考图用于确定环境布局、色彩、入口、桌面、墙面、灯光和道具。",
       "画面文字保持简短可读，并统一使用中文；角色名、C编号和必要专有名词可保留原文。",
+      "所有文字必须使用清晰正常打印字，不要手写字、草绘字、潦草字或涂鸦字。",
       "不要在图里写长段落；角色只用短标签：C1 名称、C2 名称、C3 名称。",
       "不要画成漫画页、海报或 UI 截图。",
+      "",
+      previousBoardReferenceNote,
       "",
       "按顺序使用附加参考图：",
       referenceLines.length ? referenceLines.join("\n") : "无可用参考图。",
@@ -597,6 +688,58 @@ export function buildChapterDirectorBoardPrompt(input: {
     ].join("\n");
   }
 
+  if (boardType === "hybridStoryboard") {
+    return [
+      "Create one wide 16:9 hybrid chapter director board combining a spatial continuity board and a text storyboard sheet.",
+      "Goal: the video model must understand scene space, character blocking, camera placement, movement, and the key text plan for every shot.",
+      "Do not include an action-flow panel. No separate action-flow area is needed.",
+      "",
+      "Fixed layout:",
+      `Top: printed title bar: "Hybrid Chapter Director Board B${String(boardIndex + 1).padStart(2, "0")}", plus project title, covered shot range, and total duration.`,
+      "Left 35%: colored overhead blocking map. Show scene layout, entrances/exits, C-number character positions, camera positions, movement arrows, eye lines, key props, and main light direction.",
+      "Right 65%: six vertical portrait storyboard cards in timeline order, arranged as a 2 x 3 grid. Each card has a colored keyframe thumbnail on top and a printed text table underneath.",
+      "Bottom strip: short continuity notes for character position changes, light direction, prop state, and continuity from the previous board.",
+      "",
+      "Each card must include these printed fields:",
+      "Shot / Time / Framing / Camera Move / Lens / Aperture / Shutter / ISO / Action / Dialogue or Sound.",
+      "All text must be clean normal printed typography, readable sans-serif, black or dark gray. Do not use handwriting, sketch lettering, scribbles, or doodle text. The video model must be able to read it.",
+      "",
+      "Image style:",
+      "Scenes must be colored, readable, and spatially clear. Follow scene references when available.",
+      "Characters may be simplified as clean colored symbols or simple figures, but each character must be identifiable with C-number + name + high-contrast color marker.",
+      "Use only the strongest character identity symbols: fruit/species color, body scale, fixed outfit, key prop, weapon, or tool.",
+      "Role fact cards and role references are the highest authority for identity. Preserve each character's species/object identity, fixed outfit, silhouette, key prop, and final referenced design.",
+      "C-number identity is binding: the same C-number must always be the same character across the whole board. Never swap C1/C2/C3 appearances.",
+      "Covered-shot composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
+      "Do not make a comic page, poster, software UI screenshot, or final video frame.",
+      "",
+      previousBoardReferenceNote,
+      "",
+      "Use the attached reference images in order:",
+      referenceLines.length ? referenceLines.join("\n") : "No attached references.",
+      "",
+      "Character labels:",
+      characterLabelLines.length ? characterLabelLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
+      "",
+      "Project:",
+      `title: ${project.name || "Untitled"}`,
+      `workspace: ${script.name || `script ${script.id}`}`,
+      `board: ${boardIndex + 1}/${totalBoards}`,
+      `video aspect ratio: ${project.videoRatio || "9:16"}`,
+      `project type: ${projectTypeText}`,
+      `visual style: ${visualStyleText}`,
+      "",
+      "Scene references:",
+      sceneLines.length ? sceneLines.join("\n") : "No scene asset is linked. Build a scene only from the storyboard descriptions.",
+      "",
+      "Other assets:",
+      otherAssetLines.length ? otherAssetLines.join("\n") : "No other assets.",
+      "",
+      "Storyboard card content:",
+      shotLines.join("\n"),
+    ].join("\n");
+  }
+
   if (boardType === "textStoryboard") {
     return [
       "Create one wide 16:9 text-rich storyboard director board for video-generation and editing reference.",
@@ -610,6 +753,7 @@ export function buildChapterDirectorBoardPrompt(input: {
       "Top title bar: board number, total duration, covered shot range, and project title.",
       "Main body: exactly 6 vertical portrait storyboard cards in timeline order when six shots are available. If fewer than 6 shots are covered, leave empty slots instead of changing the wide 16:9 board ratio. Each card has a colored keyframe thumbnail on top and a structured text table underneath.",
       "Each card text fields: shot number, time/duration, framing, camera move, visual, characters/position, action, emotion, environment/lighting, sound, dialogue.",
+      "Each card must also show camera technical settings: lens/focal length, aperture, shutter, and ISO.",
       "Bottom strip: continuity notes listing character position changes, important props, light direction, and identity-preservation rules.",
       "",
       "Image style:",
@@ -619,7 +763,10 @@ export function buildChapterDirectorBoardPrompt(input: {
       "Role fact cards and role references are the highest authority for identity. Preserve each character's species/object identity, fixed outfit, silhouette, key prop, and final referenced design.",
       "C-number identity is binding: the same C-number must always be the same character across every storyboard card. Never swap C1/C2/C3 appearances.",
       "Storyboard composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
+      "All text must use clean normal printed typography. Do not use handwriting, sketch lettering, scribbles, or doodle text.",
       "Do not make a comic page, poster, software UI screenshot, or final video frame.",
+      "",
+      previousBoardReferenceNote,
       "",
       "Project:",
       `title: ${project.name || "Untitled"}`,
@@ -669,10 +816,13 @@ export function buildChapterDirectorBoardPrompt(input: {
     "Colored production storyboard sheet, pencil-and-marker planning look, thin black panel lines, light paper background, cinematic but simple.",
     "The environment should be colored and readable. Characters should be simplified but clearly identifiable by fruit shape, color, label, and prop.",
     "Use only short character labels: C1 Name, C2 Name, C3 Name. Do not write long paragraphs inside the image.",
+    "All text must use clean normal printed typography, not handwriting or sketch lettering.",
     "All visible text must be English only. Do not use subtitles, UI, watermark, or dense text.",
     "Do not redesign the characters. Preserve each character's species/object identity, fixed outfit, silhouette, key prop, and final referenced design.",
     "C-number identity is binding: the same C-number must always be the same character across the whole board. Never swap C1/C2/C3 appearances.",
     "Covered-shot composition/action cues are only for camera, action, scene, and props. Ignore any clothing or appearance detail inside those cues if it conflicts with role references or role fact cards.",
+    "",
+    previousBoardReferenceNote,
     "",
     "Character labels:",
     characterLabelLines.length ? characterLabelLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
@@ -707,6 +857,24 @@ async function getAssetReferenceImages(assets: AssetRow[], maxCount = 12) {
     }
   }
   return references;
+}
+
+async function getPreviousDirectorBoardReference(projectId: number, scriptId: number, boardIndex: number) {
+  if (boardIndex <= 0) return null;
+  const previous = (await u
+    .db("o_directorBoard")
+    .where({ projectId, scriptId, state: "已完成" })
+    .whereNotNull("filePath")
+    .where("index", "<", boardIndex)
+    .orderBy("index", "desc")
+    .orderBy("id", "desc")
+    .first()) as DirectorBoardRow | undefined;
+  if (!previous?.filePath) return null;
+  try {
+    return { type: "image" as const, base64: await u.oss.getImageBase64(previous.filePath) };
+  } catch {
+    return null;
+  }
 }
 
 async function attachRoleFactCards(projectId: number, assets: AssetRow[]) {
@@ -774,9 +942,10 @@ async function runDirectorBoardImageTask(
     prompt: string;
     promptLanguage: DirectorBoardPromptLanguage;
     model: string;
+    boardIndex: number;
   },
 ) {
-  const { project, script, storyboards, assets, prompt, promptLanguage, model } = data;
+  const { project, script, storyboards, assets, prompt, promptLanguage, model, boardIndex } = data;
   const savePath = `/${project.id}/directorBoard/${script.id}/${uuidv4()}.jpg`;
   try {
     await runDirectorBoardImageTaskWithRetry(rowId, async () => {
@@ -787,10 +956,13 @@ async function runDirectorBoardImageTask(
           updateTime: Date.now(),
         });
       }
+      const previousBoardReference = await getPreviousDirectorBoardReference(project.id, script.id, boardIndex);
+      const referenceList = await getAssetReferenceImages(assets, previousBoardReference ? 11 : 12);
+      if (previousBoardReference) referenceList.push(previousBoardReference);
       const image = await u.Ai.Image(model as `${string}:${string}`).run(
         {
           prompt: finalPrompt,
-          referenceList: await getAssetReferenceImages(assets),
+          referenceList,
           size: (project.imageQuality || "1K") as "1K" | "2K" | "4K",
           aspectRatio: "16:9",
         },
@@ -834,7 +1006,9 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
 
   const baseQuery = u.db("o_storyboard").where({ projectId, scriptId });
   if (options.storyboardIds?.length) baseQuery.whereIn("id", options.storyboardIds);
-  const storyboards = (await baseQuery.orderBy("index", "asc").select("id", "index", "prompt", "videoDesc", "duration", "filePath", "trackId")) as StoryboardRow[];
+  const storyboards = (await baseQuery
+    .orderBy("index", "asc")
+    .select("id", "index", "prompt", "videoDesc", "duration", "filePath", "trackId", "focalLength", "aperture", "shutterSpeed", "iso")) as StoryboardRow[];
   if (!storyboards.length) throw new Error("当前章节没有可用于导演板的分镜。");
 
   const shotsPerBoard = Math.min(Math.max(Number(options.shotsPerBoard || 6), 1), 8);
@@ -847,6 +1021,17 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
   }
 
   const created: DirectorBoardRow[] = [];
+  const imageTasks: Array<{
+    rowId: number;
+    project: ProjectRow;
+    script: ScriptRow;
+    storyboards: StoryboardRow[];
+    assets: AssetRow[];
+    prompt: string;
+    promptLanguage: DirectorBoardPromptLanguage;
+    model: string;
+    boardIndex: number;
+  }> = [];
   for (const [boardIndex, chunk] of chunks.entries()) {
     const assets = await getStoryboardAssets(projectId, chunk.map((item) => item.id));
     const promptLanguage = detectDirectorBoardPromptLanguage({ project, script, storyboards: chunk });
@@ -863,7 +1048,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
     const [rowId] = await u.db("o_directorBoard").insert({
       projectId,
       scriptId,
-      name: `${boardType === "textStoryboard" ? "文字分镜导演板" : "章节导演板"} ${boardIndex + 1}/${chunks.length}`,
+      name: `${directorBoardTypeName(boardType)} ${boardIndex + 1}/${chunks.length}`,
       prompt,
       state: shouldGenerateImages ? "生成中" : "未生成",
       reason: "",
@@ -878,8 +1063,16 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
     const row = (await u.db("o_directorBoard").where("id", rowId).first()) as DirectorBoardRow;
     created.push(row);
     if (shouldGenerateImages) {
-      void runDirectorBoardImageTask(Number(rowId), { project, script, storyboards: chunk, assets, prompt, promptLanguage, model });
+      imageTasks.push({ rowId: Number(rowId), project, script, storyboards: chunk, assets, prompt, promptLanguage, model, boardIndex });
     }
+  }
+
+  if (imageTasks.length) {
+    void (async () => {
+      for (const task of imageTasks) {
+        await runDirectorBoardImageTask(task.rowId, task);
+      }
+    })();
   }
 
   return created;
@@ -902,7 +1095,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
     .where({ projectId, scriptId })
     .whereIn("id", storyboardIds)
     .orderBy("index", "asc")
-    .select("id", "index", "prompt", "videoDesc", "duration", "filePath", "trackId")) as StoryboardRow[];
+    .select("id", "index", "prompt", "videoDesc", "duration", "filePath", "trackId", "focalLength", "aperture", "shutterSpeed", "iso")) as StoryboardRow[];
   if (!storyboards.length) throw new Error("该章节导演板对应的分镜不存在，无法重绘。");
 
   const totalBoardsRow = (await u.db("o_directorBoard").where({ projectId, scriptId }).count({ count: "id" }).first()) as { count?: number | string } | undefined;
@@ -925,7 +1118,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
   if (!model) throw new Error("项目未配置出图模型，无法重绘章节导演板。");
 
   await u.db("o_directorBoard").where("id", boardId).update({
-    name: `${boardType === "textStoryboard" ? "文字分镜导演板" : "章节导演板"} ${boardIndex + 1}/${totalBoards}`,
+    name: `${directorBoardTypeName(boardType)} ${boardIndex + 1}/${totalBoards}`,
     prompt,
     filePath: null,
     state: "生成中",
@@ -936,7 +1129,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
     updateTime: Date.now(),
   });
 
-  void runDirectorBoardImageTask(boardId, { project, script, storyboards, assets, prompt, promptLanguage, model });
+  void runDirectorBoardImageTask(boardId, { project, script, storyboards, assets, prompt, promptLanguage, model, boardIndex });
   return (await u.db("o_directorBoard").where("id", boardId).first()) as DirectorBoardRow;
 }
 

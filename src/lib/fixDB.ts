@@ -150,6 +150,10 @@ export default async (knex: Knex): Promise<void> => {
   // 添加新字段
   await addColumn("o_agentDeploy", "maxOutputTokens", "integer");
   await addColumn("o_vendorConfig", "hiddenModels", "text");
+  await addColumn("o_storyboard", "focalLength", "text");
+  await addColumn("o_storyboard", "aperture", "text");
+  await addColumn("o_storyboard", "shutterSpeed", "text");
+  await addColumn("o_storyboard", "iso", "text");
   await addColumn("o_directorBoard", "flowId", "integer");
   await addColumn("o_directorBoard", "boardType", "text");
   await addColumn("o_roleFactCards", "assetId", "integer");

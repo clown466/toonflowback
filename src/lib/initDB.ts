@@ -444,6 +444,10 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
         table.text("reason");
         table.text("track");
         table.text("videoDesc");
+        table.text("focalLength");
+        table.text("aperture");
+        table.text("shutterSpeed");
+        table.text("iso");
         table.integer("shouldGenerateImage"); // 0 否  1 是
         table.integer("projectId");
         table.integer("flowId"); //工作流id

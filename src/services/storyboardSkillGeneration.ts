@@ -17,6 +17,7 @@ import {
   ensureProductionScript,
   formatChapterSelectionLabel,
   generateProjectStoryboardDraft,
+  inferCameraTechnicalSettings,
   insertDraftItems,
   matchAssets,
   nonEmpty,
@@ -55,6 +56,10 @@ interface SkillShot {
   scene?: string;
   shotSize?: string;
   cameraMove?: string;
+  focalLength?: string;
+  aperture?: string;
+  shutterSpeed?: string;
+  iso?: string;
   action?: string;
   emotion?: string;
   lighting?: string;
@@ -104,7 +109,7 @@ const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
     "1. 只读取 selectedChapters 中的 event 和 chapterData，禁止引用未选章节。",
     "2. 先抽取事件节拍：地点、角色、动作目标、冲突/信息点、情绪变化、关键道具。",
     "3. 按事件复杂度和章节总时长预算决定镜头数量：未指定数量时不要默认 3 个；英文短剧应快切、短镜头、高爆发。",
-    "4. 先生成 storyboardTable，字段固定为：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
+    "4. 先生成 storyboardTable，字段固定为：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、运镜、焦距、光圈、快门、ISO、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "5. 再把分镜表逐行转换为 shots，shots.length 必须等于 storyboardTable 数据行数。",
     "",
     "每条 shot 必须能直接写入生产分镜：videoDesc 写完整视频描述，imagePrompt 写关键帧图像提示词，associateAssetNames 只能填写资产库中已存在的名称。",
@@ -245,6 +250,10 @@ function parseStoryboardJson(text: string): SkillStoryboardJson {
       scene: nonEmpty(shot.scene),
       shotSize: nonEmpty(shot.shotSize),
       cameraMove: nonEmpty(shot.cameraMove),
+      focalLength: nonEmpty(shot.focalLength) ?? nonEmpty(shot.lens) ?? nonEmpty(shot.cameraLens),
+      aperture: nonEmpty(shot.aperture),
+      shutterSpeed: nonEmpty(shot.shutterSpeed) ?? nonEmpty(shot.shutter),
+      iso: nonEmpty(shot.iso) ?? nonEmpty(shot.ISO),
       action: nonEmpty(shot.action),
       emotion: nonEmpty(shot.emotion),
       lighting: nonEmpty(shot.lighting),
@@ -550,6 +559,10 @@ function mergeStoryboardShots(first: SkillShot, second: SkillShot): SkillShot {
     action: joinShotText([first.action, second.action]),
     emotion: first.emotion || second.emotion,
     lighting: first.lighting || second.lighting,
+    focalLength: first.focalLength || second.focalLength,
+    aperture: first.aperture || second.aperture,
+    shutterSpeed: first.shutterSpeed || second.shutterSpeed,
+    iso: first.iso || second.iso,
     sound: joinShotText([first.sound, second.sound]),
     dialogue: mergeShotDialogue(first.dialogue, second.dialogue),
     beat: joinShotText([first.beat, second.beat]),
@@ -798,6 +811,7 @@ function toDraftItems(project: ProjectRow, parsed: SkillStoryboardJson, assets: 
       reference: shot.reference ?? summarizeReference([...sceneAssets, ...propAssets]),
       shotSize: shot.shotSize,
       cameraMove: shot.cameraMove,
+      ...inferCameraTechnicalSettings(shot),
       action: shot.action,
       emotion: shot.emotion,
       scene,
@@ -956,7 +970,7 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "2. 先生成 storyboardTable，表中每一行代表一个真实分镜；为节省模型输出，最终 JSON 的 storyboardTable 字段可以填空字符串，系统会用 shots 字段重建表格。",
     "3. 再按 storyboardTable 逐行生成 shots；shots.length 必须等于 storyboardTable 的数据行数。",
     "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
-    "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
+    "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、运镜、焦距、光圈、快门、ISO、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "6. 角色图字段可先填空；系统会按 associateAssetNames 匹配资产库图片补齐显示。",
     `7. 单条分镜 duration 应以 2-4s 为主，动作插入快切允许 ${MIN_STORYBOARD_SHOT_DURATION}-2s；系统会把普通单镜头压到 ${PREFERRED_STORYBOARD_SHOT_MAX}s 以内。`,
     "8. 4-15s 是单张章节导演板/一次 AI 视频生成片段的总时长范围，不是单条分镜的最小时长。后续系统会把连续分镜按不超过 15s 分组到导演板。",
@@ -964,8 +978,9 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "10. 一句台词不必一个镜头拍完。长台词必须拆成多个 2-4s 镜头，用正反打、反应、道具插入、越肩、推近、横移等多角度完成。",
     "11. 上下文 dialogueTimingRules.sourceDialogueFastCutChunks 是系统预切好的对白片段计划；生成 shots 时优先按这些片段分配，不要从 selectedChapters.chapterData 复制完整长句到单个 shot.dialogue。",
     "12. 不要把所有镜头都写成 2s。合理分布：爆点/插入 1-2s，普通动作 3s，对白/反应/重要停顿 3-4s。",
-    planning ? `13. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
-    planning?.sourceDialogueSeconds ? `14. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
+    "13. 每个 shot 必须给出镜头技术参数：focalLength（焦距，如 24mm/35mm/50mm/85mm）、aperture（光圈，如 f/2.8/f/4/f/5.6）、shutterSpeed（快门，如 1/48 或 1/96）、iso（如 ISO 400/ISO 640/ISO 800）。参数应服务镜头语言，不能机械重复。",
+    planning ? `14. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
+    planning?.sourceDialogueSeconds ? `15. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",
@@ -991,6 +1006,10 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
             scene: "可选",
             shotSize: "可选",
             cameraMove: "可选",
+            focalLength: "焦距，如 35mm",
+            aperture: "光圈，如 f/4",
+            shutterSpeed: "快门，如 1/48",
+            iso: "感光度，如 ISO 640",
             action: "可选",
             emotion: "可选",
             lighting: "可选",

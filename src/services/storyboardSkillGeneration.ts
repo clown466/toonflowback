@@ -21,6 +21,7 @@ import {
   insertDraftItems,
   matchAssets,
   nonEmpty,
+  parseEvent,
   parseStoryboardChapterIndexes,
   selectStoryboardNovels,
   shouldAppend,
@@ -151,6 +152,7 @@ const STORYBOARD_MODEL_KEY = "productionAgent:storyboardTableAgent";
 const MAX_MODEL_CONTEXT_ASSETS = 12;
 const MAX_STORYBOARD_SKILL_PROMPT_CHARS = 4200;
 const STORYBOARD_MODEL_TIMEOUT_MS = 180000;
+const STABLE_FALLBACK_MAX_SOURCE_BEATS = 18;
 
 function fallback(projectId: number, options: GenerateProjectStoryboardWithSkillOptions, reason: string) {
   return generateProjectStoryboardDraft(projectId, options).then((result) => ({
@@ -202,6 +204,10 @@ function createStoryboardModelSignal(parent?: AbortSignal) {
 function isAbortLikeError(error: unknown) {
   if (!(error instanceof Error)) return false;
   return error.name === "AbortError" || /abort|aborted|cancel/i.test(error.message);
+}
+
+function isRecoverableStoryboardModelFailure(message: string) {
+  return /分镜模型响应超过|storyboard_model_timeout|timed?\s*out|timeout|socket hang up|ECONNRESET|ETIMEDOUT/i.test(message);
 }
 
 async function resolveStoryboardSkill(skillId?: string, requestText?: string): Promise<StoryboardGenerationSkill | null> {
@@ -556,6 +562,199 @@ function mergeAssociateAssetNames(first: string[], second: string[]) {
     result.push(cleaned);
   }
   return result;
+}
+
+function splitSourceBeats(text: string, maxCount = STABLE_FALLBACK_MAX_SOURCE_BEATS) {
+  const source = String(text ?? "")
+    .replace(/\r/g, "\n")
+    .split(/\n+|(?<=[.!?。！？；;])\s+/)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter((part) => part.length >= 8 && !/^\|?\s*(?:事件|角色|章节|chapter|scene|shot|镜号)\b/i.test(part));
+  const beats: string[] = [];
+  for (const part of source) {
+    if (beats.length >= maxCount) break;
+    if (part.length <= 220) {
+      beats.push(part);
+      continue;
+    }
+    for (let index = 0; index < part.length && beats.length < maxCount; index += 180) {
+      const chunk = part.slice(index, index + 220).trim();
+      if (chunk.length >= 8) beats.push(chunk);
+    }
+  }
+  return uniqueTextParts(beats).slice(0, maxCount);
+}
+
+function buildStableFallbackBeatPool(project: ProjectRow, novels: NovelRow[], scriptContent: string) {
+  const result: Array<{ title: string; summary: string; sourceText: string }> = [];
+  if (novels.length) {
+    for (const novel of novels) {
+      const parsed = parseEvent(novel.event);
+      const title = parsed.title || formatChapterSelectionLabel(novel);
+      const eventSummary = nonEmpty(parsed.summary);
+      if (eventSummary) {
+        result.push({
+          title,
+          summary: eventSummary,
+          sourceText: [parsed.assetHint, parsed.summary, novel.chapterData].filter(Boolean).join("\n"),
+        });
+      }
+      const sourceBeats = splitSourceBeats(String(novel.chapterData ?? ""));
+      for (const [index, beat] of sourceBeats.entries()) {
+        result.push({
+          title: `${title} beat ${index + 1}`,
+          summary: beat,
+          sourceText: [parsed.assetHint, parsed.summary, beat].filter(Boolean).join("\n"),
+        });
+      }
+    }
+  } else {
+    for (const [index, beat] of splitSourceBeats([scriptContent, project.intro].filter(Boolean).join("\n\n")).entries()) {
+      result.push({
+        title: `source beat ${index + 1}`,
+        summary: beat,
+        sourceText: beat,
+      });
+    }
+  }
+  if (!result.length) {
+    result.push({
+      title: cleanName(project.name) || "project beat",
+      summary: cleanName(project.intro) || "项目主线冲突推进",
+      sourceText: [project.name, project.intro, project.type].filter(Boolean).join("\n"),
+    });
+  }
+  return result.slice(0, STABLE_FALLBACK_MAX_SOURCE_BEATS);
+}
+
+function stableFallbackShotCount(planning: StoryboardPlanningHint) {
+  if (planning.explicitShotCount) return planning.explicitShotCount;
+  const durationBased = Math.ceil((planning.targetDurationMax || STANDARD_CHAPTER_TARGET_MAX_SECONDS) / DEFAULT_STORYBOARD_SHOT_DURATION);
+  const dialogueBased = planning.sourceDialogueFastCutChunks.length ? planning.sourceDialogueFastCutChunks.length + Math.ceil(planning.sourceDialogueFastCutChunks.length / 3) : 0;
+  return clamp(Math.max(planning.estimatedMinimumShots, durationBased, dialogueBased), planning.estimatedMinimumShots, planning.estimatedMaximumShots || MAX_STORYBOARD_SHOTS);
+}
+
+function inferStableFallbackLanguage(project: ProjectRow, novels: NovelRow[], requestText?: string) {
+  const text = [
+    requestText,
+    project.name,
+    project.intro,
+    project.type,
+    project.artStyle,
+    project.directorManual,
+    ...novels.flatMap((novel) => [novel.chapter, novel.event, novel.chapterData]),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  if (/美剧|english|american|short drama|sitcom|drama/i.test(text)) return "en";
+  return hasMostlyEnglishText(text) ? "en" : "zh";
+}
+
+function stableFallbackCameraPlan(index: number, english: boolean) {
+  const englishPlans = [
+    { shotSize: "wide establishing shot", cameraMove: "slow push-in", functionName: "establish location and pressure" },
+    { shotSize: "medium tracking shot", cameraMove: "side tracking move", functionName: "advance the action beat" },
+    { shotSize: "over-the-shoulder shot", cameraMove: "controlled handheld hold", functionName: "carry dialogue and spatial relation" },
+    { shotSize: "tight close-up", cameraMove: "small push-in", functionName: "catch reaction and emotional turn" },
+    { shotSize: "insert detail shot", cameraMove: "quick cut-in", functionName: "highlight prop, clue, or impact" },
+    { shotSize: "two-shot", cameraMove: "subtle pan", functionName: "show character conflict in one frame" },
+  ];
+  const chinesePlans = [
+    { shotSize: "全景建立镜头", cameraMove: "缓慢推入", functionName: "建立地点和压力" },
+    { shotSize: "中景跟拍", cameraMove: "横移跟拍", functionName: "推进动作节拍" },
+    { shotSize: "过肩镜头", cameraMove: "轻微手持保持", functionName: "承接对白和空间关系" },
+    { shotSize: "特写镜头", cameraMove: "小幅推近", functionName: "捕捉反应和情绪转折" },
+    { shotSize: "道具插入镜头", cameraMove: "快速切入", functionName: "突出道具、线索或冲击" },
+    { shotSize: "双人镜头", cameraMove: "轻微摇移", functionName: "同框呈现角色冲突" },
+  ];
+  const plans = english ? englishPlans : chinesePlans;
+  return plans[index % plans.length]!;
+}
+
+function stableFallbackDuration(index: number, dialogue?: string) {
+  if (dialogue && !isNoDialogueText(dialogue)) return clamp(estimateSpeechDurationSeconds(dialogue), 2, PREFERRED_STORYBOARD_SHOT_MAX);
+  const pattern = [2, 3, 3, 4, 2, 3, 4, 3];
+  return pattern[index % pattern.length] ?? DEFAULT_STORYBOARD_SHOT_DURATION;
+}
+
+function buildStableFallbackParsed(input: {
+  project: ProjectRow;
+  novels: NovelRow[];
+  assets: AssetRow[];
+  scriptContent: string;
+  planning: StoryboardPlanningHint;
+  requestText?: string;
+}): SkillStoryboardJson {
+  const english = inferStableFallbackLanguage(input.project, input.novels, input.requestText) === "en";
+  const beatPool = buildStableFallbackBeatPool(input.project, input.novels, input.scriptContent);
+  const targetCount = stableFallbackShotCount(input.planning);
+  const dialogueChunks = input.planning.sourceDialogueFastCutChunks;
+  const shots: SkillShot[] = [];
+
+  for (let index = 0; index < targetCount; index++) {
+    const beat = beatPool[index % beatPool.length]!;
+    const plan = stableFallbackCameraPlan(index, english);
+    const dialogue = dialogueChunks[index]?.text || (index % 4 === 1 && dialogueChunks.length ? dialogueChunks[index % dialogueChunks.length]?.text : "");
+    const associatedAssets = matchAssets(input.assets, `${beat.title}\n${beat.sourceText}\n${dialogue || ""}`, 7);
+    const roleAssets = associatedAssets.filter((asset) => asset.type === "role");
+    const sceneAssets = associatedAssets.filter((asset) => asset.type === "scene");
+    const propAssets = associatedAssets.filter((asset) => asset.type === "tool");
+    const assetNames = associatedAssets.map((asset) => cleanName(asset.name)).filter(Boolean);
+    const role1 = cleanName(roleAssets[0]?.name);
+    const role2 = cleanName(roleAssets.find((asset) => asset.id !== roleAssets[0]?.id)?.name);
+    const scene = cleanName(sceneAssets[0]?.name) || (english ? "current chapter location" : "当前章节场景");
+    const reference = summarizeReference([...sceneAssets, ...propAssets]);
+    const duration = stableFallbackDuration(index, dialogue);
+    const dialogueText = dialogue || (english ? "No dialogue" : "无台词");
+    const beatSummary = compactText(beat.summary, 220);
+    const roleText = [role1, role2].filter(Boolean).join(", ");
+    const action = english
+      ? `${plan.functionName}: ${beatSummary}`
+      : `${plan.functionName}：${beatSummary}`;
+    const videoDesc = english
+      ? `Shot ${index + 1}: ${plan.shotSize}, ${plan.cameraMove}. ${beatSummary}${roleText ? ` Main assets: ${roleText}.` : ""} Scene: ${scene}. Dialogue: ${dialogueText}.`
+      : `镜头${index + 1}：${plan.shotSize}，${plan.cameraMove}。${beatSummary}${roleText ? ` 主要资产：${roleText}。` : ""}场景：${scene}。对白：${dialogueText}。`;
+    const imagePrompt = [
+      english ? `Storyboard keyframe, ${plan.shotSize}, ${plan.cameraMove}.` : `分镜关键帧，${plan.shotSize}，${plan.cameraMove}。`,
+      beatSummary,
+      roleText ? (english ? `Use project character assets: ${roleText}.` : `使用项目角色资产：${roleText}。`) : "",
+      scene ? (english ? `Location: ${scene}.` : `场景：${scene}。`) : "",
+      assetNames.length ? (english ? `Reference assets: ${assetNames.join(", ")}.` : `参考资产：${assetNames.join("、")}。`) : "",
+      english ? "Clear composition, cinematic lighting, no subtitles, no UI, no watermark." : "构图清晰，电影感光影，无字幕，无界面，无水印。",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    shots.push({
+      duration,
+      videoDesc,
+      imagePrompt,
+      associateAssetNames: assetNames,
+      shouldGenerateImage: true,
+      narrativeFunction: plan.functionName,
+      pictureDescription: beatSummary,
+      role1,
+      role1Description: assetDescription(roleAssets[0]),
+      role2,
+      role2Description: assetDescription(roleAssets.find((asset) => asset.id !== roleAssets[0]?.id)),
+      reference,
+      scene,
+      shotSize: plan.shotSize,
+      cameraMove: plan.cameraMove,
+      ...inferCameraTechnicalSettings({ shotSize: plan.shotSize, cameraMove: plan.cameraMove, action, lighting: input.project.artStyle }),
+      action,
+      emotion: english ? "fast short-drama tension" : "快节奏短剧情绪推进",
+      lighting: english ? "follow the project visual manual and keep the subject readable" : "遵循项目视觉手册，主体清晰可读",
+      sound: dialogue ? (english ? "dialogue with room tone and action accents" : "对白 + 环境音 + 动作音") : english ? "room tone and action accents" : "环境音 + 动作音",
+      dialogue: dialogueText,
+      beat: beat.title,
+      videoMotionPrompt: english
+        ? `${plan.shotSize}, ${plan.cameraMove}, ${action}, duration ${duration}s`
+        : `${plan.shotSize}，${plan.cameraMove}，${action}，时长 ${duration}s`,
+    });
+  }
+
+  return repairStoryboardQuality(normalizeStoryboardTimings({ storyboardTable: "", shots }, input.planning), input.planning);
 }
 
 function mergeStoryboardShots(first: SkillShot, second: SkillShot): SkillShot {
@@ -1143,6 +1342,7 @@ export async function generateProjectStoryboardWithSkill(
   if (!skill) stopStructuredStoryboardWrite("没有可用分镜 Skill");
 
   let parsed: SkillStoryboardJson | undefined;
+  let stableFallbackReason = "";
   const requestText = [sourceText, options.userRequirement].filter(Boolean).join("\n");
   const modelContext = buildModelContext(project, novels, assets, scriptContent, requestText);
   const planning = modelContext.storyboardPlanning as StoryboardPlanningHint;
@@ -1165,9 +1365,23 @@ export async function generateProjectStoryboardWithSkill(
       if (attempt === 2) throw new Error(`模型分镜质量不合格：${qualityReason}`);
     }
   } catch (error) {
+    if (options.abortSignal?.aborted) throw error;
     const message = error instanceof Error ? error.message : "模型生成失败";
     if (message.startsWith("模型分镜质量不合格")) throw new Error(message);
-    stopStructuredStoryboardWrite(message);
+    if (!isRecoverableStoryboardModelFailure(message)) stopStructuredStoryboardWrite(message);
+    stableFallbackReason = `${message}；已改用当前章节事件、对白切片和资产库生成稳定分镜草案`;
+    console.warn("[storyboardSkillGeneration] structured model failed, using stable fallback:", message);
+    parsed = normalizeStoryboardTimings(
+      buildStableFallbackParsed({
+        project,
+        novels,
+        assets,
+        scriptContent,
+        planning,
+        requestText,
+      }),
+      planning,
+    );
   }
 
   if (!parsed) stopStructuredStoryboardWrite("模型未生成可用分镜");
@@ -1203,6 +1417,7 @@ export async function generateProjectStoryboardWithSkill(
     storyboardTable,
     usedSkillId: skill.id,
     usedSkillName: skill.name,
-    message: `${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。`,
+    fallbackReason: stableFallbackReason || undefined,
+    message: `${stableFallbackReason ? "分镜模型未及时返回，已启用稳定分镜草案；" : ""}${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。`,
   };
 }

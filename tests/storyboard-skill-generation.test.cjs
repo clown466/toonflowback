@@ -79,6 +79,10 @@ async function createSchema(db) {
     table.text('track');
     table.integer('trackId');
     table.text('videoDesc');
+    table.text('focalLength');
+    table.text('aperture');
+    table.text('shutterSpeed');
+    table.text('iso');
     table.integer('shouldGenerateImage');
     table.integer('index');
     table.integer('createTime');
@@ -155,6 +159,12 @@ async function main() {
             capturedPrompt = input.prompt;
             capturedPrompts.push(input.prompt);
             const response = mockStoryboardResponses.shift();
+            if (response instanceof Error) throw response;
+            if (response && typeof response === 'object' && response.__throw) {
+              const error = new Error(response.message || String(response.__throw));
+              if (response.name) error.name = response.name;
+              throw error;
+            }
             const text = typeof response === 'string' ? response : JSON.stringify(response);
             return {
               textStream: (async function* () {
@@ -260,6 +270,52 @@ async function main() {
   assert.strictEqual(capturedPrompts.length, 1, 'structured path should still call the model once');
   const invalidStoryboards = await db('o_storyboard').where({ projectId: 3 });
   assert.strictEqual(invalidStoryboards.length, 0, 'invalid model output must not write fallback storyboards');
+
+  await db('o_project').insert({
+    id: 9,
+    name: 'Timeout Stable Fallback',
+    intro: 'English-language fast drama',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Keep the chapter under two minutes with fast readable cuts',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 90,
+    projectId: 9,
+    chapterIndex: 17,
+    chapter: 'juben17',
+    chapterData:
+      'Chloe checks the bunker monitor. Bob locks the pressure door. Leo raises the frying pan and notices the alarm reflection. Chloe says, "Move now. If that red light turns solid, the whole bunker wakes up." Bob answers, "Then stop talking and pick a corridor." Leo says, "Left corridor smells less explosive." The team rushes into the service hall while the camera cuts between faces, boots, and the alarm panel.',
+    event: '| juben17 | Chloe, Bob, Leo, bunker | The team escapes the bunker alarm under fast pressure |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 91, projectId: 9, name: 'Chloe', type: 'role', describe: 'peach lead', prompt: 'Chloe prompt' },
+    { id: 92, projectId: 9, name: 'Bob', type: 'role', describe: 'orange soldier', prompt: 'Bob prompt' },
+    { id: 93, projectId: 9, name: 'Leo', type: 'role', describe: 'yellow lemon', prompt: 'Leo prompt' },
+    { id: 94, projectId: 9, name: 'bunker', type: 'scene', describe: 'safe bunker', prompt: 'bunker prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  mockStoryboardResponses = [{ __throw: true, message: '分镜模型响应超过 180 秒，请检查当前文本模型是否可用，或切换更快的文本模型后重试' }];
+  const timeoutFallbackResult = await service.generateProjectStoryboardWithSkill(9, {
+    sourceText: '请针对 juben17 重新生成分镜表',
+    force: true,
+  });
+  assert.ok(timeoutFallbackResult.createdCount >= 8, `timeout fallback should create a real multi-shot draft, got ${timeoutFallbackResult.createdCount}`);
+  assert.ok(String(timeoutFallbackResult.fallbackReason).includes('稳定分镜草案'), timeoutFallbackResult.fallbackReason);
+  assert.ok(String(timeoutFallbackResult.message).includes('稳定分镜草案'), timeoutFallbackResult.message);
+  assert.strictEqual(capturedPrompts.length, 1, 'timeout fallback should call the structured model once before local recovery');
+  assert.ok(capturedPrompts[0].includes('juben17'), 'target chapter should reach the model before timeout');
+  const timeoutStoryboards = await db('o_storyboard').where({ projectId: 9, scriptId: timeoutFallbackResult.episodesId }).orderBy('index');
+  assert.strictEqual(timeoutStoryboards.length, timeoutFallbackResult.createdCount);
+  assert.ok(timeoutStoryboards.every((row) => Number(row.duration) >= 1 && Number(row.duration) <= 4), 'fallback shots should keep fast 1-4s pacing');
+  const timeoutTotal = timeoutStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
+  assert.ok(timeoutTotal <= 120, `fallback total duration should stay under two minutes, got ${timeoutTotal}s`);
+  assert.ok(timeoutStoryboards.some((row) => String(row.videoDesc).includes('Chloe')), 'fallback should still use matched chapter assets');
+  assert.ok(timeoutStoryboards.some((row) => String(row.prompt).includes('Reference assets')), 'fallback prompts should be production-ready keyframe prompts');
 
   await db('o_project').insert({
     id: 4,

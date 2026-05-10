@@ -335,6 +335,36 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     return await normalizeImageResult(raw);
   };
 
+  const pollAirelayzoneImageTask = async (taskId: string): Promise<string> => {
+    const result = await pollTask(async () => {
+      const response = await axios.get(`${baseUrl}/images/tasks/${taskId}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        validateStatus: () => true,
+      });
+      if (response.status < 200 || response.status >= 300) {
+        return {
+          completed: true,
+          error: `custom1图片异步任务查询失败，接口: /images/tasks/${taskId}, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`,
+        };
+      }
+      const status = String(response.data?.status || "").toLowerCase();
+      if (status === "succeeded") {
+        const raw = pickImageResult(response.data?.response || response.data);
+        if (!raw || typeof raw !== "string") {
+          return { completed: true, error: `custom1图片异步任务成功但未找到图片URL/base64: ${JSON.stringify(response.data).slice(0, 800)}` };
+        }
+        return { completed: true, data: raw };
+      }
+      if (status === "failed") {
+        return { completed: true, error: response.data?.error?.message || response.data?.message || JSON.stringify(response.data).slice(0, 800) };
+      }
+      return { completed: false };
+    }, 5000, 900000);
+    if (result.error) throw new Error(result.error);
+    if (!result.data) throw new Error("custom1图片异步任务未返回图片结果");
+    return await normalizeImageResult(result.data);
+  };
+
   if (imageBase64List.length && usesAirelayzoneGenerationReferences) {
     const imageUrls = await Promise.all(imageBase64List.map((base64) => base64ToPublicUrl(base64, "image", vendor.inputValues.publicOssBaseUrl || "")));
     const body: Record<string, any> = {
@@ -346,14 +376,24 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     };
     if (requestResolution) body.resolution = requestResolution;
     if (shouldSendQuality) body.quality = resolvedQuality;
-    logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=airelayzoneImageUrls`);
-    const response = await axios.post(`${baseUrl}/images/generations`, body, {
+    logger(`[custom1 imageRequest] POST /images/generations/async baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=airelayzoneImageUrlsAsync`);
+    const response = await axios.post(`${baseUrl}/images/generations/async`, body, {
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
       validateStatus: () => true,
     });
-    return await parseAxiosResponse(response, "/images/generations");
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`custom1图片请求失败，接口: /images/generations/async, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
+    }
+    const taskId = response.data?.id || response.data?.task_id || response.data?.taskId;
+    if (!taskId) {
+      const immediate = pickImageResult(response.data);
+      if (immediate && typeof immediate === "string") return await normalizeImageResult(immediate);
+      throw new Error(`custom1图片异步提交响应中未找到任务ID: ${JSON.stringify(response.data).slice(0, 800)}`);
+    }
+    logger(`[custom1 imageRequest] airelayzone async task=${taskId}`);
+    return await pollAirelayzoneImageTask(String(taskId));
   }
 
   if (imageBase64List.length && referenceTransport === "publicUrlJson") {

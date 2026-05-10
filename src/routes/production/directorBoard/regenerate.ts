@@ -14,13 +14,15 @@ export default router.post(
     scriptId: z.number(),
     boardId: z.number(),
     model: z.string().optional(),
+    imageSize: z.enum(["1K", "2K", "4K"]).optional(),
+    imageQuality: z.enum(["1K", "2K", "4K"]).optional(),
     boardType: z.enum(["continuity", "textStoryboard", "hybridStoryboard"]).optional(),
     usePreviousBoardReference: z.boolean().optional(),
   }),
   async (req, res) => {
     try {
-      const { projectId, scriptId, boardId, model, boardType, usePreviousBoardReference } = req.body;
-      res.status(200).send(success(await regenerateDirectorBoard(projectId, scriptId, boardId, { model, boardType, usePreviousBoardReference })));
+      const { projectId, scriptId, boardId, model, imageSize, imageQuality, boardType, usePreviousBoardReference } = req.body;
+      res.status(200).send(success(await regenerateDirectorBoard(projectId, scriptId, boardId, { model, imageSize: imageSize || imageQuality, boardType, usePreviousBoardReference })));
     } catch (e) {
       res.status(400).send(error(u.error(e).message));
     }

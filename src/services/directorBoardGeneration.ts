@@ -73,6 +73,8 @@ interface RoleFactCardRow {
 export interface QueueDirectorBoardOptions {
   storyboardIds?: number[];
   model?: string;
+  imageSize?: DirectorBoardImageSize;
+  imageQuality?: DirectorBoardImageSize;
   boardType?: DirectorBoardType;
   shotsPerBoard?: number;
   replace?: boolean;
@@ -82,12 +84,15 @@ export interface QueueDirectorBoardOptions {
 
 export interface RegenerateDirectorBoardOptions {
   model?: string;
+  imageSize?: DirectorBoardImageSize;
+  imageQuality?: DirectorBoardImageSize;
   boardType?: DirectorBoardType;
   usePreviousBoardReference?: boolean;
 }
 
 export type DirectorBoardPromptLanguage = "english" | "chinese";
 export type DirectorBoardType = "continuity" | "textStoryboard" | "hybridStoryboard";
+type DirectorBoardImageSize = "1K" | "2K" | "4K";
 
 const MAX_DIRECTOR_BOARD_DURATION_SECONDS = 15;
 const DEFAULT_DIRECTOR_BOARD_TYPE: DirectorBoardType = "continuity";
@@ -96,6 +101,12 @@ function directorBoardTypeName(boardType: DirectorBoardType) {
   if (boardType === "textStoryboard") return "文字分镜导演板";
   if (boardType === "hybridStoryboard") return "融合导演板";
   return "章节导演板";
+}
+
+function normalizeDirectorBoardImageSize(value: unknown, fallback?: string | null): DirectorBoardImageSize {
+  if (value === "1K" || value === "2K" || value === "4K") return value;
+  if (fallback === "1K" || fallback === "2K" || fallback === "4K") return fallback;
+  return "1K";
 }
 
 function wait(ms: number) {
@@ -947,11 +958,12 @@ async function runDirectorBoardImageTask(
     prompt: string;
     promptLanguage: DirectorBoardPromptLanguage;
     model: string;
+    imageSize: DirectorBoardImageSize;
     boardIndex: number;
     usePreviousBoardReference: boolean;
   },
 ) {
-  const { project, script, storyboards, assets, prompt, promptLanguage, model, boardIndex, usePreviousBoardReference } = data;
+  const { project, script, storyboards, assets, prompt, promptLanguage, model, imageSize, boardIndex, usePreviousBoardReference } = data;
   const savePath = `/${project.id}/directorBoard/${script.id}/${uuidv4()}.jpg`;
   try {
     await runDirectorBoardImageTaskWithRetry(rowId, async () => {
@@ -969,7 +981,7 @@ async function runDirectorBoardImageTask(
         {
           prompt: finalPrompt,
           referenceList,
-          size: (project.imageQuality || "1K") as "1K" | "2K" | "4K",
+          size: imageSize,
           aspectRatio: "16:9",
         },
         {
@@ -1008,6 +1020,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
   const shouldGenerateImages = options.generateImages === true;
   const usePreviousBoardReference = options.usePreviousBoardReference === true;
   const model = clean(options.model || project.imageModel);
+  const imageSize = normalizeDirectorBoardImageSize(options.imageSize || options.imageQuality, project.imageQuality);
   const boardType = normalizeDirectorBoardType(options.boardType);
   if (shouldGenerateImages && !model) throw new Error("项目未配置出图模型，无法生成章节导演板图片。");
 
@@ -1037,6 +1050,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
     prompt: string;
     promptLanguage: DirectorBoardPromptLanguage;
     model: string;
+    imageSize: DirectorBoardImageSize;
     boardIndex: number;
     usePreviousBoardReference: boolean;
   }> = [];
@@ -1072,7 +1086,7 @@ export async function queueDirectorBoardGeneration(projectId: number, scriptId: 
     const row = (await u.db("o_directorBoard").where("id", rowId).first()) as DirectorBoardRow;
     created.push(row);
     if (shouldGenerateImages) {
-      imageTasks.push({ rowId: Number(rowId), project, script, storyboards: chunk, assets, prompt, promptLanguage, model, boardIndex, usePreviousBoardReference });
+      imageTasks.push({ rowId: Number(rowId), project, script, storyboards: chunk, assets, prompt, promptLanguage, model, imageSize, boardIndex, usePreviousBoardReference });
     }
   }
 
@@ -1113,6 +1127,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
   const assets = await getStoryboardAssets(projectId, storyboards.map((item) => item.id));
   const promptLanguage = detectDirectorBoardPromptLanguage({ project, script, storyboards });
   const boardType = normalizeDirectorBoardType(options.boardType || row.boardType);
+  const imageSize = normalizeDirectorBoardImageSize(options.imageSize || options.imageQuality, project.imageQuality);
   const usePreviousBoardReference = options.usePreviousBoardReference === true;
   const prompt = buildChapterDirectorBoardPrompt({
     project,
@@ -1140,7 +1155,7 @@ export async function regenerateDirectorBoard(projectId: number, scriptId: numbe
     updateTime: Date.now(),
   });
 
-  void runDirectorBoardImageTask(boardId, { project, script, storyboards, assets, prompt, promptLanguage, model, boardIndex, usePreviousBoardReference });
+  void runDirectorBoardImageTask(boardId, { project, script, storyboards, assets, prompt, promptLanguage, model, imageSize, boardIndex, usePreviousBoardReference });
   return (await u.db("o_directorBoard").where("id", boardId).first()) as DirectorBoardRow;
 }
 

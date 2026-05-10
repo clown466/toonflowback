@@ -337,7 +337,11 @@ export async function runNovelAssetExtractionFastPath(config: ToolConfig) {
 }
 
 function shouldIncludeCompletedAssets(text: string) {
-  return /全部|所有|全量|重新|重绘|重出|覆盖|已完成.*也|包括.*已完成/i.test(text);
+  return /全部|所有|全量|重新|重绘|重出|覆盖|替换|修改|改成|改为|已完成.*也|包括.*已完成/i.test(text);
+}
+
+function shouldUseExistingAssetImageReference(text: string) {
+  return /参考.*(现有|当前|原有|已有)|基于.*(现有|当前|原有|已有)|保持.*(原图|当前图|现有图)|沿用.*(原图|当前图|现有图)|修改|改成|改为|重绘|替换/i.test(text);
 }
 
 function formatAssetNames(assets: Array<{ id: number; name: string }>, limit = 12) {
@@ -411,7 +415,16 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     .where("o_assets.projectId", projectId)
     .whereNull("o_assets.assetsId")
     .whereIn("o_assets.type", ["role", "scene", "tool"])
-    .select("o_assets.id", "o_assets.name", "o_assets.type", "o_assets.describe", "o_assets.prompt", "o_assets.imageId", "o_image.state as imageState")
+    .select(
+      "o_assets.id",
+      "o_assets.name",
+      "o_assets.type",
+      "o_assets.describe",
+      "o_assets.prompt",
+      "o_assets.imageId",
+      "o_image.state as imageState",
+      "o_image.filePath as imageFilePath",
+    )
     .orderByRaw(`CASE o_assets.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
     .orderBy("o_assets.id", "asc");
 
@@ -471,6 +484,31 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     return { handled: true, reason: "no_valid_assets" };
   }
 
+  const sourceText = options?.userRequirement ?? options?.sourceText ?? "";
+  const useExistingAssetReference = includeCompleted || shouldUseExistingAssetImageReference(sourceText);
+  const generationItems = await Promise.all(
+    validAssets.map(async (asset: any) => {
+      let base64: string | null = null;
+      if (useExistingAssetReference && asset.imageFilePath) {
+        try {
+          base64 = await u.oss.getImageBase64(asset.imageFilePath);
+        } catch {
+          base64 = null;
+        }
+      }
+      return {
+        id: asset.id,
+        type: asset.type,
+        name: asset.name || `资产 #${asset.id}`,
+        describe: nonEmpty(asset.describe) ?? null,
+        prompt: nonEmpty(asset.prompt) ?? nonEmpty(asset.describe) ?? asset.name ?? "",
+        base64,
+        skillId: options?.skillId ?? null,
+        userRequirement: options?.userRequirement ?? options?.sourceText ?? null,
+      };
+    }),
+  );
+
   const result = await submitAssetImageGeneration({
     projectId,
     model: project.imageModel,
@@ -483,15 +521,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
         records: [event],
       });
     },
-    items: validAssets.map((asset: any) => ({
-      id: asset.id,
-      type: asset.type,
-      name: asset.name || `资产 #${asset.id}`,
-      describe: nonEmpty(asset.describe) ?? null,
-      prompt: nonEmpty(asset.prompt) ?? nonEmpty(asset.describe) ?? asset.name ?? "",
-      skillId: options?.skillId ?? null,
-      userRequirement: options?.userRequirement ?? options?.sourceText ?? null,
-    })),
+    items: generationItems,
     skillId: options?.skillId ?? null,
     userRequirement: options?.userRequirement ?? options?.sourceText ?? null,
   });
@@ -525,6 +555,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
         skippedCompleted: includeCompleted ? 0 : skippedCompleted.length,
         skippedGenerating: skippedGenerating.length,
         skippedNoPrompt: skippedNoPrompt.length,
+        referencedExistingImages: generationItems.filter((item) => item.base64).length,
         assetIds: validAssets.map((asset: any) => asset.id),
       },
       null,
@@ -542,6 +573,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     !includeCompleted && skippedCompleted.length ? `已完成的 ${skippedCompleted.length} 个资产本次保留不重绘；需要全量重绘时说“重绘全部资产图”。` : "",
     skippedGenerating.length ? `已有 ${skippedGenerating.length} 个资产正在生成中，已跳过避免重复任务。` : "",
     skippedNoPrompt.length ? `有 ${skippedNoPrompt.length} 个资产缺少提示词/描述，已跳过。` : "",
+    useExistingAssetReference ? `已把 ${generationItems.filter((item) => item.base64).length} 张当前资产图作为参考图传给生图模型。` : "",
     "你可以在资产区看生成中状态，完成后图片会自动写回对应资产。",
   ].filter(Boolean);
   if (finalizeMessage) {

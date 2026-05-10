@@ -197,16 +197,19 @@ function detectIntent(text: string): IntentSignal | null {
 
   const explicitAssetImageIntent =
     /(资产|角色|场景|道具|参考图).*(出图|生图|生成.*图|批量.*图|图片)|(出图|生图|生成.*图).*(资产|角色|场景|道具|参考图)/i.test(text);
+  const modifyAssetImageIntent =
+    /(修改|改成|改为|重绘|替换).{0,24}(资产|角色|人物|场景|道具|参考图|图片|图像|角色图|场景图|道具图)|(资产|角色|人物|场景|道具|参考图|图片|图像|角色图|场景图|道具图).{0,24}(修改|改成|改为|重绘|替换)/i.test(text);
   const genericBatchImageIntent =
     /(批量|全部|所有|统一|帮我|开始|直接).{0,16}(出图|生图|生成.*图)|(出图|生图).{0,16}(批量|全部|所有|统一)/i.test(text) &&
     !/(分镜|镜头|storyboard|视频)/i.test(text);
   const vagueImageIntent = /帮我.{0,8}(出图|生图|生成.*图)|(出图|生图)$/i.test(text) && !/(分镜|镜头|storyboard|视频)/i.test(text);
-  if (explicitAssetImageIntent || genericBatchImageIntent || vagueImageIntent) {
+  if (explicitAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent || vagueImageIntent) {
     return {
       intent: "asset_image_generation",
-      confidence: explicitAssetImageIntent || genericBatchImageIntent ? 0.88 : 0.55,
+      confidence: explicitAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent ? 0.88 : 0.55,
       signals: [
         explicitAssetImageIntent ? "legacy_regex:explicit_asset_image_generation" : null,
+        modifyAssetImageIntent ? "legacy_regex:modify_asset_image_generation" : null,
         genericBatchImageIntent ? "legacy_regex:generic_batch_image_generation" : null,
         vagueImageIntent ? "intent_signal:vague_image_generation" : null,
       ].filter((signal): signal is string => Boolean(signal)),
@@ -248,7 +251,7 @@ function parseLimitFromText(text: string): number | undefined {
 }
 
 function parseIncludeCompletedFromText(text: string) {
-  return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
+  return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换|修改|改成|改为)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
 }
 
 function parseSkillIdFromText(text: string) {

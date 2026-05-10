@@ -605,6 +605,21 @@ export async function runProjectStoryboardDraftFastPath(
     novelIds: options?.novelIds,
     chapterIndexes: options?.chapterIndexes,
     abortSignal: config.abortSignal,
+    onWorkspaceResolved: (workspace) => {
+      resTool.socket.emit("productionDataUpdated", {
+        projectId,
+        episodesId: workspace.episodesId,
+        scriptName: workspace.scriptName,
+        scriptCreated: workspace.scriptCreated,
+        existingCount: workspace.existingCount,
+        selectedNovelIds: workspace.selectedNovelIds,
+        selectedChapterIndexes: workspace.selectedChapterIndexes,
+        selectedChapterLabels: workspace.selectedChapterLabels,
+        createdCount: 0,
+        storyboardIds: [],
+        stage: "workspace_resolved",
+      });
+    },
   });
 
   thinking.appendText(

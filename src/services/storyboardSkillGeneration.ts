@@ -95,6 +95,16 @@ export interface GenerateProjectStoryboardWithSkillOptions extends GenerateProje
   skillId?: string;
   userRequirement?: string;
   abortSignal?: AbortSignal;
+  onWorkspaceResolved?: (info: {
+    projectId: number;
+    episodesId: number;
+    scriptName: string;
+    scriptCreated: boolean;
+    existingCount: number;
+    selectedNovelIds: number[];
+    selectedChapterIndexes: number[];
+    selectedChapterLabels: string[];
+  }) => void | Promise<void>;
 }
 
 const DEFAULT_STORYBOARD_SKILL: StoryboardGenerationSkill = {
@@ -147,6 +157,18 @@ function fallback(projectId: number, options: GenerateProjectStoryboardWithSkill
     ...result,
     fallbackReason: result.fallbackReason ?? reason,
   }));
+}
+
+async function notifyWorkspaceResolved(
+  options: GenerateProjectStoryboardWithSkillOptions,
+  info: Parameters<NonNullable<GenerateProjectStoryboardWithSkillOptions["onWorkspaceResolved"]>>[0],
+) {
+  if (!options.onWorkspaceResolved) return;
+  try {
+    await options.onWorkspaceResolved(info);
+  } catch (error) {
+    console.warn("[storyboardSkillGeneration] workspace resolved notification failed:", u.error(error).message);
+  }
 }
 
 function stopStructuredStoryboardWrite(reason: string): never {
@@ -1081,6 +1103,20 @@ export async function generateProjectStoryboardWithSkill(
   const episodesId = script.id;
   const existingRows = await u.db("o_storyboard").where({ projectId, scriptId: episodesId }).select("id");
   const existingCount = existingRows.length;
+  const selectedNovelIds = novels.map((novel) => novel.id);
+  const selectedChapterIndexes = novels.map((novel) => novel.chapterIndex ?? novel.id);
+  const selectedChapterLabels = novels.map(formatChapterSelectionLabel);
+
+  await notifyWorkspaceResolved(options, {
+    projectId,
+    episodesId,
+    scriptName: toPublicWorkspaceName(script.name),
+    scriptCreated,
+    existingCount,
+    selectedNovelIds,
+    selectedChapterIndexes,
+    selectedChapterLabels,
+  });
 
   if (existingCount > 0 && !force && !append) {
     const storyboardTable = buildStoryboardTable([]);
@@ -1095,9 +1131,9 @@ export async function generateProjectStoryboardWithSkill(
       existingCount,
       replaced: false,
       appended: false,
-      selectedNovelIds: novels.map((novel) => novel.id),
-      selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
-      selectedChapterLabels: novels.map(formatChapterSelectionLabel),
+      selectedNovelIds,
+      selectedChapterIndexes,
+      selectedChapterLabels,
       storyboardTable,
       message: `当前章节分镜工作区「${toPublicWorkspaceName(script.name)}」已有 ${existingCount} 个分镜，已切换到该章节。需要覆盖重做时请说“重新生成分镜”。`,
     };
@@ -1161,9 +1197,9 @@ export async function generateProjectStoryboardWithSkill(
     existingCount,
     replaced: removedCount > 0,
     appended: append && existingCount > 0,
-    selectedNovelIds: novels.map((novel) => novel.id),
-    selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
-    selectedChapterLabels: novels.map(formatChapterSelectionLabel),
+    selectedNovelIds,
+    selectedChapterIndexes,
+    selectedChapterLabels,
     storyboardTable,
     usedSkillId: skill.id,
     usedSkillName: skill.name,

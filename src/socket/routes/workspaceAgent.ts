@@ -36,7 +36,10 @@ export function getWorkspaceCommandCandidateIntent(content: string): WorkspaceCo
   const genericBatchImageIntent =
     /(批量|全部|所有|统一|帮我|开始|直接).{0,16}(出图|生图|生成.*图)|(出图|生图).{0,16}(批量|全部|所有|统一)/i.test(content) &&
     !/(分镜|镜头|storyboard|视频)/i.test(content);
-  if (explicitAssetImageIntent || separatedAssetImageIntent || modificationAssetImageIntent || genericBatchImageIntent) return "asset_image_generation";
+  const genericNamedAssetRedrawIntent =
+    /(重新生成|重生|重出|再生成|再出|生成|做|出).{0,16}(一张|1张|个|幅)?.{0,40}(全新|新的|新版本|新形象|新造型)|(?:全新|新的|新版本|新形象|新造型).{0,40}(重新生成|重生|重出|再生成|再出|生成|做|出)/i.test(content) &&
+    !/(分镜|镜头|storyboard|视频|导演板|director\s*board)/i.test(content);
+  if (explicitAssetImageIntent || separatedAssetImageIntent || modificationAssetImageIntent || genericBatchImageIntent || genericNamedAssetRedrawIntent) return "asset_image_generation";
 
   const shouldFastExtractAssets = /提取?资产|提资产|资产库|角色.*场景.*道具|塑角造景|准备资产/i.test(content);
   if (shouldFastExtractAssets) return "asset_extraction";

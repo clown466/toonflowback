@@ -164,7 +164,17 @@ function hasAny(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-function detectIntent(text: string): IntentSignal | null {
+function hasKnownAssetName(text: string, snapshot?: WorkspaceCommandSnapshot) {
+  const normalizedText = text.toLowerCase();
+  return Boolean(
+    snapshot?.assets?.some((asset) => {
+      const name = asset.name?.trim().toLowerCase();
+      return name && name.length >= 3 && normalizedText.includes(name);
+    }),
+  );
+}
+
+function detectIntent(text: string, snapshot?: WorkspaceCommandSnapshot): IntentSignal | null {
   const storyboardRegeneration =
     /(确认|确定|执行|开始)?.{0,8}(删除|删掉|清空|清除|覆盖|重置).{0,12}(重新推理|重推|重新生成|重做|重建)/i.test(text) ||
     /(重新推理|重推).{0,12}(分镜|镜头|storyboard)/i.test(text);
@@ -208,16 +218,21 @@ function detectIntent(text: string): IntentSignal | null {
     /(批量|全部|所有|统一|帮我|开始|直接).{0,16}(出图|生图|生成.*图)|(出图|生图).{0,16}(批量|全部|所有|统一)/i.test(text) &&
     !/(分镜|镜头|storyboard|视频)/i.test(text);
   const vagueImageIntent = /帮我.{0,8}(出图|生图|生成.*图)|(出图|生图)$/i.test(text) && !/(分镜|镜头|storyboard|视频)/i.test(text);
-  if (explicitAssetImageIntent || separatedAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent || vagueImageIntent) {
+  const knownAssetRedrawIntent =
+    hasKnownAssetName(text, snapshot) &&
+    /(重新生成|重生|重出|再生成|再出|生成|做|出|修改|改成|改为|重绘|替换|重新设计|全新|从零设计|新形象|新造型)/i.test(text) &&
+    !/(分镜|镜头|storyboard|视频|导演板|director\s*board)/i.test(text);
+  if (explicitAssetImageIntent || separatedAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent || vagueImageIntent || knownAssetRedrawIntent) {
     return {
       intent: "asset_image_generation",
-      confidence: explicitAssetImageIntent || separatedAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent ? 0.88 : 0.55,
+      confidence: explicitAssetImageIntent || separatedAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent || knownAssetRedrawIntent ? 0.88 : 0.55,
       signals: [
         explicitAssetImageIntent ? "legacy_regex:explicit_asset_image_generation" : null,
         separatedAssetImageIntent ? "legacy_regex:separated_asset_image_generation" : null,
         modifyAssetImageIntent ? "legacy_regex:modify_asset_image_generation" : null,
         genericBatchImageIntent ? "legacy_regex:generic_batch_image_generation" : null,
         vagueImageIntent ? "intent_signal:vague_image_generation" : null,
+        knownAssetRedrawIntent ? "known_asset:redraw_or_generate" : null,
       ].filter((signal): signal is string => Boolean(signal)),
     };
   }
@@ -265,6 +280,7 @@ function parseUseExistingAssetReferenceFromText(text: string): boolean | undefin
     /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
     /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
     /(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本).{0,64}(生成|出图|生图|设计|重绘|角色图|资产图|参考图|图片|图像|形象)/i.test(text) ||
+    /(重新生成|重生|重出|再生成|再出).{0,64}(全新|新的|新版本|新形象|新造型)/i.test(text) ||
     /(角色图|资产图|参考图|图片|图像|形象).{0,64}(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本)/i.test(text)
   ) {
     return false;
@@ -604,7 +620,7 @@ export function createWorkspaceCommandPlan(text: string, snapshot?: WorkspaceCom
   const sourceText = text.trim();
   if (!sourceText) return null;
 
-  const signal = detectIntent(sourceText);
+  const signal = detectIntent(sourceText, snapshot);
   if (!signal) return null;
 
   if (signal.intent === "asset_image_generation") return buildAssetImagePlan(sourceText, signal, snapshot);

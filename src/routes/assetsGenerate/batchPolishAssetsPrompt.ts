@@ -45,7 +45,18 @@ function getTextOutput(result: any) {
   return stripThink(String(result?._output || result?.text || "")).trim();
 }
 
-function buildSkillPromptPolishSystem(visualManual: string, skillPrompt: string) {
+function buildRoleIdentityGuard(assetType: ImageGenerationAssetType) {
+  if (assetType !== "role") return "";
+  return [
+    "角色身份硬规则：",
+    "1. 如果角色描述、现有提示词、项目设定或视觉手册提到水果、果、fruit，最终提示词必须在开头明确一个具体水果原型。",
+    "2. 禁止只写“拟人化水果”“变异水果”“水果角色”“fruit character”“mutated fruit”；必须写成“拟人化青梨角色”“anthropomorphic green pear character”这类具体身份。",
+    "3. 如果原文没有明确水果种类，必须根据角色名称、颜色、轮廓、剧情职能和已有描述选择一个最合理的单一水果原型；不要混合多个水果。",
+    "4. 不要用固定水果负面约束来防误识别，例如不要写“不要草莓、不要柠檬”；正确做法是正向写清楚具体水果原型。",
+  ].join("\n");
+}
+
+function buildSkillPromptPolishSystem(visualManual: string, skillPrompt: string, assetType: ImageGenerationAssetType) {
   return [
     "你是 Toonflow 的资产生图提示词推理器。",
     "用户会选择一个资产生图预设。请根据该预设、视觉手册、项目设定和资产描述，生成最终可直接发送给图片模型的提示词。",
@@ -57,9 +68,15 @@ function buildSkillPromptPolishSystem(visualManual: string, skillPrompt: string)
     "视觉手册：",
     visualManual || "当前项目未配置对应视觉手册。",
     "",
+    buildRoleIdentityGuard(assetType),
+    "",
     "用户选择的资产生图预设：",
     skillPrompt,
   ].join("\n");
+}
+
+function buildDefaultPromptPolishSystem(visualManual: string, assetType: ImageGenerationAssetType) {
+  return [visualManual, buildRoleIdentityGuard(assetType)].filter(Boolean).join("\n\n");
 }
 
 //润色提示词
@@ -192,7 +209,9 @@ export default router.post(
                 neutralAssetLighting,
               })
             : "";
-          const systemPrompt = selectedSkill ? buildSkillPromptPolishSystem(visualManual, skillPrompt) : visualManual;
+          const systemPrompt = selectedSkill
+            ? buildSkillPromptPolishSystem(visualManual, skillPrompt, assetType)
+            : buildDefaultPromptPolishSystem(visualManual, assetType);
           const aiResult = await u.Ai.Text("universalAi").invoke({
             system: systemPrompt,
             messages: [

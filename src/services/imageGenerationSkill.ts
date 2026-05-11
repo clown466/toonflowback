@@ -56,6 +56,44 @@ aspectRatio: 16:9
 4. 四分之三角度
 
 保持同一个角色、同一服装、同一比例、同一材质。
+如果角色是拟人化水果/fruit 角色，必须明确具体水果原型，例如青梨、绿苹果、柠檬、桃子、草莓、猕猴桃等；禁止只写“水果角色”“变异水果”“fruit character”。
+使用中性展示光和干净背景，不绑定剧情时间、天气或场景光。
+不要生成文字、水印、字幕、UI。
+
+视觉手册：
+{{visualManual}}
+
+项目：
+- 名称：{{project.name}}
+- 画风：{{project.artStyle}}
+- 导演手册：{{project.directorManual}}
+
+角色：
+- 名称：{{asset.name}}
+- 描述：{{asset.describe}}
+- 资产提示词：{{asset.prompt}}
+
+用户额外要求：
+{{userRequirement}}
+`,
+  role_face_closeup_three_view: `---
+name: 角色脸部特写+三视图
+description: 左侧脸部特写，右侧正面、侧面、背面三视图
+targetTypes: role
+tags: 角色,脸部特写,三视图,四视图,设定图,标准图
+aspectRatio: 16:9
+---
+你是角色资产设计师。
+
+生成一张角色资产设定图，画面从左到右分为四个区域：
+1. 左侧：大尺寸脸部/头肩特写，清楚展示脸部、眼睛、嘴、表情、头部轮廓、材质、妆容、头部配件或水果原型细节。
+2. 右侧第一栏：正面全身。
+3. 右侧第二栏：侧面全身。
+4. 右侧第三栏：背面全身。
+
+保持同一个角色、同一服装、同一比例、同一材质。
+脸部特写必须与右侧三视图完全是同一个角色，不得变成另一个角色。
+如果角色是拟人化水果/fruit 角色，必须明确具体水果原型，例如青梨、绿苹果、柠檬、桃子、草莓、猕猴桃等；禁止只写“水果角色”“变异水果”“fruit character”。
 使用中性展示光和干净背景，不绑定剧情时间、天气或场景光。
 不要生成文字、水印、字幕、UI。
 
@@ -296,17 +334,30 @@ function ensureBuiltinSkills(dir: string) {
 }
 
 function patchBuiltinSkillIfNeeded(id: string, filePath: string) {
-  if (id !== "scene_top_down_panorama") return;
   const content = fs.readFileSync(filePath, "utf-8");
-  if (content.includes("严禁使用 eye-level view")) return;
-  const next = content.replace(
-    "视角：top-down / bird's-eye view / overhead map。",
-    [
-      "视角必须是 top-down / bird's-eye view / overhead map，像室内平面布局参考或鸟瞰地图。",
-      "严禁使用 eye-level view、normal perspective、cinematic establishing shot、front exterior view、street-level view。",
-    ].join("\n"),
-  );
-  if (next !== content) fs.writeFileSync(filePath, next, "utf-8");
+  if (id === "scene_top_down_panorama") {
+    if (content.includes("严禁使用 eye-level view")) return;
+    const next = content.replace(
+      "视角：top-down / bird's-eye view / overhead map。",
+      [
+        "视角必须是 top-down / bird's-eye view / overhead map，像室内平面布局参考或鸟瞰地图。",
+        "严禁使用 eye-level view、normal perspective、cinematic establishing shot、front exterior view、street-level view。",
+      ].join("\n"),
+    );
+    if (next !== content) fs.writeFileSync(filePath, next, "utf-8");
+    return;
+  }
+  if (id === "role_standard_four_view") {
+    if (content.includes("必须明确具体水果原型")) return;
+    const next = content.replace(
+      "保持同一个角色、同一服装、同一比例、同一材质。",
+      [
+        "保持同一个角色、同一服装、同一比例、同一材质。",
+        "如果角色是拟人化水果/fruit 角色，必须明确具体水果原型，例如青梨、绿苹果、柠檬、桃子、草莓、猕猴桃等；禁止只写“水果角色”“变异水果”“fruit character”。",
+      ].join("\n"),
+    );
+    if (next !== content) fs.writeFileSync(filePath, next, "utf-8");
+  }
 }
 
 function normalizeId(value: string) {

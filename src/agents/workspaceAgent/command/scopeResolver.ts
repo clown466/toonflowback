@@ -94,7 +94,7 @@ export function parseWorkspaceLimit(text: string): number | undefined {
 }
 
 function parseIncludeCompleted(text: string) {
-  return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换|修改|改成|改为)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
+  return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换|修改|改成|改为|全新|重新设计|从零设计|新形象|新造型)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
 }
 
 function parseOnlyFailed(text: string) {
@@ -105,7 +105,8 @@ function parseUseExistingAssetReference(text: string): boolean | undefined {
   if (
     /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
     /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
-    /(全新|重新设计|从零设计|只按文字|纯文本).{0,16}(生成|出图|生图|设计|重绘)/i.test(text)
+    /(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本).{0,64}(生成|出图|生图|设计|重绘|角色图|资产图|参考图|图片|图像|形象)/i.test(text) ||
+    /(角色图|资产图|参考图|图片|图像|形象).{0,64}(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本)/i.test(text)
   ) {
     return false;
   }

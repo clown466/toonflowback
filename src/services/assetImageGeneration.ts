@@ -283,7 +283,15 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
               neutralAssetLighting,
             });
         const describe = `生成${cfg.label}图，名称：${item.name}，提示词：${item.prompt}`;
-        const relatedObjects = { id: item.id, projectId, type: cfg.label, skillId: selectedSkill?.id ?? null, prompt: userPrompt.slice(0, 1200) };
+        const relatedObjects = {
+          id: item.id,
+          projectId,
+          type: cfg.label,
+          skillId: selectedSkill?.id ?? null,
+          referenceImageCount: item.base64 ? 1 : 0,
+          userRequirement: rawUserRequirement?.slice(0, 500) ?? null,
+          prompt: userPrompt.slice(0, 1200),
+        };
 
         await runImageTaskWithRetry(async () => {
           const aiImage = u.Ai.Image(model as `${string}:${string}`);

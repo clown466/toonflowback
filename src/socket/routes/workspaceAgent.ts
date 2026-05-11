@@ -31,10 +31,12 @@ export function getWorkspaceCommandCandidateIntent(content: string): WorkspaceCo
   const separatedAssetImageIntent =
     /(资产|角色|人物|场景|道具|参考图|资产图|角色图|场景图|道具图).{0,32}(出|生|生成|重绘|重出|重新出|做).{0,12}(图|图片)?/i.test(content) ||
     /(出|生|生成|重绘|重出|重新出|做).{0,16}(一张|1张|个|幅)?[^\n。；，]{0,32}(资产|角色|人物|场景|道具|参考图|资产图|角色图|场景图|道具图|图片|图像)/i.test(content);
+  const modificationAssetImageIntent =
+    /(修改|改成|改为|重绘|替换|重新设计|全新|从零设计|新形象|新造型).{0,64}(资产|角色|人物|场景|道具|参考图|图片|图像|角色图|场景图|道具图)|(资产|角色|人物|场景|道具|参考图|图片|图像|角色图|场景图|道具图).{0,64}(修改|改成|改为|重绘|替换|重新设计|全新|从零设计|新形象|新造型)/i.test(content);
   const genericBatchImageIntent =
     /(批量|全部|所有|统一|帮我|开始|直接).{0,16}(出图|生图|生成.*图)|(出图|生图).{0,16}(批量|全部|所有|统一)/i.test(content) &&
     !/(分镜|镜头|storyboard|视频)/i.test(content);
-  if (explicitAssetImageIntent || separatedAssetImageIntent || genericBatchImageIntent) return "asset_image_generation";
+  if (explicitAssetImageIntent || separatedAssetImageIntent || modificationAssetImageIntent || genericBatchImageIntent) return "asset_image_generation";
 
   const shouldFastExtractAssets = /提取?资产|提资产|资产库|角色.*场景.*道具|塑角造景|准备资产/i.test(content);
   if (shouldFastExtractAssets) return "asset_extraction";

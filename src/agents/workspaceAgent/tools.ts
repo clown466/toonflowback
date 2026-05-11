@@ -12,6 +12,7 @@ export interface ToolConfig {
   toolsNames?: string[];
   msg: ReturnType<ResTool["newMessage"]>;
   abortSignal?: AbortSignal;
+  sourceText?: string;
 }
 
 const assetTypeSchema = z.enum(["role", "scene", "tool", "other"]);
@@ -466,7 +467,7 @@ export async function runNovelAssetExtractionFastPath(config: ToolConfig, option
 }
 
 function shouldIncludeCompletedAssets(text: string) {
-  return /全部|所有|全量|重新|重绘|重出|覆盖|替换|修改|改成|改为|已完成.*也|包括.*已完成/i.test(text);
+  return /全部|所有|全量|重新|重绘|重出|覆盖|替换|修改|改成|改为|全新|重新设计|从零设计|新形象|新造型|已完成.*也|包括.*已完成/i.test(text);
 }
 
 function shouldUseExistingAssetImageReference(text: string) {
@@ -477,8 +478,35 @@ function shouldAvoidExistingAssetImageReference(text: string) {
   return (
     /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
     /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
-    /(全新|重新设计|从零设计|只按文字|纯文本).{0,16}(生成|出图|生图|设计|重绘)/i.test(text)
+    /(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本).{0,64}(生成|出图|生图|设计|重绘|角色图|资产图|参考图|图片|图像|形象)/i.test(text) ||
+    /(角色图|资产图|参考图|图片|图像|形象).{0,64}(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本)/i.test(text)
   );
+}
+
+function shouldUseFreshAssetText(text: string) {
+  return (
+    /(全新|重新设计|从零设计|新形象|新造型).{0,64}(生成|出图|生图|设计|重绘|角色图|资产图|参考图|图片|图像|形象)/i.test(text) ||
+    /(角色图|资产图|参考图|图片|图像|形象).{0,64}(全新|重新设计|从零设计|新形象|新造型)/i.test(text)
+  );
+}
+
+function buildAssetImagePromptSource(asset: any, freshAssetText: boolean) {
+  const describe = nonEmpty(asset.describe);
+  const prompt = nonEmpty(asset.prompt);
+  const name = nonEmpty(asset.name) ?? `资产 #${asset.id}`;
+  if (freshAssetText) {
+    return describe ? `${name}。${describe}` : prompt ?? name;
+  }
+  return prompt ?? describe ?? name;
+}
+
+function buildFreshAssetUserRequirement(text: string) {
+  const raw = nonEmpty(text) ?? "无";
+  return [
+    raw,
+    "本次是全新资产图设计任务：不要沿用、复刻、临摹或微调当前资产图片；不要从旧资产图继承颜色、服装、脸型、构图或局部细节；如果存在当前图片，只当作历史产物忽略。",
+    "只依据资产名称、资产描述、用户本次要求、项目视觉手册和所选生图预设生成。若用户指定了新的水果/物种/造型，以用户本次要求为最高优先级。",
+  ].join("\n");
 }
 
 function formatAssetNames(assets: Array<{ id: number; name: string }>, limit = 12) {
@@ -513,9 +541,10 @@ function emitProjectAssetImageUpdate(resTool: ResTool, payload: Record<string, u
 export async function runProjectAssetImageGenerationFastPath(config: ToolConfig, options?: ProjectAssetImageGenerationOptions) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
-  const includeCompleted = options?.includeCompleted ?? (options?.disableNaturalLanguageScopeParsing ? false : shouldIncludeCompletedAssets(options?.sourceText ?? ""));
+  const requestText = options?.userRequirement ?? options?.sourceText ?? config.sourceText ?? "";
+  const includeCompleted = shouldIncludeCompletedAssets(requestText) ? true : options?.includeCompleted ?? (options?.disableNaturalLanguageScopeParsing ? false : shouldIncludeCompletedAssets(requestText));
   const finalizeMessage = options?.finalizeMessage ?? true;
-  const parsedScope = options?.disableNaturalLanguageScopeParsing ? {} : parseAssetImageRequestScope(options?.sourceText);
+  const parsedScope = options?.disableNaturalLanguageScopeParsing ? {} : parseAssetImageRequestScope(requestText);
   const assetType = options?.assetType ?? parsedScope.assetType;
   const limit = normalizePositiveLimit(options?.limit) ?? parsedScope.limit;
   const assetIds = Array.from(new Set((options?.assetIds ?? []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
@@ -621,10 +650,12 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     return { handled: true, reason: "no_valid_assets" };
   }
 
-  const sourceText = options?.userRequirement ?? options?.sourceText ?? "";
+  const sourceText = requestText;
+  const avoidExistingAssetReference = shouldAvoidExistingAssetImageReference(sourceText);
+  const freshAssetText = shouldUseFreshAssetText(sourceText);
+  const effectiveUserRequirement = freshAssetText ? buildFreshAssetUserRequirement(sourceText) : options?.userRequirement ?? options?.sourceText ?? config.sourceText ?? null;
   const useExistingAssetReference =
-    options?.useExistingAssetReference ??
-    (!shouldAvoidExistingAssetImageReference(sourceText) && (includeCompleted || shouldUseExistingAssetImageReference(sourceText)));
+    avoidExistingAssetReference ? false : options?.useExistingAssetReference ?? (includeCompleted || shouldUseExistingAssetImageReference(sourceText));
   const generationItems = await Promise.all(
     validAssets.map(async (asset: any) => {
       let base64: string | null = null;
@@ -640,10 +671,10 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
         type: asset.type,
         name: asset.name || `资产 #${asset.id}`,
         describe: nonEmpty(asset.describe) ?? null,
-        prompt: nonEmpty(asset.prompt) ?? nonEmpty(asset.describe) ?? asset.name ?? "",
+        prompt: buildAssetImagePromptSource(asset, freshAssetText),
         base64,
         skillId: options?.skillId ?? null,
-        userRequirement: options?.userRequirement ?? options?.sourceText ?? null,
+        userRequirement: effectiveUserRequirement,
       };
     }),
   );
@@ -662,7 +693,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     },
     items: generationItems,
     skillId: options?.skillId ?? null,
-    userRequirement: options?.userRequirement ?? options?.sourceText ?? null,
+    userRequirement: effectiveUserRequirement,
   });
 
   emitProjectAssetImageUpdate(resTool, {
@@ -694,6 +725,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
         skippedCompleted: includeCompleted ? 0 : skippedCompleted.length,
         skippedGenerating: skippedGenerating.length,
         skippedNoPrompt: skippedNoPrompt.length,
+        freshAssetText,
         useExistingAssetReference,
         referencedExistingImages: generationItems.filter((item) => item.base64).length,
         assetIds: validAssets.map((asset: any) => asset.id),
@@ -714,7 +746,8 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     skippedGenerating.length ? `已有 ${skippedGenerating.length} 个资产正在生成中，已跳过避免重复任务。` : "",
     skippedNoPrompt.length ? `有 ${skippedNoPrompt.length} 个资产缺少提示词/描述，已跳过。` : "",
     useExistingAssetReference ? `已把 ${generationItems.filter((item) => item.base64).length} 张当前资产图作为参考图传给生图模型。` : "",
-    !useExistingAssetReference && includeCompleted ? "本次已按全新重绘处理：不带入当前资产图参考，只按文字设定、视觉手册和生图预设生成。" : "",
+    !useExistingAssetReference && includeCompleted ? "本次不带入当前资产图参考，只按文字设定、视觉手册和生图预设生成。" : "",
+    freshAssetText ? "已识别为全新设计：本次不会复用旧资产 prompt 作为主提示词。" : "",
     "你可以在资产区看生成中状态，完成后图片会自动写回对应资产。",
   ].filter(Boolean);
   if (finalizeMessage) {
@@ -1163,6 +1196,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
       execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, useExistingAssetReference }) => {
         return runProjectAssetImageGenerationFastPath(config, {
           includeCompleted,
+          sourceText: config.sourceText,
           assetType,
           limit,
           assetIds,

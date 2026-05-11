@@ -9,6 +9,7 @@ import type {
   WorkspaceResolvedScope,
   WorkspaceScopeCandidate,
 } from "@/agents/workspaceAgent/command/types";
+import { decideAssetImageIntent } from "@/services/assetImageIntent";
 
 const ASSET_TYPES: WorkspaceAssetType[] = ["role", "scene", "tool"];
 
@@ -94,7 +95,7 @@ export function parseWorkspaceLimit(text: string): number | undefined {
 }
 
 function parseIncludeCompleted(text: string) {
-  return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换|修改|改成|改为|全新|重新设计|从零设计|新形象|新造型)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
+  return decideAssetImageIntent(text).includeCompleted || /includeCompleted/i.test(text);
 }
 
 function parseOnlyFailed(text: string) {
@@ -102,17 +103,7 @@ function parseOnlyFailed(text: string) {
 }
 
 function parseUseExistingAssetReference(text: string): boolean | undefined {
-  if (
-    /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
-    /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
-    /(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本).{0,64}(生成|出图|生图|设计|重绘|角色图|资产图|参考图|图片|图像|形象)/i.test(text) ||
-    /(重新生成|重生|重出|再生成|再出).{0,64}(全新|新的|新版本|新形象|新造型)/i.test(text) ||
-    /(角色图|资产图|参考图|图片|图像|形象).{0,64}(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本)/i.test(text)
-  ) {
-    return false;
-  }
-  if (/(参考|基于|沿用|保持).{0,10}(现有|当前|原有|已有|原图|旧图|当前图|现有图|已有图)/i.test(text)) return true;
-  return undefined;
+  return decideAssetImageIntent(text).useExistingAssetReference;
 }
 
 function parseAssetIds(text: string) {
@@ -148,6 +139,7 @@ function resolveAssetImageScope(text: string, snapshot: WorkspaceProjectSnapshot
   const matchedAssets = findNamedAssets(text, snapshot, assetType);
   const assetIds = new Set(parseAssetIds(text));
   const assetNames = new Set<string>();
+  const decision = decideAssetImageIntent(text);
 
   for (const asset of matchedAssets) {
     assetIds.add(asset.id);
@@ -160,6 +152,9 @@ function resolveAssetImageScope(text: string, snapshot: WorkspaceProjectSnapshot
     assetIds: Array.from(assetIds),
     assetNames: Array.from(assetNames),
     includeCompleted: parseIncludeCompleted(text),
+    generationMode: decision.generationMode,
+    referencePolicy: decision.referencePolicy,
+    promptPolicy: decision.promptPolicy,
     useExistingAssetReference: parseUseExistingAssetReference(text),
     onlyFailed: parseOnlyFailed(text),
   };

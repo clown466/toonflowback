@@ -8,6 +8,7 @@ import {
   resolveImageGenerationSkill,
 } from "@/services/imageGenerationSkill";
 import { inferTimeEnvironment, buildNeutralAssetLightingText } from "@/services/timeEnvironmentInference";
+import { decideAssetImageIntent, type AssetImageGenerationMode, type AssetImagePromptPolicy, type AssetImageReferencePolicy } from "@/services/assetImageIntent";
 
 type AssetType = "role" | "scene" | "tool";
 
@@ -27,6 +28,9 @@ export interface AssetImageGenerationItem {
   describe?: string | null;
   base64?: string | null;
   skillId?: string | null;
+  generationMode?: AssetImageGenerationMode | null;
+  referencePolicy?: AssetImageReferencePolicy | null;
+  promptPolicy?: AssetImagePromptPolicy | null;
   userRequirement?: string | null;
 }
 
@@ -36,6 +40,9 @@ export interface SubmitAssetImageGenerationInput {
   resolution: "1K" | "2K" | "4K" | string;
   concurrentCount?: number;
   skillId?: string | null;
+  generationMode?: AssetImageGenerationMode | null;
+  referencePolicy?: AssetImageReferencePolicy | null;
+  promptPolicy?: AssetImagePromptPolicy | null;
   userRequirement?: string | null;
   items: AssetImageGenerationItem[];
   onStatusChange?: (event: AssetImageGenerationStatusEvent) => void | Promise<void>;
@@ -227,6 +234,12 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
         const assetType = item.type as ImageGenerationAssetType;
         const visualManual = getVisualManualForAssetType(project.artStyle, assetType);
         const rawUserRequirement = item.userRequirement ?? input.userRequirement ?? null;
+        const intentDecision = decideAssetImageIntent(rawUserRequirement, {
+          generationMode: item.generationMode ?? input.generationMode,
+          referencePolicy: item.referencePolicy ?? input.referencePolicy,
+          promptPolicy: item.promptPolicy ?? input.promptPolicy,
+        });
+        const effectiveBase64 = intentDecision.referencePolicy === "none" ? null : item.base64;
         const neutralAssetLighting = assetType === "scene" ? null : buildNeutralAssetLightingText(assetType);
         const effectiveUserRequirement = buildStandardAssetUserRequirement(rawUserRequirement, neutralAssetLighting);
         const timeEnvironmentContext =
@@ -288,7 +301,10 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
           projectId,
           type: cfg.label,
           skillId: selectedSkill?.id ?? null,
-          referenceImageCount: item.base64 ? 1 : 0,
+          generationMode: intentDecision.generationMode,
+          referencePolicy: intentDecision.referencePolicy,
+          promptPolicy: intentDecision.promptPolicy,
+          referenceImageCount: effectiveBase64 ? 1 : 0,
           userRequirement: rawUserRequirement?.slice(0, 500) ?? null,
           prompt: userPrompt.slice(0, 1200),
         };
@@ -298,7 +314,7 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
           await aiImage.run(
             {
               prompt: userPrompt,
-              referenceList: item.base64 ? [{ base64: item.base64, type: "image" }] : [],
+              referenceList: effectiveBase64 ? [{ base64: effectiveBase64, type: "image" }] : [],
               size: resolution as "1K" | "2K" | "4K",
               aspectRatio: selectedSkill?.aspectRatio ?? "16:9",
             },

@@ -3,6 +3,13 @@ import { z } from "zod";
 import ResTool from "@/socket/resTool";
 import u from "@/utils";
 import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
+import {
+  assetImageGenerationModeLabel,
+  decideAssetImageIntent,
+  type AssetImageGenerationMode,
+  type AssetImagePromptPolicy,
+  type AssetImageReferencePolicy,
+} from "@/services/assetImageIntent";
 import { clearProjectStoryboards, toPublicWorkspaceName } from "@/services/storyboardDraftGeneration";
 import { generateProjectStoryboardWithSkill } from "@/services/storyboardSkillGeneration";
 import { toToolJsonSchema } from "@/utils/jsonSchema";
@@ -19,12 +26,18 @@ const assetTypeSchema = z.enum(["role", "scene", "tool", "other"]);
 type AssetType = z.infer<typeof assetTypeSchema>;
 const generatableAssetTypeSchema = z.enum(["role", "scene", "tool"]);
 type GeneratableAssetType = z.infer<typeof generatableAssetTypeSchema>;
+const assetImageGenerationModeSchema = z.enum(["fresh_design", "reference_redraw", "partial_edit", "variant", "retry_failed", "ambiguous_redraw", "default"]);
+const assetImageReferencePolicySchema = z.enum(["none", "current_asset", "auto"]);
+const assetImagePromptPolicySchema = z.enum(["asset_description_plus_request", "asset_prompt_plus_request", "reuse_current_prompt"]);
 
 export interface ProjectAssetImageGenerationOptions {
   includeCompleted?: boolean;
   sourceText?: string;
   userRequirement?: string;
   skillId?: string;
+  generationMode?: AssetImageGenerationMode;
+  referencePolicy?: AssetImageReferencePolicy;
+  promptPolicy?: AssetImagePromptPolicy;
   finalizeMessage?: boolean;
   assetType?: GeneratableAssetType;
   limit?: number;
@@ -466,30 +479,8 @@ export async function runNovelAssetExtractionFastPath(config: ToolConfig, option
   return { handled: true, message: lines.join("\n"), result };
 }
 
-function shouldIncludeCompletedAssets(text: string) {
-  return /全部|所有|全量|重新|重绘|重出|覆盖|替换|修改|改成|改为|全新|重新设计|从零设计|新形象|新造型|已完成.*也|包括.*已完成/i.test(text);
-}
-
 function shouldUseExistingAssetImageReference(text: string) {
   return /参考.*(现有|当前|原有|已有)|基于.*(现有|当前|原有|已有)|保持.*(原图|当前图|现有图)|沿用.*(原图|当前图|现有图)|修改|改成|改为|重绘|替换/i.test(text);
-}
-
-function shouldAvoidExistingAssetImageReference(text: string) {
-  return (
-    /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
-    /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
-    /(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本).{0,64}(生成|出图|生图|设计|重绘|角色图|资产图|参考图|图片|图像|形象)/i.test(text) ||
-    /(重新生成|重生|重出|再生成|再出).{0,64}(全新|新的|新版本|新形象|新造型)/i.test(text) ||
-    /(角色图|资产图|参考图|图片|图像|形象).{0,64}(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本)/i.test(text)
-  );
-}
-
-function shouldUseFreshAssetText(text: string) {
-  return (
-    /(全新|重新设计|从零设计|新形象|新造型).{0,64}(生成|出图|生图|设计|重绘|角色图|资产图|参考图|图片|图像|形象)/i.test(text) ||
-    /(重新生成|重生|重出|再生成|再出).{0,64}(全新|新的|新版本|新形象|新造型)/i.test(text) ||
-    /(角色图|资产图|参考图|图片|图像|形象).{0,64}(全新|重新设计|从零设计|新形象|新造型)/i.test(text)
-  );
 }
 
 function buildAssetImagePromptSource(asset: any, freshAssetText: boolean) {
@@ -544,7 +535,14 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
   const requestText = options?.userRequirement ?? options?.sourceText ?? config.sourceText ?? "";
-  const includeCompleted = shouldIncludeCompletedAssets(requestText) ? true : options?.includeCompleted ?? (options?.disableNaturalLanguageScopeParsing ? false : shouldIncludeCompletedAssets(requestText));
+  const intentDecision = decideAssetImageIntent(requestText, {
+    generationMode: options?.generationMode,
+    referencePolicy: options?.referencePolicy,
+    promptPolicy: options?.promptPolicy,
+    includeCompleted: options?.includeCompleted,
+    useExistingAssetReference: options?.useExistingAssetReference,
+  });
+  const includeCompleted = intentDecision.includeCompleted;
   const finalizeMessage = options?.finalizeMessage ?? true;
   const parsedScope = options?.disableNaturalLanguageScopeParsing ? {} : parseAssetImageRequestScope(requestText);
   const assetType = options?.assetType ?? parsedScope.assetType;
@@ -653,11 +651,27 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
   }
 
   const sourceText = requestText;
-  const avoidExistingAssetReference = shouldAvoidExistingAssetImageReference(sourceText);
-  const freshAssetText = shouldUseFreshAssetText(sourceText);
+  if (intentDecision.needsClarification) {
+    thinking.appendText(JSON.stringify({ projectId, intentDecision, scope: scopeText || null }, null, 2));
+    thinking.updateTitle("需要确认资产生图方式");
+    thinking.complete();
+    const message = intentDecision.clarificationQuestion ?? "请确认本次资产图是要参考当前图修改，还是完全重新设计。";
+    if (finalizeMessage) {
+      const text = msg.text(message);
+      text.complete();
+      msg.complete();
+    }
+    return { handled: true, reason: "needs_asset_image_mode_confirmation", message, intentDecision };
+  }
+
+  const freshAssetText = intentDecision.promptPolicy === "asset_description_plus_request" || intentDecision.generationMode === "fresh_design";
   const effectiveUserRequirement = freshAssetText ? buildFreshAssetUserRequirement(sourceText) : options?.userRequirement ?? options?.sourceText ?? config.sourceText ?? null;
   const useExistingAssetReference =
-    avoidExistingAssetReference ? false : options?.useExistingAssetReference ?? (includeCompleted || shouldUseExistingAssetImageReference(sourceText));
+    intentDecision.referencePolicy === "none"
+      ? false
+      : intentDecision.referencePolicy === "current_asset"
+        ? true
+        : options?.useExistingAssetReference ?? (includeCompleted || shouldUseExistingAssetImageReference(sourceText));
   const generationItems = await Promise.all(
     validAssets.map(async (asset: any) => {
       let base64: string | null = null;
@@ -676,6 +690,9 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
         prompt: buildAssetImagePromptSource(asset, freshAssetText),
         base64,
         skillId: options?.skillId ?? null,
+        generationMode: intentDecision.generationMode,
+        referencePolicy: intentDecision.referencePolicy,
+        promptPolicy: intentDecision.promptPolicy,
         userRequirement: effectiveUserRequirement,
       };
     }),
@@ -695,6 +712,9 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     },
     items: generationItems,
     skillId: options?.skillId ?? null,
+    generationMode: intentDecision.generationMode,
+    referencePolicy: intentDecision.referencePolicy,
+    promptPolicy: intentDecision.promptPolicy,
     userRequirement: effectiveUserRequirement,
   });
 
@@ -723,6 +743,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
         scopedAssets: scopedAssets.length,
         selectedAssets: selectedAssets.length,
         submitted: result.submitted,
+        intentDecision,
         skippedBySubmitGuard: result.skippedGenerating,
         skippedCompleted: includeCompleted ? 0 : skippedCompleted.length,
         skippedGenerating: skippedGenerating.length,
@@ -743,6 +764,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     `已提交 ${result.submitted} 个资产图生成任务，画幅固定 16:9。`,
     scopeText ? `已按范围筛选：${scopeText}；匹配 ${scopedAssets.length} 个，进入本次范围 ${selectedAssets.length} 个。` : "",
     `模型：${project.imageModel}，质量：${project.imageQuality}，后台并发：1。`,
+    `模式：${assetImageGenerationModeLabel(intentDecision.generationMode)}。`,
     validAssets.length ? `本次提交：${formatAssetNames(validAssets)}。` : "",
     !includeCompleted && skippedCompleted.length ? `已完成的 ${skippedCompleted.length} 个资产本次保留不重绘；需要全量重绘时说“重绘全部资产图”。` : "",
     skippedGenerating.length ? `已有 ${skippedGenerating.length} 个资产正在生成中，已跳过避免重复任务。` : "",
@@ -1183,6 +1205,9 @@ export function useNovelWorkflowTools(config: ToolConfig) {
         limit?: number;
         assetIds?: number[];
         assetNames?: string[];
+        generationMode?: AssetImageGenerationMode;
+        referencePolicy?: AssetImageReferencePolicy;
+        promptPolicy?: AssetImagePromptPolicy;
         useExistingAssetReference?: boolean;
       }>(z.object({
         includeCompleted: z.boolean().optional().describe("是否连已完成图片的资产也重新提交；默认 false，只补缺图/失败图"),
@@ -1190,12 +1215,15 @@ export function useNovelWorkflowTools(config: ToolConfig) {
         limit: z.number().int().positive().max(100).optional().describe("可选：最多提交多少个资产；用户说前 N 个/生成 N 张时必须填写"),
         assetIds: z.array(z.number().int().positive()).optional().describe("可选：只生成指定资产 ID"),
         assetNames: z.array(z.string().min(1)).optional().describe("可选：只生成指定资产名称，例如 Chloe"),
+        generationMode: assetImageGenerationModeSchema.optional().describe("结构化生图模式。fresh_design=全新设计不沿用旧图；reference_redraw=参考当前图重绘；partial_edit=局部修改；variant=基于当前图生成变体；retry_failed=重试失败任务。总控必须先判断用户真实意图再填写。"),
+        referencePolicy: assetImageReferencePolicySchema.optional().describe("参考图策略。none=绝不带当前资产图；current_asset=必须带当前资产图；auto=执行器按模式判断。用户说全新/新的/不参考原图时必须为 none。"),
+        promptPolicy: assetImagePromptPolicySchema.optional().describe("提示词策略。asset_description_plus_request=用资产描述+用户本次要求，避免旧 prompt 污染；asset_prompt_plus_request=沿用资产 prompt 并追加要求；reuse_current_prompt=重试原提示词。"),
         useExistingAssetReference: z
           .boolean()
           .optional()
           .describe("是否把当前已完成资产图作为图生图参考；用户说全新、不参考原图、只按文字生成时必须为 false；用户说参考现有图/沿用原图时为 true"),
       })),
-      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, useExistingAssetReference }) => {
+      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, generationMode, referencePolicy, promptPolicy, useExistingAssetReference }) => {
         return runProjectAssetImageGenerationFastPath(config, {
           includeCompleted,
           sourceText: config.sourceText,
@@ -1203,6 +1231,9 @@ export function useNovelWorkflowTools(config: ToolConfig) {
           limit,
           assetIds,
           assetNames,
+          generationMode,
+          referencePolicy,
+          promptPolicy,
           useExistingAssetReference,
           finalizeMessage: false,
         });

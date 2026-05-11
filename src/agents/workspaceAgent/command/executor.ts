@@ -6,6 +6,7 @@ import {
   runProjectStoryboardClearFastPath,
   runProjectStoryboardDraftFastPath,
 } from "@/agents/workspaceAgent/tools";
+import { assetImageGenerationModeLabel, type AssetImageGenerationMode, type AssetImagePromptPolicy, type AssetImageReferencePolicy } from "@/services/assetImageIntent";
 
 export type WorkspaceCommandIntent = "asset_image_generation" | "storyboard_generation" | "storyboard_clear" | "asset_extraction";
 
@@ -13,7 +14,7 @@ export type WorkspaceCommandConfirmationPolicy = "auto" | "confirm" | "require_c
 
 type AssetImageScope = Pick<
   ProjectAssetImageGenerationOptions,
-  "assetType" | "limit" | "assetIds" | "assetNames" | "includeCompleted" | "skillId" | "useExistingAssetReference"
+  "assetType" | "limit" | "assetIds" | "assetNames" | "includeCompleted" | "skillId" | "generationMode" | "referencePolicy" | "promptPolicy" | "useExistingAssetReference"
 >;
 
 export interface WorkspaceCommandScope extends AssetImageScope {
@@ -39,6 +40,8 @@ export interface WorkspaceCommandPreflightSummary {
   quantityText: string;
   includeCompleted: boolean;
   redraw: boolean;
+  generationMode?: AssetImageGenerationMode;
+  referencePolicy?: AssetImageReferencePolicy;
   confirmationPolicy: WorkspaceCommandConfirmationPolicy;
   message: string;
 }
@@ -71,6 +74,9 @@ function normalizeAssetImageScope(scope?: WorkspaceCommandScope): AssetImageScop
     assetNames: uniqueNonEmptyStrings(scope?.assetNames),
     includeCompleted: Boolean(scope?.includeCompleted),
     skillId: typeof scope?.skillId === "string" && scope.skillId.trim() ? scope.skillId.trim() : undefined,
+    generationMode: scope?.generationMode,
+    referencePolicy: scope?.referencePolicy,
+    promptPolicy: scope?.promptPolicy,
     useExistingAssetReference: typeof scope?.useExistingAssetReference === "boolean" ? scope.useExistingAssetReference : undefined,
   };
 }
@@ -98,14 +104,21 @@ function buildPreflightSummary(plan: WorkspaceCommandPlan): WorkspaceCommandPref
     const explicitCount = scope.assetIds?.length || scope.assetNames?.length || scope.limit;
     const quantityText = explicitCount ? `最多/指定 ${explicitCount} 个` : "范围内所有未完成资产";
     const referenceText =
-      scope.useExistingAssetReference === false ? "不带入当前资产图参考" : scope.useExistingAssetReference === true ? "带入当前资产图参考" : "按指令判断是否带参考图";
-    const message = `预检：提交${buildAssetScopeText(scope)}出图；数量：${quantityText}；${scope.includeCompleted ? "包含已完成资产，允许重绘" : "不包含已完成资产，不重绘"}；${referenceText}`;
+      scope.referencePolicy === "none" || scope.useExistingAssetReference === false
+        ? "不带入当前资产图参考"
+        : scope.referencePolicy === "current_asset" || scope.useExistingAssetReference === true
+          ? "带入当前资产图参考"
+          : "按指令判断是否带参考图";
+    const modeText = scope.generationMode ? `；模式：${assetImageGenerationModeLabel(scope.generationMode)}` : "";
+    const message = `预检：提交${buildAssetScopeText(scope)}出图；数量：${quantityText}；${scope.includeCompleted ? "包含已完成资产，允许重绘" : "不包含已完成资产，不重绘"}；${referenceText}${modeText}`;
     return {
       intent: plan.intent,
       scopeText: buildAssetScopeText(scope),
       quantityText,
       includeCompleted: Boolean(scope.includeCompleted),
       redraw: Boolean(scope.includeCompleted),
+      generationMode: scope.generationMode,
+      referencePolicy: scope.referencePolicy,
       confirmationPolicy,
       message,
     };
@@ -186,6 +199,17 @@ export async function executeWorkspaceCommandPlan(config: ToolConfig, plan: Work
 
   if (plan.intent === "asset_image_generation") {
     const scope = normalizeAssetImageScope(plan.scope);
+    if (plan.confirmationPolicy === "missingInfo" || plan.confirmationPolicy === "confirm") {
+      return {
+        handled: true,
+        message: preflightSummary.message,
+        result: {
+          preflightSummary,
+          needsConfirmation: true,
+          reason: plan.confirmationPolicy,
+        },
+      };
+    }
     return wrapExecution(
       preflightSummary,
       await runProjectAssetImageGenerationFastPath(config, {

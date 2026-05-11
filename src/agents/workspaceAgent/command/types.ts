@@ -1,4 +1,5 @@
 import type { ImageGenerationAssetType } from "@/services/imageGenerationSkill";
+import type { AssetImageGenerationMode, AssetImagePromptPolicy, AssetImageReferencePolicy } from "@/services/assetImageIntent";
 
 export type WorkspaceIntent =
   | "generate_asset_images"
@@ -42,6 +43,9 @@ export interface WorkspaceAssetImageScope {
   assetIds: number[];
   assetNames: string[];
   includeCompleted: boolean;
+  generationMode?: AssetImageGenerationMode;
+  referencePolicy?: AssetImageReferencePolicy;
+  promptPolicy?: AssetImagePromptPolicy;
   useExistingAssetReference?: boolean;
   onlyFailed: boolean;
 }

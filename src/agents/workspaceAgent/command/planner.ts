@@ -5,6 +5,13 @@ import type {
   WorkspaceResolvedScope,
   WorkspaceScopeCandidate,
 } from "@/agents/workspaceAgent/command/types";
+import {
+  assetImageGenerationModeLabel,
+  decideAssetImageIntent,
+  type AssetImageGenerationMode,
+  type AssetImagePromptPolicy,
+  type AssetImageReferencePolicy,
+} from "@/services/assetImageIntent";
 
 export type WorkspaceCommandIntent = "asset_image_generation" | "storyboard_generation" | "storyboard_clear" | "asset_extraction";
 
@@ -37,6 +44,9 @@ export interface WorkspacePlannerResolvedScope {
   assetIds?: number[];
   assetNames?: string[];
   includeCompleted?: boolean;
+  generationMode?: AssetImageGenerationMode;
+  referencePolicy?: AssetImageReferencePolicy;
+  promptPolicy?: AssetImagePromptPolicy;
   useExistingAssetReference?: boolean;
   onlyFailed?: boolean;
   force?: boolean;
@@ -69,6 +79,9 @@ export interface WorkspaceCommandScope {
   assetIds?: number[];
   assetNames?: string[];
   includeCompleted?: boolean;
+  generationMode?: AssetImageGenerationMode;
+  referencePolicy?: AssetImageReferencePolicy;
+  promptPolicy?: AssetImagePromptPolicy;
   useExistingAssetReference?: boolean;
   onlyFailed?: boolean;
   force?: boolean;
@@ -88,6 +101,8 @@ export interface WorkspaceCommandPreflightSummary {
   quantityText: string;
   includeCompleted: boolean;
   redraw: boolean;
+  generationMode?: AssetImageGenerationMode;
+  referencePolicy?: AssetImageReferencePolicy;
   confirmationPolicy: WorkspaceCommandConfirmationPolicy;
   message: string;
 }
@@ -272,21 +287,11 @@ function parseLimitFromText(text: string): number | undefined {
 }
 
 function parseIncludeCompletedFromText(text: string) {
-  return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换|修改|改成|改为|全新|重新设计|从零设计|新形象|新造型)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
+  return decideAssetImageIntent(text).includeCompleted || /includeCompleted/i.test(text);
 }
 
 function parseUseExistingAssetReferenceFromText(text: string): boolean | undefined {
-  if (
-    /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
-    /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
-    /(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本).{0,64}(生成|出图|生图|设计|重绘|角色图|资产图|参考图|图片|图像|形象)/i.test(text) ||
-    /(重新生成|重生|重出|再生成|再出).{0,64}(全新|新的|新版本|新形象|新造型)/i.test(text) ||
-    /(角色图|资产图|参考图|图片|图像|形象).{0,64}(全新|重新设计|从零设计|新形象|新造型|只按文字|纯文本)/i.test(text)
-  ) {
-    return false;
-  }
-  if (/(参考|基于|沿用|保持).{0,10}(现有|当前|原有|已有|原图|旧图|当前图|现有图|已有图)/i.test(text)) return true;
-  return undefined;
+  return decideAssetImageIntent(text).useExistingAssetReference;
 }
 
 function parseSkillIdFromText(text: string) {
@@ -431,6 +436,8 @@ function buildPreflightSummary(args: {
     quantityText: explicitCount ? `最多/指定 ${explicitCount} 个` : "由执行器按当前项目数据决定",
     includeCompleted: Boolean(args.scope.includeCompleted),
     redraw: Boolean(args.scope.includeCompleted),
+    generationMode: args.scope.generationMode,
+    referencePolicy: args.scope.referencePolicy,
     confirmationPolicy: args.confirmationPolicy,
     message: referenceText ? `${args.message} ${referenceText}。` : args.message,
   };
@@ -440,14 +447,22 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
   const resolved = getResolvedScope(text, snapshot);
   const assetScope = isWorkspaceResolvedScope(resolved) ? resolved.assetImages : resolved;
   const parsedAssetType = parseAssetTypeFromText(text);
+  const decision = decideAssetImageIntent(text, {
+    generationMode: assetScope?.generationMode,
+    referencePolicy: assetScope?.referencePolicy,
+    promptPolicy: assetScope?.promptPolicy,
+    includeCompleted: assetScope?.includeCompleted,
+    useExistingAssetReference: assetScope?.useExistingAssetReference,
+  });
   const assetType = assetScope?.assetType ?? parsedAssetType;
   const limit = normalizePositiveLimit(assetScope?.limit) ?? parseLimitFromText(text);
-  const includeCompleted = assetScope?.includeCompleted ?? parseIncludeCompletedFromText(text);
-  const useExistingAssetReference = assetScope?.useExistingAssetReference ?? parseUseExistingAssetReferenceFromText(text);
+  const includeCompleted = decision.includeCompleted || assetScope?.includeCompleted || parseIncludeCompletedFromText(text);
+  const useExistingAssetReference = decision.useExistingAssetReference ?? assetScope?.useExistingAssetReference ?? parseUseExistingAssetReferenceFromText(text);
   const skillId = parseSkillIdFromText(text);
   const missingInfo: Array<WorkspaceMissingInfo | string> = [...((isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo) ?? [])];
   const isVague = signal.confidence < 0.7 || (!assetType && !limit && !assetScope?.assetIds?.length && !assetScope?.assetNames?.length && /帮我.{0,8}(出图|生图|生成.*图)|(出图|生图)$/i.test(text));
   if (isVague && !missingInfo.length) missingInfo.push("需要确认资产类型或生成范围");
+  if (decision.needsClarification) missingInfo.push(decision.clarificationQuestion ?? "需要确认资产生图方式");
 
   const scopeBase: Omit<WorkspaceCommandScope, "summary"> = {
     kind: assetType === "scene" ? "scene" : "asset",
@@ -456,6 +471,9 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
     assetIds: assetScope?.assetIds,
     assetNames: assetScope?.assetNames,
     includeCompleted,
+    generationMode: decision.generationMode,
+    referencePolicy: decision.referencePolicy,
+    promptPolicy: decision.promptPolicy,
     useExistingAssetReference,
     onlyFailed: assetScope?.onlyFailed,
     skillId,
@@ -469,7 +487,7 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
   const confirmationPolicy: WorkspaceCommandConfirmationPolicy = missingInfo.length ? "missingInfo" : signal.confidence >= 0.8 ? "auto" : "confirm";
   const preflightMessage =
     confirmationPolicy === "auto"
-      ? `准备提交${scope.summary}的资产出图任务。`
+      ? `准备提交${scope.summary}的资产出图任务；模式：${assetImageGenerationModeLabel(decision.generationMode)}。`
       : `识别到资产出图意图，但${missingInfoReasons(missingInfo).join("、") || "范围不够明确"}，需要先确认。`;
 
   return {
@@ -487,6 +505,9 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
         assetIds: assetScope?.assetIds,
         assetNames: assetScope?.assetNames,
         includeCompleted,
+        generationMode: decision.generationMode,
+        referencePolicy: decision.referencePolicy,
+        promptPolicy: decision.promptPolicy,
         useExistingAssetReference,
         skillId,
         disableNaturalLanguageScopeParsing: true,

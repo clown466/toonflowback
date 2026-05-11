@@ -8,6 +8,10 @@ const router = express.Router();
 
 type AssetType = "role" | "scene" | "tool";
 
+const assetImageGenerationModeSchema = z.enum(["fresh_design", "reference_redraw", "partial_edit", "variant", "retry_failed", "ambiguous_redraw", "default"]);
+const assetImageReferencePolicySchema = z.enum(["none", "current_asset", "auto"]);
+const assetImagePromptPolicySchema = z.enum(["asset_description_plus_request", "asset_prompt_plus_request", "reuse_current_prompt"]);
+
 // ─── 生成资产图片 ────────────────────────────────────────────
 
 const requestSchema = {
@@ -21,12 +25,15 @@ const requestSchema = {
   describe: z.string().optional().nullable(),
   base64: z.string().optional().nullable(),
   skillId: z.string().optional().nullable(),
+  generationMode: assetImageGenerationModeSchema.optional().nullable(),
+  referencePolicy: assetImageReferencePolicySchema.optional().nullable(),
+  promptPolicy: assetImagePromptPolicySchema.optional().nullable(),
   userRequirement: z.string().optional().nullable(),
 };
 
 export default router.post("/", validateFields(requestSchema), async (req, res) => {
   try {
-    const { projectId, model, resolution, id, type, name, prompt, describe, base64, skillId, userRequirement } = req.body;
+    const { projectId, model, resolution, id, type, name, prompt, describe, base64, skillId, generationMode, referencePolicy, promptPolicy, userRequirement } = req.body;
     if (!["role", "scene", "tool"].includes(type)) return res.status(400).send(error("不支持的类型"));
 
     const result = await submitAssetImageGeneration({
@@ -35,6 +42,9 @@ export default router.post("/", validateFields(requestSchema), async (req, res) 
       resolution,
       concurrentCount: 1,
       skillId,
+      generationMode,
+      referencePolicy,
+      promptPolicy,
       userRequirement,
       items: [
         {
@@ -45,6 +55,9 @@ export default router.post("/", validateFields(requestSchema), async (req, res) 
           describe,
           base64,
           skillId,
+          generationMode,
+          referencePolicy,
+          promptPolicy,
           userRequirement,
         },
       ],

@@ -29,6 +29,8 @@ type GeneratableAssetType = z.infer<typeof generatableAssetTypeSchema>;
 const assetImageGenerationModeSchema = z.enum(["fresh_design", "reference_redraw", "partial_edit", "variant", "retry_failed", "ambiguous_redraw", "default"]);
 const assetImageReferencePolicySchema = z.enum(["none", "current_asset", "auto"]);
 const assetImagePromptPolicySchema = z.enum(["asset_description_plus_request", "asset_prompt_plus_request", "reuse_current_prompt"]);
+const assetImageQualitySchema = z.enum(["1K", "2K", "4K"]);
+type AssetImageQuality = z.infer<typeof assetImageQualitySchema>;
 
 export interface ProjectAssetImageGenerationOptions {
   includeCompleted?: boolean;
@@ -45,6 +47,7 @@ export interface ProjectAssetImageGenerationOptions {
   assetNames?: string[];
   disableNaturalLanguageScopeParsing?: boolean;
   useExistingAssetReference?: boolean;
+  imageQuality?: AssetImageQuality;
 }
 
 export interface NovelAssetExtractionOptions {
@@ -71,6 +74,22 @@ function pickCount(value: unknown): number {
 
 function nonEmpty(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeAssetImageQuality(value: unknown): AssetImageQuality | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "1K" || normalized === "2K" || normalized === "4K") return normalized;
+  return undefined;
+}
+
+function parseAssetImageQualityFromText(text: string): AssetImageQuality | undefined {
+  const match = text.match(/(^|[^0-9])([124])\s*[kKＫｋ]([^0-9]|$)/);
+  if (match) return normalizeAssetImageQuality(`${match[2]}K`);
+  if (/低质量|低清|草稿|快速|省积分|省点数|便宜/i.test(text)) return "1K";
+  if (/高质量|高清|精细|最高质量|最高分辨率|大图/i.test(text)) return "4K";
+  if (/中等质量|标准质量|标准图|默认质量/i.test(text)) return "2K";
+  return undefined;
 }
 
 function chineseNumberToArabic(value: string): number | null {
@@ -548,6 +567,7 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
   const assetNameSet = new Set(assetNames.map(normalizeAssetName));
   const scopeText = formatAssetImageScope({ assetType, limit, assetIds, assetNames });
   const thinking = msg.thinking("正在提交资产批量出图任务...");
+  const requestedImageQuality = normalizeAssetImageQuality(options?.imageQuality) ?? parseAssetImageQualityFromText(requestText);
 
   const project = await u.db("o_project").where("id", projectId).select("id", "imageModel", "imageQuality", "artStyle").first();
   if (!project) {
@@ -560,7 +580,8 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
     }
     return { handled: true, reason: "project_not_found" };
   }
-  if (!project.imageModel || !project.imageQuality) {
+  const projectDefaultImageQuality = nonEmpty(project.imageQuality);
+  if (!project.imageModel || (!projectDefaultImageQuality && !requestedImageQuality)) {
     thinking.updateTitle("缺少图像模型配置");
     thinking.complete();
     if (finalizeMessage) {
@@ -570,6 +591,7 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
     }
     return { handled: true, reason: "missing_project_image_config" };
   }
+  const effectiveImageQuality = requestedImageQuality ?? normalizeAssetImageQuality(projectDefaultImageQuality) ?? projectDefaultImageQuality ?? "2K";
 
   const assets = await u
     .db("o_assets")
@@ -692,7 +714,7 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
   const result = await submitAssetImageGeneration({
     projectId,
     model: project.imageModel,
-    resolution: project.imageQuality,
+    resolution: effectiveImageQuality,
     concurrentCount: 1,
     onStatusChange: (event) => {
       emitProjectAssetImageUpdate(resTool, {
@@ -727,7 +749,8 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
       {
         projectId,
         imageModel: project.imageModel,
-        imageQuality: project.imageQuality,
+        imageQuality: effectiveImageQuality,
+        projectDefaultImageQuality: project.imageQuality,
         aspectRatio: "16:9",
         includeCompleted,
         scope: scopeText || null,
@@ -754,7 +777,8 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
   const lines = [
     `已提交 ${result.submitted} 个资产图生成任务，画幅固定 16:9。`,
     scopeText ? `已按范围筛选：${scopeText}；匹配 ${scopedAssets.length} 个，进入本次范围 ${selectedAssets.length} 个。` : "",
-    `模型：${project.imageModel}，质量：${project.imageQuality}，后台并发：1。`,
+    `模型：${project.imageModel}，质量：${effectiveImageQuality}，后台并发：1。`,
+    requestedImageQuality && requestedImageQuality !== normalizeAssetImageQuality(project.imageQuality) ? `已按本次要求覆盖项目默认质量：${project.imageQuality || "未设置"} -> ${requestedImageQuality}。` : "",
     `模式：${assetImageGenerationModeLabel(intentDecision.generationMode)}。`,
     validAssets.length ? `本次提交：${formatAssetNames(validAssets)}。` : "",
     !includeCompleted && skippedCompleted.length ? `已完成的 ${skippedCompleted.length} 个资产本次保留不重绘；需要全量重绘时说“重绘全部资产图”。` : "",
@@ -1189,7 +1213,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
       },
     }),
     batch_generate_project_asset_images: tool({
-      description: "直接提交当前项目资产库的角色/场景/道具参考图生成任务，后台异步生成，固定 16:9；用于用户明确要求资产出图、批量生图、生成参考图。必须严格遵守用户指定范围：例如“前4个场景图”必须传 assetType='scene' 且 limit=4；“只生成 Chloe”必须传 assetNames。",
+      description: "直接提交当前项目资产库的角色/场景/道具参考图生成任务，后台异步生成，固定 16:9；用于用户明确要求资产出图、批量生图、生成参考图。必须严格遵守用户指定范围：例如“前4个场景图”必须传 assetType='scene' 且 limit=4；“只生成 Chloe”必须传 assetNames。用户指定 1K/2K/4K、低质量/标准质量/高质量时必须传 imageQuality。",
       inputSchema: toToolJsonSchema<{
         includeCompleted?: boolean;
         assetType?: GeneratableAssetType;
@@ -1200,6 +1224,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
         referencePolicy?: AssetImageReferencePolicy;
         promptPolicy?: AssetImagePromptPolicy;
         useExistingAssetReference?: boolean;
+        imageQuality?: AssetImageQuality;
       }>(z.object({
         includeCompleted: z.boolean().optional().describe("是否连已完成图片的资产也重新提交；默认 false，只补缺图/失败图"),
         assetType: generatableAssetTypeSchema.optional().describe("可选：只生成某类资产；用户说角色/场景/道具时必须填写"),
@@ -1213,8 +1238,9 @@ export function useNovelWorkflowTools(config: ToolConfig) {
           .boolean()
           .optional()
           .describe("是否把当前已完成资产图作为图生图参考；用户说全新、不参考原图、只按文字生成时必须为 false；用户说参考现有图/沿用原图时为 true"),
+        imageQuality: assetImageQualitySchema.optional().describe("可选：本次资产出图质量/分辨率。用户明确说 1K、2K、4K 或低/中/高质量时必须判断后填写；未填写才使用项目默认图片质量。"),
       })),
-      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, generationMode, referencePolicy, promptPolicy, useExistingAssetReference }) => {
+      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, generationMode, referencePolicy, promptPolicy, useExistingAssetReference, imageQuality }) => {
         return runProjectAssetImageGenerationTool(config, {
           includeCompleted,
           sourceText: config.sourceText,
@@ -1226,6 +1252,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
           referencePolicy,
           promptPolicy,
           useExistingAssetReference,
+          imageQuality,
           finalizeMessage: false,
         });
       },

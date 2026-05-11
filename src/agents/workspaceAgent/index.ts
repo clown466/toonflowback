@@ -253,6 +253,7 @@ async function createSubAgent(parentCtx: AgentContext) {
       "- 用户明确说参考现有图、沿用当前图、基于原图修改：generationMode=partial_edit 或 reference_redraw，referencePolicy=current_asset。",
       "- 用户只说重绘、修改、改成但没说明是否参考：先向用户确认，不要直接提交任务。",
       "- 不得因为资产已有图片就自动作为参考图；参考图只能来自用户明确要求或工具参数 referencePolicy=current_asset。",
+      "- 用户指定 1K/2K/4K、低质量/标准质量/高质量时，必须在资产出图工具里填写 imageQuality；不要被项目默认质量覆盖。",
       `projectId：${resTool.data.projectId}`,
       `项目名称：${projectData?.name ?? "未知"}`,
       `项目类型：${projectData?.type ?? "未知"}`,

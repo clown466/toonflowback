@@ -175,9 +175,104 @@ async function testExecutorPassesAssetExtractionScope() {
   });
 }
 
+async function testAllChapterRemainingAssetExtraction() {
+  const db = knexFactory({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true });
+  await createSchema(db);
+  await db('o_novel').insert([
+    {
+      id: 20,
+      projectId: 2,
+      chapterIndex: 20,
+      chapter: 'juben20',
+      event: '| Chapter 20 juben20 | Chloe, Eugene, Bob, Leo, Road Rage Zombies, creepy old man | highway jam and Alpha Bunker clue |',
+      chapterData:
+        'The truck roared onto the highway. Hundreds of crashed cars blocked the road. Road Rage Zombies smashed their car horns. Eugene wore a gas mask. Leo sprayed non-stick cooking oil on his frying pan. A creepy old man revealed Alpha Bunker.',
+      eventState: 1,
+    },
+    {
+      id: 24,
+      projectId: 2,
+      chapterIndex: 24,
+      chapter: 'juben24',
+      event: "| Chapter 24 juben24 | Chloe, Leo, Eugene, Bob, her Dad, Olaf, old rich CEOs | The Board's special lunch party and golden server fight |",
+      chapterData:
+        'Her Dad spoke through golden speakers. Old Rich CEOs and Olaf played a video game with the team. A giant Roomba with chainsaws dropped from the ceiling. A yellow excavator with machine guns fired everywhere. Chloe had to physically break the golden server in the middle of the room.',
+      eventState: 1,
+    },
+    {
+      id: 25,
+      projectId: 2,
+      chapterIndex: 25,
+      chapter: 'juben25',
+      event: '| Chapter 25 juben25 | Chloe, Eugene, Leo, Bob, Chloe’s dad, Glitch Monster | Master Key admin control and final upload monster |',
+      chapterData:
+        "The golden door opened to the Golden Upload Lab. The golden water tank boiled. Chloe used her blood and Master Key for admin control. Her failed-upload father became a Glitch Monster with metal robot arms and a glowing red computer board in his chest.",
+      eventState: 1,
+    },
+    {
+      id: 26,
+      projectId: 2,
+      chapterIndex: 26,
+      chapter: 'juben26',
+      event: '| Chapter 26 juben26 | Chloe, Eugene, Leo, Tiny Dad, Bob | blue orb and system update ending |',
+      chapterData:
+        'Outside, Vacation Zombies in silk robes were frozen like Red Light, Green Light. Floating loading bars said System Updating and Empathy Patch. A glowing blue orb was left behind and Tiny Dad yelled from Leo’s pan.',
+      eventState: 1,
+    },
+  ]);
+  await db('o_assets').insert([
+    { id: 1, projectId: 2, name: 'Chloe', type: 'role', describe: 'old Chloe', prompt: 'old Chloe prompt' },
+    { id: 2, projectId: 2, name: 'Leo', type: 'role', describe: 'old Leo', prompt: 'old Leo prompt' },
+  ]);
+
+  const service = loadTsModule('src/agents/workspaceAgent/tools.ts', {
+    '@/utils': { db },
+    '@/socket/resTool': class ResToolMock {},
+    '@/services/assetImageGeneration': { submitAssetImageGeneration: async () => ({ submitted: 0 }) },
+    '@/services/storyboardDraftGeneration': { clearProjectStoryboards: async () => ({}), toPublicWorkspaceName: (name) => name },
+    '@/services/storyboardSkillGeneration': { generateProjectStoryboardWithSkill: async () => ({}) },
+    '@/utils/jsonSchema': { toToolJsonSchema: (schema) => schema },
+  });
+
+  const result = await service.runNovelAssetExtractionFastPath(
+    { resTool: { data: { projectId: 2 } }, msg: createMessageSink().msg },
+    { sourceText: '读取所有小说情节提取剩余新增资产' },
+  );
+  assert.strictEqual(result.result.updatedCount, 0, 'remaining/new extraction should skip existing assets');
+
+  const names = (await db('o_assets').where({ projectId: 2 }).orderBy('id')).map((asset) => asset.name);
+  for (const expected of [
+    'Road Rage Zombies',
+    'Creepy Old Man',
+    'Road Rage Highway Jam',
+    'Gas Mask',
+    'Non-Stick Cooking Oil',
+    'Shadow Board Old Rich CEOs',
+    'Olaf',
+    'The Elysium Board Game Hall',
+    'Golden Server Room',
+    'Golden Speakers',
+    'Chainsaw Roomba',
+    'Weaponized Excavator',
+    "Chloe's Dad / Tiny Dad",
+    'Glitch Monster',
+    'Golden Upload Lab',
+    'Master Key',
+    'Glowing Red Computer Board',
+    'Vacation Zombies',
+    'Frozen Update World',
+    'Glowing Blue Orb',
+    'System Update Loading Bars',
+  ]) {
+    assert.ok(names.includes(expected), `expected all-chapter remaining asset: ${expected}`);
+  }
+  await db.destroy();
+}
+
 async function main() {
   await testChapterScopedNewAssetExtraction();
   await testExecutorPassesAssetExtractionScope();
+  await testAllChapterRemainingAssetExtraction();
   console.log('Novel asset extraction scope checks passed');
 }
 

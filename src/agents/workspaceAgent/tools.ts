@@ -479,10 +479,6 @@ export async function runNovelAssetExtractionTool(config: ToolConfig, options: N
   return { handled: true, message: lines.join("\n"), result };
 }
 
-function shouldUseExistingAssetImageReference(text: string) {
-  return /参考.*(现有|当前|原有|已有)|基于.*(现有|当前|原有|已有)|保持.*(原图|当前图|现有图)|沿用.*(原图|当前图|现有图)|修改|改成|改为|重绘|替换/i.test(text);
-}
-
 function buildAssetImagePromptSource(asset: any, freshAssetText: boolean) {
   const describe = nonEmpty(asset.describe);
   const prompt = nonEmpty(asset.prompt);
@@ -666,12 +662,7 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
 
   const freshAssetText = intentDecision.promptPolicy === "asset_description_plus_request" || intentDecision.generationMode === "fresh_design";
   const effectiveUserRequirement = freshAssetText ? buildFreshAssetUserRequirement(sourceText) : options?.userRequirement ?? options?.sourceText ?? config.sourceText ?? null;
-  const useExistingAssetReference =
-    intentDecision.referencePolicy === "none"
-      ? false
-      : intentDecision.referencePolicy === "current_asset"
-        ? true
-        : options?.useExistingAssetReference ?? (includeCompleted || shouldUseExistingAssetImageReference(sourceText));
+  const useExistingAssetReference = intentDecision.useExistingAssetReference === true;
   const generationItems = await Promise.all(
     validAssets.map(async (asset: any) => {
       let base64: string | null = null;
@@ -1216,7 +1207,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
         assetIds: z.array(z.number().int().positive()).optional().describe("可选：只生成指定资产 ID"),
         assetNames: z.array(z.string().min(1)).optional().describe("可选：只生成指定资产名称，例如 Chloe"),
         generationMode: assetImageGenerationModeSchema.optional().describe("结构化生图模式。fresh_design=全新设计不沿用旧图；reference_redraw=参考当前图重绘；partial_edit=局部修改；variant=基于当前图生成变体；retry_failed=重试失败任务。总控必须先判断用户真实意图再填写。"),
-        referencePolicy: assetImageReferencePolicySchema.optional().describe("参考图策略。none=绝不带当前资产图；current_asset=必须带当前资产图；auto=执行器按模式判断。用户说全新/新的/不参考原图时必须为 none。"),
+        referencePolicy: assetImageReferencePolicySchema.optional().describe("参考图策略。none=绝不带当前资产图；current_asset=必须带当前资产图；auto=不自动带图，除非总控明确判断为 current_asset。用户说全新/新的/不参考原图时必须为 none。"),
         promptPolicy: assetImagePromptPolicySchema.optional().describe("提示词策略。asset_description_plus_request=用资产描述+用户本次要求，避免旧 prompt 污染；asset_prompt_plus_request=沿用资产 prompt 并追加要求；reuse_current_prompt=重试原提示词。"),
         useExistingAssetReference: z
           .boolean()

@@ -128,14 +128,27 @@ export function decideAssetImageIntent(text?: string | null, overrides: AssetIma
     });
   }
 
-  if (explicitReference || partialEdit) {
+  if (explicitReference) {
     return buildDecision({
       generationMode: partialEdit ? "partial_edit" : "reference_redraw",
       referencePolicy: "current_asset",
       promptPolicy: "asset_prompt_plus_request",
       includeCompleted,
-      confidence: explicitReference ? 0.9 : 0.82,
-      reason: explicitReference ? "explicit_reference" : "edit_language_implies_current_asset",
+      confidence: 0.9,
+      reason: "explicit_reference",
+    });
+  }
+
+  if (partialEdit) {
+    return buildDecision({
+      generationMode: "ambiguous_redraw",
+      referencePolicy: "auto",
+      promptPolicy: "asset_description_plus_request",
+      includeCompleted,
+      needsClarification: true,
+      clarificationQuestion: "你是要参考当前图修改，还是只按文字设定重新生成？",
+      confidence: 0.42,
+      reason: "edit_language_without_reference_policy",
     });
   }
 

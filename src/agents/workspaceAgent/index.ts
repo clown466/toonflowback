@@ -128,8 +128,6 @@ export async function runDecisionAI(ctx: AgentContext) {
     abortSignal,
     tools: {
       ...memory.getTools(),
-      ...useTools({ resTool: ctx.resTool, msg: ctx.msg, abortSignal: ctx.abortSignal, sourceText: text }),
-      ...useNovelWorkflowTools({ resTool: ctx.resTool, msg: ctx.msg, abortSignal: ctx.abortSignal, sourceText: text }),
       ...(await createSubAgent(ctx)),
     },
     onFinish: async (completion) => {
@@ -194,10 +192,6 @@ async function createSubAgent(parentCtx: AgentContext) {
     return fullResponse;
   }
 
-  const promptInput = toToolJsonSchema<{ prompt: string }>(z.object({
-    prompt: z.string().describe("交给子控的项目级任务简约描述，100字以内"),
-  }));
-
   async function delegateProductionAgent(prompt: string) {
     const workspaces = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime");
     const scriptId = resTool.data.scriptId;
@@ -238,6 +232,46 @@ async function createSubAgent(parentCtx: AgentContext) {
     });
   }
 
+  async function delegateAssetAgent(prompt: string) {
+    const [projectData, novels, assets, skills] = await Promise.all([
+      u.db("o_project").where("id", resTool.data.projectId).first(),
+      u.db("o_novel").where("projectId", resTool.data.projectId).select("id", "chapter", "chapterIndex", "eventState").orderBy("chapterIndex", "asc"),
+      u
+        .db("o_assets")
+        .leftJoin("o_image", "o_assets.imageId", "o_image.id")
+        .where("o_assets.projectId", resTool.data.projectId)
+        .whereNull("o_assets.assetsId")
+        .select("o_assets.id", "o_assets.name", "o_assets.type", "o_assets.describe", "o_assets.prompt", "o_assets.imageId", "o_image.state as imageState")
+        .orderBy("o_assets.id", "asc"),
+      getWorkspaceSkillCatalog(Number(resTool.data.projectId)),
+    ]);
+    const assetContext = [
+      "## 资产子控上下文",
+      "你是资产子控，负责小说资产提取、资产库维护、角色/场景/道具参考图生成。必须实际调用工具完成可执行任务，不能只口头说明。",
+      "所有资产出图必须先判断用户真实意图，再选择生图模式：",
+      "- 用户说全新、重新设计、新形象、不要参考原图、只按文字生成：generationMode=fresh_design，referencePolicy=none，useExistingAssetReference=false。",
+      "- 用户说参考现有图、沿用当前图、修改、改成、局部调整：generationMode=partial_edit 或 reference_redraw，referencePolicy=current_asset。",
+      "- 用户只说重绘且没说明是否参考：先向用户确认，不要直接提交任务。",
+      "- 不得因为资产已有图片就自动作为参考图；参考图只能来自用户明确要求或工具参数 referencePolicy=current_asset。",
+      `projectId：${resTool.data.projectId}`,
+      `项目名称：${projectData?.name ?? "未知"}`,
+      `项目类型：${projectData?.type ?? "未知"}`,
+      `项目简介：${projectData?.intro ?? "无"}`,
+      `目标画风：${projectData?.artStyle ?? "无"}`,
+      `小说条目：${(novels as any[]).map((novel) => `${novel.id}:项目内第${novel.chapterIndex}条/原始名${novel.chapter ?? ""}/eventState=${novel.eventState}`).join("；") || "无"}`,
+      `资产库：${JSON.stringify(assets).slice(0, 16000)}`,
+      `可用技能：${JSON.stringify((skills as any[]).filter((skill) => skill.source === "image_generation")).slice(0, 8000)}`,
+    ].join("\n");
+
+    return runAgent({
+      key: "workspaceAgent:decisionAgent",
+      prompt,
+      system: assetContext,
+      name: "资产总控",
+      memoryKey: "assistant:delegation:assetAgent",
+    });
+  }
+
   async function buildAssetReferencePlan(focus?: string) {
     const assets = await u
       .db("o_assets")
@@ -267,6 +301,7 @@ async function createSubAgent(parentCtx: AgentContext) {
   }
 
   async function delegateDomainAgent(agentId: WorkspaceDomainAgentId, prompt: string) {
+    if (agentId === "asset") return delegateAssetAgent(prompt);
     if (agentId === "production") return delegateProductionAgent(prompt);
     return buildAssetReferencePlan(prompt);
   }
@@ -299,26 +334,10 @@ async function createSubAgent(parentCtx: AgentContext) {
     execute: async ({ agentId, prompt }) => delegateDomainAgent(agentId, prompt),
   });
 
-  const run_production_agent_for_assets = tool({
-    description: "兼容旧提示词：项目级资产/生产转交工具。新流程优先调用 delegate_agent(agentId='production')。",
-    inputSchema: promptInput,
-    execute: async ({ prompt }) => delegateProductionAgent(prompt),
-  });
-
-  const run_asset_reference_generation_plan = tool({
-    description: "兼容旧提示词：基于项目级资产库规划参考图。新流程优先调用 delegate_agent(agentId='asset_reference_planner')。",
-    inputSchema: toToolJsonSchema<{ focus?: string }>(z.object({
-      focus: z.string().optional().describe("可选：计划关注点，例如优先主角、重点场景、缺图资产等"),
-    })),
-    execute: async ({ focus }) => buildAssetReferencePlan(focus),
-  });
-
   return {
     list_available_agents,
     list_available_skills,
     delegate_agent,
-    run_production_agent_for_assets,
-    run_asset_reference_generation_plan,
   };
 }
 

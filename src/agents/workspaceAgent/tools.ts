@@ -406,7 +406,7 @@ function describeNovelScope(novels: any[]) {
     .join("、");
 }
 
-export async function runNovelAssetExtractionFastPath(config: ToolConfig, options: NovelAssetExtractionOptions = {}) {
+export async function runNovelAssetExtractionTool(config: ToolConfig, options: NovelAssetExtractionOptions = {}) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
   const thinking = msg.thinking("正在直接读取小说并提取资产...");
@@ -531,7 +531,7 @@ function emitProjectAssetImageUpdate(resTool: ResTool, payload: Record<string, u
   });
 }
 
-export async function runProjectAssetImageGenerationFastPath(config: ToolConfig, options?: ProjectAssetImageGenerationOptions) {
+export async function runProjectAssetImageGenerationTool(config: ToolConfig, options?: ProjectAssetImageGenerationOptions) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
   const requestText = options?.userRequirement ?? options?.sourceText ?? config.sourceText ?? "";
@@ -783,7 +783,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
   return { handled: true, message: lines.join("\n"), result };
 }
 
-export async function runProjectStoryboardDraftFastPath(
+export async function runProjectStoryboardDraftTool(
   config: ToolConfig,
   options?: { sourceText?: string; force?: boolean; append?: boolean; novelIds?: number[]; chapterIndexes?: number[]; skillId?: string; userRequirement?: string },
 ) {
@@ -877,7 +877,7 @@ export async function runProjectStoryboardDraftFastPath(
   return { handled: true, result };
 }
 
-export async function runProjectStoryboardClearFastPath(config: ToolConfig, options?: { sourceText?: string }) {
+export async function runProjectStoryboardClearTool(config: ToolConfig, options?: { sourceText?: string }) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
   const thinking = msg.thinking("正在清空章节分镜...");
@@ -1036,7 +1036,7 @@ export default function useTools(config: ToolConfig) {
         skillId: z.string().optional().describe("可选：使用指定分镜 Skill"),
         userRequirement: z.string().optional().describe("用户额外分镜要求"),
       })),
-      execute: async (options) => runProjectStoryboardDraftFastPath(config, options),
+      execute: async (options) => runProjectStoryboardDraftTool(config, options),
     }),
     clear_project_storyboards: tool({
       description: "清空当前项目或当前章节分镜工作区中的已有分镜。只在用户明确要求清空/删除分镜且不要求立刻重推时使用。",
@@ -1044,7 +1044,7 @@ export default function useTools(config: ToolConfig) {
         sourceText: z.string().optional().describe("用户原始要求；用于匹配 juben10/章节名/第 N 条"),
         chapterIndexes: z.array(z.number()).optional().describe("可选：只清空指定项目内章节序号"),
       })),
-      execute: async ({ sourceText, chapterIndexes }) => runProjectStoryboardClearFastPath(config, {
+      execute: async ({ sourceText, chapterIndexes }) => runProjectStoryboardClearTool(config, {
         sourceText: [sourceText, chapterIndexes?.length ? `第${chapterIndexes.join("、")}章` : ""].filter(Boolean).join(" "),
       }),
     }),
@@ -1063,7 +1063,7 @@ export default function useTools(config: ToolConfig) {
         skillId: z.string().optional().describe("可选：使用指定分镜 Skill"),
         userRequirement: z.string().optional().describe("用户额外分镜要求"),
       })),
-      execute: async (options) => runProjectStoryboardDraftFastPath(config, { ...options, force: true }),
+      execute: async (options) => runProjectStoryboardDraftTool(config, { ...options, force: true }),
     }),
   };
 
@@ -1224,7 +1224,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
           .describe("是否把当前已完成资产图作为图生图参考；用户说全新、不参考原图、只按文字生成时必须为 false；用户说参考现有图/沿用原图时为 true"),
       })),
       execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, generationMode, referencePolicy, promptPolicy, useExistingAssetReference }) => {
-        return runProjectAssetImageGenerationFastPath(config, {
+        return runProjectAssetImageGenerationTool(config, {
           includeCompleted,
           sourceText: config.sourceText,
           assetType,

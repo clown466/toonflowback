@@ -4,7 +4,7 @@ import u from "@/utils";
 import { parseFrontmatter, scanSkills } from "@/utils/agent/skillsTools";
 import { listImageGenerationSkills } from "@/services/imageGenerationSkill";
 
-export const WORKSPACE_DOMAIN_AGENT_IDS = ["production", "asset_reference_planner"] as const;
+export const WORKSPACE_DOMAIN_AGENT_IDS = ["asset", "production", "asset_reference_planner"] as const;
 export type WorkspaceDomainAgentId = (typeof WORKSPACE_DOMAIN_AGENT_IDS)[number];
 
 export interface WorkspaceDomainAgentCatalogItem {
@@ -30,6 +30,16 @@ export interface WorkspaceSkillCatalogItem {
 
 export function getWorkspaceDomainAgentCatalog(): WorkspaceDomainAgentCatalogItem[] {
   return [
+    {
+      id: "asset",
+      name: "资产总控",
+      role: "负责小说资产提取、资产库维护、角色/场景/道具参考图生成，并根据用户意图决定是否带当前资产图参考。",
+      delegateWhen: ["用户要求提取资产、塑角造景、生成角色图/场景图/道具图、重绘或重新设计资产参考图。"],
+      doNotUseWhen: ["用户要求分镜表、导演板、分镜图或视频生产时，应交给生产总控。"],
+      childAgents: ["assetExtractor", "assetImagePlanner", "imageGenerationSkills"],
+      canWriteData: true,
+      riskLevel: "cost",
+    },
     {
       id: "production",
       name: "生产总控",

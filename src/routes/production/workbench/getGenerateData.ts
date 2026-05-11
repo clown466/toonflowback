@@ -161,17 +161,6 @@ export default router.post(
         .map((id) => directorBoardAssetMap.get(id))
         .filter((asset) => asset?.src);
     });
-    const directorBoardMedias: TrackMedia[] = directorBoardList
-      .filter((item) => item.state === "已完成" && item.src)
-      .map((item) => ({
-        id: item.id,
-        src: item.src,
-        fileType: "image",
-        sources: "directorBoard",
-        prompt: item.prompt || undefined,
-        label: item.name || `导演板 ${Number(item.index ?? 0) + 1}`,
-        index: item.index,
-      }));
     const videoList = await u.db("o_video").whereIn(
       "videoTrackId",
       trackData.map((t) => t.id),
@@ -200,10 +189,6 @@ export default router.post(
           const sortAssetMedia = (a: TrackMedia, b: TrackMedia) => (assetPriority[a.type || ""] ?? 3) - (assetPriority[b.type || ""] ?? 3);
           const hasImageAssetData = uniqueAssets.filter((i) => i.src).sort(sortAssetMedia);
           const notHasImageAssetData = uniqueAssets.filter((i) => !i.src);
-
-          if (directorBoardMedias.length) {
-            return [...hasImageAssetData, ...directorBoardMedias, ...notHasImageAssetData];
-          }
 
           return [...hasImageAssetData, ...storyboardMedias, ...notHasImageAssetData];
         })(),

@@ -210,6 +210,10 @@ async function createSubAgent(parentCtx: AgentContext) {
 
     const productionContext = [
       "## 项目级生产上下文",
+      "你是生产总控，负责把用户的自然语言要求落到工具调用：分镜表、章节导演板、视频提示词、视频生成。必须实际调用工具完成可执行任务，不能只口头说明。",
+      "章节导演板能力：可生成 continuity 空间连续性导演板、textStoryboard 文字分镜导演板、hybridStoryboard 融合导演板；用户明确要求上一张作连续性参考时才开启 usePreviousBoardReference。",
+      "视频能力：可按 directorBoardIds/storyboardIds/assetIds 自动生成视频提示词，也可直接提交视频生成；选择导演板时应自动带入导演板绑定资产作为参考，避免让用户手动逐个选择。",
+      "模型与质量：用户指定图像/视频模型、1K/2K/4K、分辨率、时长、音频或 mode 时，必须把这些参数传给对应工具；未指定时才使用项目默认配置。",
       `projectId：${resTool.data.projectId}`,
       `当前章节分镜工作区ID：${scriptId ?? "未指定，必要时由工具按小说章节自动创建或复用"}`,
       `项目名称：${projectData?.name ?? "未知"}`,
@@ -217,6 +221,7 @@ async function createSubAgent(parentCtx: AgentContext) {
       `资产库：${JSON.stringify(assets).slice(0, 12000)}`,
       `已有章节分镜工作区：${workspaces.map((s: any) => `${s.id}:${toPublicWorkspaceName(s.name ?? "未命名分镜工作区")}`).join("，") || "无"}`,
       "本项目不走改编剧本步骤；生产流程必须使用小说章节/事件分析、项目资产库、分镜表、分镜图、视频。",
+      "如果工具返回需要指定章节工作区，不要说“生产容器”；请让用户按小说章节或章节工作区名称选择。",
     ].join("\n");
 
     return runAgent({
@@ -254,6 +259,7 @@ async function createSubAgent(parentCtx: AgentContext) {
       "- 用户只说重绘、修改、改成但没说明是否参考：先向用户确认，不要直接提交任务。",
       "- 不得因为资产已有图片就自动作为参考图；参考图只能来自用户明确要求或工具参数 referencePolicy=current_asset。",
       "- 用户指定 1K/2K/4K、低质量/标准质量/高质量时，必须在资产出图工具里填写 imageQuality；不要被项目默认质量覆盖。",
+      "- 用户指定出图模型、生图预设/skill、并发时，必须填写 imageModel、skillId、concurrentCount；不要被项目默认模型或旧预设覆盖。",
       `projectId：${resTool.data.projectId}`,
       `项目名称：${projectData?.name ?? "未知"}`,
       `项目类型：${projectData?.type ?? "未知"}`,

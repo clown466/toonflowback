@@ -12,6 +12,14 @@ import {
 } from "@/services/assetImageIntent";
 import { clearProjectStoryboards, toPublicWorkspaceName } from "@/services/storyboardDraftGeneration";
 import { generateProjectStoryboardWithSkill } from "@/services/storyboardSkillGeneration";
+import {
+  listDirectorBoards,
+  queueDirectorBoardGeneration,
+  regenerateDirectorBoard,
+  type DirectorBoardType,
+} from "@/services/directorBoardGeneration";
+import { generateVideoPromptForTrack, type VideoPromptInfoItem } from "@/services/videoPromptGeneration";
+import { submitVideoGenerationTask, type VideoUploadItem } from "@/services/videoGeneration";
 import { toToolJsonSchema } from "@/utils/jsonSchema";
 
 export interface ToolConfig {
@@ -31,6 +39,12 @@ const assetImageReferencePolicySchema = z.enum(["none", "current_asset", "auto"]
 const assetImagePromptPolicySchema = z.enum(["asset_description_plus_request", "asset_prompt_plus_request", "reuse_current_prompt"]);
 const assetImageQualitySchema = z.enum(["1K", "2K", "4K"]);
 type AssetImageQuality = z.infer<typeof assetImageQualitySchema>;
+const directorBoardTypeSchema = z.enum(["continuity", "textStoryboard", "hybridStoryboard"]);
+const videoReferenceSourceSchema = z.enum(["assets", "storyboard", "directorBoard"]);
+const videoReferenceInfoSchema = z.object({
+  id: z.number().int().positive(),
+  sources: videoReferenceSourceSchema,
+});
 
 export interface ProjectAssetImageGenerationOptions {
   includeCompleted?: boolean;
@@ -48,6 +62,8 @@ export interface ProjectAssetImageGenerationOptions {
   disableNaturalLanguageScopeParsing?: boolean;
   useExistingAssetReference?: boolean;
   imageQuality?: AssetImageQuality;
+  imageModel?: string;
+  concurrentCount?: number;
 }
 
 export interface NovelAssetExtractionOptions {
@@ -568,6 +584,8 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
   const scopeText = formatAssetImageScope({ assetType, limit, assetIds, assetNames });
   const thinking = msg.thinking("正在提交资产批量出图任务...");
   const requestedImageQuality = normalizeAssetImageQuality(options?.imageQuality) ?? parseAssetImageQualityFromText(requestText);
+  const requestedImageModel = nonEmpty(options?.imageModel);
+  const concurrentCount = Math.min(Math.max(Number(options?.concurrentCount || 1), 1), 4);
 
   const project = await u.db("o_project").where("id", projectId).select("id", "imageModel", "imageQuality", "artStyle").first();
   if (!project) {
@@ -580,12 +598,13 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
     }
     return { handled: true, reason: "project_not_found" };
   }
+  const effectiveImageModel = requestedImageModel ?? nonEmpty(project.imageModel);
   const projectDefaultImageQuality = nonEmpty(project.imageQuality);
-  if (!project.imageModel || (!projectDefaultImageQuality && !requestedImageQuality)) {
+  if (!effectiveImageModel || (!projectDefaultImageQuality && !requestedImageQuality)) {
     thinking.updateTitle("缺少图像模型配置");
     thinking.complete();
     if (finalizeMessage) {
-      const text = msg.text("当前项目还没有配置图像模型或图片质量，请先在项目设置里选择图像模型和质量。");
+      const text = msg.text("当前项目还没有配置图像模型或图片质量；也可以在本次工具调用中显式指定 imageModel 和 imageQuality。");
       text.complete();
       msg.complete();
     }
@@ -713,9 +732,9 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
 
   const result = await submitAssetImageGeneration({
     projectId,
-    model: project.imageModel,
+    model: effectiveImageModel,
     resolution: effectiveImageQuality,
-    concurrentCount: 1,
+    concurrentCount,
     onStatusChange: (event) => {
       emitProjectAssetImageUpdate(resTool, {
         projectId,
@@ -748,7 +767,8 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
     JSON.stringify(
       {
         projectId,
-        imageModel: project.imageModel,
+        imageModel: effectiveImageModel,
+        requestedImageModel,
         imageQuality: effectiveImageQuality,
         projectDefaultImageQuality: project.imageQuality,
         aspectRatio: "16:9",
@@ -765,6 +785,8 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
         freshAssetText,
         useExistingAssetReference,
         referencedExistingImages: generationItems.filter((item) => item.base64).length,
+        skillId: options?.skillId ?? null,
+        concurrentCount,
         assetIds: validAssets.map((asset: any) => asset.id),
       },
       null,
@@ -777,8 +799,10 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
   const lines = [
     `已提交 ${result.submitted} 个资产图生成任务，画幅固定 16:9。`,
     scopeText ? `已按范围筛选：${scopeText}；匹配 ${scopedAssets.length} 个，进入本次范围 ${selectedAssets.length} 个。` : "",
-    `模型：${project.imageModel}，质量：${effectiveImageQuality}，后台并发：1。`,
+    `模型：${effectiveImageModel}，质量：${effectiveImageQuality}，后台并发：${concurrentCount}。`,
+    requestedImageModel && requestedImageModel !== project.imageModel ? `已按本次要求覆盖项目默认出图模型：${project.imageModel || "未设置"} -> ${requestedImageModel}。` : "",
     requestedImageQuality && requestedImageQuality !== normalizeAssetImageQuality(project.imageQuality) ? `已按本次要求覆盖项目默认质量：${project.imageQuality || "未设置"} -> ${requestedImageQuality}。` : "",
+    options?.skillId ? `已使用生图预设：${options.skillId}。` : "",
     `模式：${assetImageGenerationModeLabel(intentDecision.generationMode)}。`,
     validAssets.length ? `本次提交：${formatAssetNames(validAssets)}。` : "",
     !includeCompleted && skippedCompleted.length ? `已完成的 ${skippedCompleted.length} 个资产本次保留不重绘；需要全量重绘时说“重绘全部资产图”。` : "",
@@ -936,6 +960,517 @@ export async function runProjectStoryboardClearTool(config: ToolConfig, options?
   return { handled: true, result };
 }
 
+function parseStoredNumberArray(value: unknown): number[] {
+  if (Array.isArray(value)) return value.map(Number).filter((item) => Number.isFinite(item));
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(Number).filter((item) => Number.isFinite(item));
+  } catch {
+    return [];
+  }
+}
+
+async function scriptCandidatesWithStoryboardCounts(projectId: number, scripts: any[]) {
+  const scriptIds = scripts.map((script) => Number(script.id)).filter((id) => Number.isFinite(id));
+  const countRows = scriptIds.length
+    ? await u.db("o_storyboard").where({ projectId }).whereIn("scriptId", scriptIds).select("scriptId").count({ count: "id" }).groupBy("scriptId")
+    : [];
+  const countMap = new Map(countRows.map((row: any) => [Number(row.scriptId), pickCount(row.count)]));
+  return scripts.map((script) => ({
+    id: Number(script.id),
+    name: toPublicWorkspaceName(script.name ?? "未命名章节工作区"),
+    storyboardCount: countMap.get(Number(script.id)) ?? 0,
+    createTime: script.createTime ?? null,
+  }));
+}
+
+async function resolveChapterWorkspace(config: ToolConfig, options?: { scriptId?: number; sourceText?: string; chapterIndexes?: number[] }) {
+  const projectId = Number(config.resTool.data.projectId);
+  const explicitScriptId = Number(options?.scriptId);
+  if (Number.isInteger(explicitScriptId) && explicitScriptId > 0) {
+    const script = await u.db("o_script").where({ id: explicitScriptId, projectId }).first();
+    if (script?.id) return { ok: true as const, scriptId: Number(script.id), script };
+    return { ok: false as const, reason: `没有找到指定章节工作区 ID ${explicitScriptId}。` };
+  }
+
+  const currentScriptId = Number(config.resTool.data.scriptId);
+  if (Number.isInteger(currentScriptId) && currentScriptId > 0) {
+    const script = await u.db("o_script").where({ id: currentScriptId, projectId }).first();
+    if (script?.id) return { ok: true as const, scriptId: Number(script.id), script };
+  }
+
+  const requestedChapterIndexes = Array.from(
+    new Set([...(options?.chapterIndexes ?? []), ...parseChapterIndexesFromText(options?.sourceText ?? config.sourceText ?? "")].map(Number).filter((index) => Number.isInteger(index) && index > 0)),
+  );
+  const scripts = await u.db("o_script").where({ projectId }).select("id", "name", "content", "createTime").orderBy("id", "asc");
+  if (requestedChapterIndexes.length) {
+    const novels = await u
+      .db("o_novel")
+      .where({ projectId })
+      .whereIn("chapterIndex", requestedChapterIndexes)
+      .select("id", "chapter", "chapterIndex", "chapterData");
+    if (!novels.length) return { ok: false as const, reason: `没有匹配到项目内第 ${requestedChapterIndexes.join("、")} 条小说。` };
+
+    const labels = novels.flatMap((novel: any) =>
+      [novel.chapter, `第${novel.chapterIndex}`, `第 ${novel.chapterIndex}`, `juben${novel.chapterIndex}`]
+        .map((item) => String(item ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const matchedScripts = scripts.filter((script: any) => {
+      const scriptContent = String(script.content ?? "").trim();
+      const name = String(script.name ?? "").trim().toLowerCase();
+      const contentMatched = novels.some((novel: any) => String(novel.chapterData ?? "").trim() && String(novel.chapterData ?? "").trim() === scriptContent);
+      const nameMatched = labels.some((label) => label && name.includes(label));
+      return contentMatched || nameMatched;
+    });
+    const candidates = await scriptCandidatesWithStoryboardCounts(projectId, matchedScripts);
+    const withStoryboards = candidates.filter((item) => item.storyboardCount > 0);
+    if (withStoryboards.length === 1) {
+      const script = matchedScripts.find((item: any) => Number(item.id) === withStoryboards[0]!.id);
+      return { ok: true as const, scriptId: withStoryboards[0]!.id, script };
+    }
+    if (candidates.length === 1) {
+      const script = matchedScripts.find((item: any) => Number(item.id) === candidates[0]!.id);
+      return { ok: true as const, scriptId: candidates[0]!.id, script };
+    }
+    return {
+      ok: false as const,
+      reason: candidates.length
+        ? `匹配到多个章节工作区，请指定 scriptId：${candidates.map((item) => `${item.id}:${item.name}（分镜${item.storyboardCount}）`).join("；")}`
+        : `项目内第 ${requestedChapterIndexes.join("、")} 条还没有对应的章节分镜工作区。请先生成分镜表。`,
+      candidates,
+    };
+  }
+
+  const candidates = await scriptCandidatesWithStoryboardCounts(projectId, scripts);
+  const withStoryboards = candidates.filter((item) => item.storyboardCount > 0);
+  if (withStoryboards.length === 1) {
+    const script = scripts.find((item: any) => Number(item.id) === withStoryboards[0]!.id);
+    return { ok: true as const, scriptId: withStoryboards[0]!.id, script };
+  }
+  if (candidates.length === 1) {
+    const script = scripts.find((item: any) => Number(item.id) === candidates[0]!.id);
+    return { ok: true as const, scriptId: candidates[0]!.id, script };
+  }
+  return {
+    ok: false as const,
+    reason: candidates.length
+      ? `当前项目有多个章节工作区，请指定章节或 scriptId：${candidates.map((item) => `${item.id}:${item.name}（分镜${item.storyboardCount}）`).join("；")}`
+      : "当前项目还没有章节分镜工作区。请先基于小说章节生成分镜表。",
+    candidates,
+  };
+}
+
+function emitProductionDataUpdate(resTool: ResTool, payload: Record<string, unknown>) {
+  resTool.socket.emit("productionDataUpdated", payload);
+}
+
+export async function runListProjectDirectorBoardsTool(config: ToolConfig, options?: { scriptId?: number; sourceText?: string; chapterIndexes?: number[] }) {
+  const { resTool, msg } = config;
+  const projectId = Number(resTool.data.projectId);
+  const thinking = msg.thinking("正在读取章节导演板列表...");
+  const workspace = await resolveChapterWorkspace(config, options);
+  if (!workspace.ok) {
+    thinking.updateTitle("需要先确定章节工作区");
+    thinking.appendText(JSON.stringify(workspace, null, 2));
+    thinking.complete();
+    const text = msg.text(workspace.reason);
+    text.complete();
+    msg.complete();
+    return { handled: true, ...workspace, errorCode: "workspace_not_resolved" };
+  }
+  const boards = await listDirectorBoards(projectId, workspace.scriptId);
+  thinking.appendText(JSON.stringify({ projectId, scriptId: workspace.scriptId, count: boards.length, boards }, null, 2));
+  thinking.updateTitle("章节导演板列表读取完成");
+  thinking.complete();
+  const text = msg.text(`当前章节工作区有 ${boards.length} 张导演板。`);
+  text.complete();
+  msg.complete();
+  return { handled: true, projectId, scriptId: workspace.scriptId, boards };
+}
+
+export async function runGenerateProjectDirectorBoardsTool(
+  config: ToolConfig,
+  options?: {
+    scriptId?: number;
+    sourceText?: string;
+    chapterIndexes?: number[];
+    storyboardIds?: number[];
+    model?: string;
+    imageSize?: AssetImageQuality;
+    imageQuality?: AssetImageQuality;
+    boardType?: DirectorBoardType;
+    shotsPerBoard?: number;
+    replace?: boolean;
+    generateImages?: boolean;
+    usePreviousBoardReference?: boolean;
+  },
+) {
+  const { resTool, msg } = config;
+  const projectId = Number(resTool.data.projectId);
+  const thinking = msg.thinking("正在生成章节导演板...");
+  const workspace = await resolveChapterWorkspace(config, options);
+  if (!workspace.ok) {
+    thinking.updateTitle("需要先确定章节工作区");
+    thinking.appendText(JSON.stringify(workspace, null, 2));
+    thinking.complete();
+    const text = msg.text(workspace.reason);
+    text.complete();
+    msg.complete();
+    return { handled: true, ...workspace, errorCode: "workspace_not_resolved" };
+  }
+
+  const rows = await queueDirectorBoardGeneration(projectId, workspace.scriptId, {
+    storyboardIds: options?.storyboardIds,
+    model: nonEmpty(options?.model),
+    imageSize: options?.imageSize ?? options?.imageQuality,
+    boardType: options?.boardType,
+    shotsPerBoard: options?.shotsPerBoard,
+    replace: options?.replace,
+    generateImages: options?.generateImages ?? true,
+    usePreviousBoardReference: options?.usePreviousBoardReference,
+  });
+  emitProductionDataUpdate(resTool, {
+    projectId,
+    episodesId: workspace.scriptId,
+    scriptId: workspace.scriptId,
+    type: "director_boards",
+    stage: options?.generateImages === false ? "director_boards_planned" : "director_boards_submitted",
+    directorBoardIds: rows.map((row: any) => row.id),
+  });
+  thinking.appendText(
+    JSON.stringify(
+      {
+        projectId,
+        scriptId: workspace.scriptId,
+        createdCount: rows.length,
+        boardType: options?.boardType ?? "continuity",
+        generateImages: options?.generateImages ?? true,
+        model: options?.model ?? null,
+        imageSize: options?.imageSize ?? options?.imageQuality ?? null,
+        usePreviousBoardReference: options?.usePreviousBoardReference ?? false,
+      },
+      null,
+      2,
+    ),
+  );
+  thinking.updateTitle(options?.generateImages === false ? "章节导演板提示词已生成" : "章节导演板图片任务已提交");
+  thinking.complete();
+  const lines = [
+    `已生成 ${rows.length} 张章节导演板记录。`,
+    options?.generateImages === false ? "本次只生成导演板提示词，没有提交图片生成。" : "图片已进入后台生成队列，完成后会写回导演板列表。",
+    `类型：${options?.boardType ?? "continuity"}；每板最多 ${options?.shotsPerBoard ?? 6} 个镜头；${options?.replace === false ? "保留旧导演板并追加" : "已替换旧导演板" }。`,
+  ];
+  const text = msg.text(lines.join("\n"));
+  text.complete();
+  msg.complete();
+  return { handled: true, projectId, scriptId: workspace.scriptId, rows };
+}
+
+export async function runRegenerateProjectDirectorBoardTool(
+  config: ToolConfig,
+  options: {
+    scriptId?: number;
+    sourceText?: string;
+    chapterIndexes?: number[];
+    boardId: number;
+    model?: string;
+    imageSize?: AssetImageQuality;
+    imageQuality?: AssetImageQuality;
+    boardType?: DirectorBoardType;
+    usePreviousBoardReference?: boolean;
+  },
+) {
+  const { resTool, msg } = config;
+  const projectId = Number(resTool.data.projectId);
+  const thinking = msg.thinking("正在重绘单张章节导演板...");
+  const workspace = await resolveChapterWorkspace(config, options);
+  if (!workspace.ok) {
+    thinking.updateTitle("需要先确定章节工作区");
+    thinking.appendText(JSON.stringify(workspace, null, 2));
+    thinking.complete();
+    const text = msg.text(workspace.reason);
+    text.complete();
+    msg.complete();
+    return { handled: true, ...workspace, errorCode: "workspace_not_resolved" };
+  }
+  const row = await regenerateDirectorBoard(projectId, workspace.scriptId, options.boardId, {
+    model: nonEmpty(options.model),
+    imageSize: options.imageSize ?? options.imageQuality,
+    boardType: options.boardType,
+    usePreviousBoardReference: options.usePreviousBoardReference,
+  });
+  emitProductionDataUpdate(resTool, {
+    projectId,
+    episodesId: workspace.scriptId,
+    scriptId: workspace.scriptId,
+    type: "director_boards",
+    stage: "director_board_regenerating",
+    directorBoardIds: [options.boardId],
+  });
+  thinking.appendText(JSON.stringify({ projectId, scriptId: workspace.scriptId, boardId: options.boardId, row }, null, 2));
+  thinking.updateTitle("单张章节导演板已提交重绘");
+  thinking.complete();
+  const text = msg.text(`已提交导演板 #${options.boardId} 的重绘任务。`);
+  text.complete();
+  msg.complete();
+  return { handled: true, projectId, scriptId: workspace.scriptId, row };
+}
+
+function addUniqueVideoInfo(target: VideoPromptInfoItem[], item: VideoPromptInfoItem) {
+  if (target.some((existing) => existing.id === item.id && existing.sources === item.sources)) return;
+  target.push(item);
+}
+
+async function buildVideoReferenceInfo(
+  projectId: number,
+  scriptId: number,
+  options?: { info?: VideoPromptInfoItem[]; directorBoardIds?: number[]; storyboardIds?: number[]; assetIds?: number[]; includeDirectorBoardAssets?: boolean },
+) {
+  const info: VideoPromptInfoItem[] = [];
+  for (const item of options?.info ?? []) addUniqueVideoInfo(info, item);
+  for (const id of options?.directorBoardIds ?? []) addUniqueVideoInfo(info, { id, sources: "directorBoard" });
+  for (const id of options?.storyboardIds ?? []) addUniqueVideoInfo(info, { id, sources: "storyboard" });
+  for (const id of options?.assetIds ?? []) addUniqueVideoInfo(info, { id, sources: "assets" });
+
+  if (options?.includeDirectorBoardAssets !== false) {
+    const directorBoardIds = info.filter((item) => item.sources === "directorBoard").map((item) => item.id);
+    if (directorBoardIds.length) {
+      const boards = await u.db("o_directorBoard").where({ projectId, scriptId }).whereIn("id", directorBoardIds).select("assetIds");
+      for (const assetId of Array.from(new Set(boards.flatMap((board: any) => parseStoredNumberArray(board.assetIds))))) {
+        addUniqueVideoInfo(info, { id: assetId, sources: "assets" });
+      }
+    }
+  }
+
+  const storyboards = info.filter((item) => item.sources === "storyboard").map((item) => item.id);
+  if (storyboards.length) {
+    const assetRows = await u.db("o_assets2Storyboard").whereIn("storyboardId", storyboards).select("assetId");
+    for (const assetId of Array.from(new Set(assetRows.map((row: any) => Number(row.assetId)).filter((id) => Number.isFinite(id))))) {
+      addUniqueVideoInfo(info, { id: assetId, sources: "assets" });
+    }
+  }
+
+  return info;
+}
+
+async function ensureVideoTrack(projectId: number, scriptId: number, trackId?: number, duration?: number) {
+  const normalizedTrackId = Number(trackId);
+  if (Number.isInteger(normalizedTrackId) && normalizedTrackId > 0) {
+    const existing = await u.db("o_videoTrack").where({ id: normalizedTrackId, projectId, scriptId }).first();
+    if (existing?.id) {
+      if (duration && duration > 0) await u.db("o_videoTrack").where({ id: normalizedTrackId, projectId }).update({ duration });
+      return normalizedTrackId;
+    }
+  }
+  let nextTrackId = Date.now();
+  while (await u.db("o_videoTrack").where("id", nextTrackId).first()) nextTrackId += 1;
+  await u.db("o_videoTrack").insert({
+    id: nextTrackId,
+    projectId,
+    scriptId,
+    duration,
+    state: "未生成",
+  });
+  return nextTrackId;
+}
+
+function parseProjectMode(mode: unknown) {
+  const raw = nonEmpty(mode);
+  if (!raw) return "text";
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : raw;
+  } catch {
+    return raw;
+  }
+}
+
+async function getProjectVideoDefaults(projectId: number) {
+  const project = await u.db("o_project").where("id", projectId).select("videoModel", "mode").first();
+  return {
+    model: nonEmpty(project?.videoModel),
+    mode: parseProjectMode(project?.mode),
+  };
+}
+
+export async function runGenerateVideoPromptFromReferencesTool(
+  config: ToolConfig,
+  options?: {
+    scriptId?: number;
+    sourceText?: string;
+    chapterIndexes?: number[];
+    trackId?: number;
+    info?: VideoPromptInfoItem[];
+    directorBoardIds?: number[];
+    storyboardIds?: number[];
+    assetIds?: number[];
+    model?: string;
+    duration?: number;
+    includeDirectorBoardAssets?: boolean;
+  },
+) {
+  const { resTool, msg } = config;
+  const projectId = Number(resTool.data.projectId);
+  const thinking = msg.thinking("正在生成视频提示词...");
+  const workspace = await resolveChapterWorkspace(config, options);
+  if (!workspace.ok) {
+    thinking.updateTitle("需要先确定章节工作区");
+    thinking.appendText(JSON.stringify(workspace, null, 2));
+    thinking.complete();
+    const text = msg.text(workspace.reason);
+    text.complete();
+    msg.complete();
+    return { handled: true, ...workspace, errorCode: "workspace_not_resolved" };
+  }
+  const defaults = await getProjectVideoDefaults(projectId);
+  const model = nonEmpty(options?.model) ?? defaults.model;
+  if (!model) {
+    thinking.updateTitle("缺少视频模型");
+    thinking.complete();
+    const text = msg.text("当前项目未配置视频模型，也没有在本次工具调用中指定 model。");
+    text.complete();
+    msg.complete();
+    return { handled: true, reason: "missing_video_model" };
+  }
+  const info = await buildVideoReferenceInfo(projectId, workspace.scriptId, options);
+  if (!info.length) {
+    thinking.updateTitle("缺少视频参考");
+    thinking.complete();
+    const text = msg.text("没有可用于生成视频提示词的导演板、分镜图或资产参考。请先指定 directorBoardIds/storyboardIds/assetIds。");
+    text.complete();
+    msg.complete();
+    return { handled: true, reason: "missing_video_references" };
+  }
+  const trackId = await ensureVideoTrack(projectId, workspace.scriptId, options?.trackId, options?.duration);
+  const result = await generateVideoPromptForTrack({
+    projectId,
+    trackId,
+    info,
+    model,
+    duration: options?.duration,
+  });
+  emitProductionDataUpdate(resTool, {
+    projectId,
+    episodesId: workspace.scriptId,
+    scriptId: workspace.scriptId,
+    type: "video_prompt",
+    stage: "video_prompt_generated",
+    trackId,
+  });
+  thinking.appendText(JSON.stringify({ projectId, scriptId: workspace.scriptId, trackId, model, info, result }, null, 2));
+  thinking.updateTitle("视频提示词已生成");
+  thinking.complete();
+  const text = msg.text(`已生成视频提示词并写入轨道 #${trackId}。\n参考项：${info.length} 个；目标时长：${result.targetDuration || options?.duration || "未指定"} 秒。`);
+  text.complete();
+  msg.complete();
+  return { handled: true, projectId, scriptId: workspace.scriptId, trackId, info, result };
+}
+
+export async function runSubmitVideoGenerationFromReferencesTool(
+  config: ToolConfig,
+  options?: {
+    scriptId?: number;
+    sourceText?: string;
+    chapterIndexes?: number[];
+    trackId?: number;
+    prompt?: string;
+    info?: VideoPromptInfoItem[];
+    directorBoardIds?: number[];
+    storyboardIds?: number[];
+    assetIds?: number[];
+    model?: string;
+    mode?: string | string[];
+    resolution?: string;
+    duration?: number;
+    audio?: boolean;
+    includeDirectorBoardAssets?: boolean;
+  },
+) {
+  const { resTool, msg } = config;
+  const projectId = Number(resTool.data.projectId);
+  const thinking = msg.thinking("正在提交视频生成任务...");
+  const workspace = await resolveChapterWorkspace(config, options);
+  if (!workspace.ok) {
+    thinking.updateTitle("需要先确定章节工作区");
+    thinking.appendText(JSON.stringify(workspace, null, 2));
+    thinking.complete();
+    const text = msg.text(workspace.reason);
+    text.complete();
+    msg.complete();
+    return { handled: true, ...workspace, errorCode: "workspace_not_resolved" };
+  }
+  const defaults = await getProjectVideoDefaults(projectId);
+  const model = nonEmpty(options?.model) ?? defaults.model;
+  if (!model) {
+    thinking.updateTitle("缺少视频模型");
+    thinking.complete();
+    const text = msg.text("当前项目未配置视频模型，也没有在本次工具调用中指定 model。");
+    text.complete();
+    msg.complete();
+    return { handled: true, reason: "missing_video_model" };
+  }
+  const mode = options?.mode ?? defaults.mode;
+  const resolution = nonEmpty(options?.resolution) ?? "480p";
+  const duration = Number(options?.duration || 8);
+  const info = await buildVideoReferenceInfo(projectId, workspace.scriptId, options);
+  if (!info.length) {
+    thinking.updateTitle("缺少视频参考");
+    thinking.complete();
+    const text = msg.text("没有可用于生成视频的导演板、分镜图或资产参考。请先指定 directorBoardIds/storyboardIds/assetIds。");
+    text.complete();
+    msg.complete();
+    return { handled: true, reason: "missing_video_references" };
+  }
+  const trackId = await ensureVideoTrack(projectId, workspace.scriptId, options?.trackId, duration);
+  const prompt =
+    nonEmpty(options?.prompt) ??
+    (
+      await generateVideoPromptForTrack({
+        projectId,
+        trackId,
+        info,
+        model,
+        duration,
+      })
+    ).prompt;
+  const uploadData: VideoUploadItem[] = info.map((item) => ({
+    id: item.id,
+    sources: item.sources,
+    fileType: "image",
+    type: "imageReference",
+  }));
+  const result = await submitVideoGenerationTask({
+    projectId,
+    scriptId: workspace.scriptId,
+    uploadData,
+    prompt,
+    model,
+    mode,
+    resolution,
+    duration,
+    audio: options?.audio,
+    trackId,
+  });
+  emitProductionDataUpdate(resTool, {
+    projectId,
+    episodesId: workspace.scriptId,
+    scriptId: workspace.scriptId,
+    type: "video_generation",
+    stage: "video_submitted",
+    trackId,
+    videoId: result.videoId,
+  });
+  thinking.appendText(JSON.stringify({ projectId, scriptId: workspace.scriptId, trackId, model, mode, resolution, duration, info, result }, null, 2));
+  thinking.updateTitle("视频生成任务已提交");
+  thinking.complete();
+  const text = msg.text(`已提交视频生成任务：轨道 #${trackId}，视频 #${result.videoId}，参考图 ${result.referenceCount} 张，时长 ${result.effectiveDuration}s。`);
+  text.complete();
+  msg.complete();
+  return { handled: true, projectId, scriptId: workspace.scriptId, trackId, videoId: result.videoId, info, result };
+}
+
 export default function useTools(config: ToolConfig) {
   const { resTool, toolsNames, msg } = config;
   const { socket } = resTool;
@@ -1080,6 +1615,140 @@ export default function useTools(config: ToolConfig) {
       })),
       execute: async (options) => runProjectStoryboardDraftTool(config, { ...options, force: true }),
     }),
+    list_project_director_boards: tool({
+      description: "列出当前章节工作区的章节导演板/文字分镜导演板/融合导演板。用户询问导演板状态、失败原因、提示词或已有导演板时使用。",
+      inputSchema: toToolJsonSchema<{ scriptId?: number; sourceText?: string; chapterIndexes?: number[] }>(z.object({
+        scriptId: z.number().int().positive().optional().describe("可选：明确的章节工作区 ID"),
+        sourceText: z.string().optional().describe("用户原始要求；用于匹配 juben10/第N章"),
+        chapterIndexes: z.array(z.number().int().positive()).optional().describe("可选：按项目内章节序号定位章节工作区"),
+      })),
+      execute: async (options) => runListProjectDirectorBoardsTool(config, options),
+    }),
+    generate_project_director_boards: tool({
+      description:
+        "基于已有分镜表生成章节导演板。用户说生成章节导演板、空间导演板、文字导演板、融合导演板、故事板图片时使用。默认会提交图片生成；如果用户只要提示词/草案，generateImages=false。可由总控决定模型、1K/2K/4K、类型、每板镜头数、是否带上一张导演板作连续性参考。",
+      inputSchema: toToolJsonSchema<{
+        scriptId?: number;
+        sourceText?: string;
+        chapterIndexes?: number[];
+        storyboardIds?: number[];
+        model?: string;
+        imageSize?: AssetImageQuality;
+        imageQuality?: AssetImageQuality;
+        boardType?: DirectorBoardType;
+        shotsPerBoard?: number;
+        replace?: boolean;
+        generateImages?: boolean;
+        usePreviousBoardReference?: boolean;
+      }>(z.object({
+        scriptId: z.number().int().positive().optional().describe("可选：明确的章节工作区 ID"),
+        sourceText: z.string().optional().describe("用户原始要求；用于匹配 juben10/第N章"),
+        chapterIndexes: z.array(z.number().int().positive()).optional().describe("可选：按项目内章节序号定位章节工作区"),
+        storyboardIds: z.array(z.number().int().positive()).optional().describe("可选：只用指定分镜生成导演板"),
+        model: z.string().optional().describe("可选：本次导演板出图模型；不填才使用项目默认图像模型"),
+        imageSize: assetImageQualitySchema.optional().describe("可选：本次导演板图片大小 1K/2K/4K"),
+        imageQuality: assetImageQualitySchema.optional().describe("兼容字段：本次导演板图片大小 1K/2K/4K"),
+        boardType: directorBoardTypeSchema.optional().describe("continuity=空间连续性导演板；textStoryboard=文字分镜导演板；hybridStoryboard=融合导演板"),
+        shotsPerBoard: z.number().int().min(1).max(8).optional().describe("每张导演板最多包含几个分镜；文字导演板常用 6"),
+        replace: z.boolean().optional().describe("是否替换旧导演板；默认 true。用户要求追加时传 false"),
+        generateImages: z.boolean().optional().describe("是否立即提交导演板图片生成；默认 true。用户只要提示词/草案时传 false"),
+        usePreviousBoardReference: z.boolean().optional().describe("是否把上一张已完成导演板作为连续性参考；用户明确要求才传 true，不要自动开启"),
+      })),
+      execute: async (options) => runGenerateProjectDirectorBoardsTool(config, options),
+    }),
+    regenerate_project_director_board: tool({
+      description: "重绘单张章节导演板。用户要求重绘某一张导演板/某个 boardId 时使用，不要重新生成整章。",
+      inputSchema: toToolJsonSchema<{
+        scriptId?: number;
+        sourceText?: string;
+        chapterIndexes?: number[];
+        boardId: number;
+        model?: string;
+        imageSize?: AssetImageQuality;
+        imageQuality?: AssetImageQuality;
+        boardType?: DirectorBoardType;
+        usePreviousBoardReference?: boolean;
+      }>(z.object({
+        scriptId: z.number().int().positive().optional().describe("可选：明确的章节工作区 ID"),
+        sourceText: z.string().optional().describe("用户原始要求；用于匹配 juben10/第N章"),
+        chapterIndexes: z.array(z.number().int().positive()).optional().describe("可选：按项目内章节序号定位章节工作区"),
+        boardId: z.number().int().positive().describe("要重绘的导演板 ID"),
+        model: z.string().optional().describe("可选：本次重绘使用的图像模型"),
+        imageSize: assetImageQualitySchema.optional().describe("可选：本次导演板图片大小 1K/2K/4K"),
+        imageQuality: assetImageQualitySchema.optional().describe("兼容字段：本次导演板图片大小 1K/2K/4K"),
+        boardType: directorBoardTypeSchema.optional().describe("可选：重绘时切换导演板类型"),
+        usePreviousBoardReference: z.boolean().optional().describe("是否手动把上一张导演板作为连续性参考；用户明确要求才传 true"),
+      })),
+      execute: async (options) => runRegenerateProjectDirectorBoardTool(config, options),
+    }),
+    generate_video_prompt_from_references: tool({
+      description:
+        "按导演板/分镜/资产参考生成可发给视频模型的视频提示词，并写入视频轨道。用户要求“按这个导演板生成视频提示词”“批量生成视频提示词前的单条提示词”时使用。会自动把导演板覆盖的资产参考加入上下文。",
+      inputSchema: toToolJsonSchema<{
+        scriptId?: number;
+        sourceText?: string;
+        chapterIndexes?: number[];
+        trackId?: number;
+        info?: VideoPromptInfoItem[];
+        directorBoardIds?: number[];
+        storyboardIds?: number[];
+        assetIds?: number[];
+        model?: string;
+        duration?: number;
+        includeDirectorBoardAssets?: boolean;
+      }>(z.object({
+        scriptId: z.number().int().positive().optional().describe("可选：明确的章节工作区 ID"),
+        sourceText: z.string().optional().describe("用户原始要求；用于匹配 juben10/第N章"),
+        chapterIndexes: z.array(z.number().int().positive()).optional().describe("可选：按项目内章节序号定位章节工作区"),
+        trackId: z.number().int().positive().optional().describe("可选：写入已有视频轨道；不填则创建新轨道"),
+        info: z.array(videoReferenceInfoSchema).optional().describe("可选：直接传参考项数组"),
+        directorBoardIds: z.array(z.number().int().positive()).optional().describe("可选：要作为空间连续性参考的导演板 ID"),
+        storyboardIds: z.array(z.number().int().positive()).optional().describe("可选：要作为分镜首帧/文字参考的分镜 ID"),
+        assetIds: z.array(z.number().int().positive()).optional().describe("可选：要作为角色/场景/道具参考的资产 ID"),
+        model: z.string().optional().describe("可选：本次视频目标模型；不填才使用项目默认视频模型"),
+        duration: z.number().positive().optional().describe("可选：目标时长；如果使用导演板，系统会优先按导演板覆盖分镜时长"),
+        includeDirectorBoardAssets: z.boolean().optional().describe("是否自动把导演板绑定的资产参考加入；默认 true"),
+      })),
+      execute: async (options) => runGenerateVideoPromptFromReferencesTool(config, options),
+    }),
+    submit_video_generation_from_references: tool({
+      description:
+        "按导演板/分镜/资产参考直接提交视频生成任务。用户明确要求生成视频时使用。若未传 prompt，会先生成视频提示词；会自动把导演板绑定资产作为参考图加入，避免用户手动一个个选择。",
+      inputSchema: toToolJsonSchema<{
+        scriptId?: number;
+        sourceText?: string;
+        chapterIndexes?: number[];
+        trackId?: number;
+        prompt?: string;
+        info?: VideoPromptInfoItem[];
+        directorBoardIds?: number[];
+        storyboardIds?: number[];
+        assetIds?: number[];
+        model?: string;
+        mode?: string | string[];
+        resolution?: string;
+        duration?: number;
+        audio?: boolean;
+        includeDirectorBoardAssets?: boolean;
+      }>(z.object({
+        scriptId: z.number().int().positive().optional().describe("可选：明确的章节工作区 ID"),
+        sourceText: z.string().optional().describe("用户原始要求；用于匹配 juben10/第N章"),
+        chapterIndexes: z.array(z.number().int().positive()).optional().describe("可选：按项目内章节序号定位章节工作区"),
+        trackId: z.number().int().positive().optional().describe("可选：使用已有视频轨道；不填则创建新轨道"),
+        prompt: z.string().optional().describe("可选：用户已经确认的视频提示词；不填则先自动生成"),
+        info: z.array(videoReferenceInfoSchema).optional().describe("可选：直接传参考项数组"),
+        directorBoardIds: z.array(z.number().int().positive()).optional().describe("可选：要作为空间连续性参考的导演板 ID"),
+        storyboardIds: z.array(z.number().int().positive()).optional().describe("可选：要作为分镜首帧/文字参考的分镜 ID"),
+        assetIds: z.array(z.number().int().positive()).optional().describe("可选：要作为角色/场景/道具参考的资产 ID"),
+        model: z.string().optional().describe("可选：本次视频生成模型；不填才使用项目默认视频模型"),
+        mode: z.union([z.string(), z.array(z.string())]).optional().describe("可选：视频模型输入模式；不填使用项目默认 mode"),
+        resolution: z.string().optional().describe("可选：视频分辨率，例如 480p/720p/1080p"),
+        duration: z.number().positive().optional().describe("可选：目标时长；使用导演板时系统会优先按导演板覆盖分镜时长"),
+        audio: z.boolean().optional().describe("是否开启视频模型音频"),
+        includeDirectorBoardAssets: z.boolean().optional().describe("是否自动把导演板绑定的资产参考加入；默认 true"),
+      })),
+      execute: async (options) => runSubmitVideoGenerationFromReferencesTool(config, options),
+    }),
   };
 
   return toolsNames ? Object.fromEntries(Object.entries(tools).filter(([name]) => toolsNames.includes(name))) : tools;
@@ -1213,13 +1882,16 @@ export function useNovelWorkflowTools(config: ToolConfig) {
       },
     }),
     batch_generate_project_asset_images: tool({
-      description: "直接提交当前项目资产库的角色/场景/道具参考图生成任务，后台异步生成，固定 16:9；用于用户明确要求资产出图、批量生图、生成参考图。必须严格遵守用户指定范围：例如“前4个场景图”必须传 assetType='scene' 且 limit=4；“只生成 Chloe”必须传 assetNames。用户指定 1K/2K/4K、低质量/标准质量/高质量时必须传 imageQuality。",
+      description: "直接提交当前项目资产库的角色/场景/道具参考图生成任务，后台异步生成，固定 16:9；用于用户明确要求资产出图、批量生图、生成参考图。必须严格遵守用户指定范围：例如“前4个场景图”必须传 assetType='scene' 且 limit=4；“只生成 Chloe”必须传 assetNames。用户指定 1K/2K/4K、低质量/标准质量/高质量时必须传 imageQuality；用户指定出图模型或预设时必须传 imageModel/skillId。",
       inputSchema: toToolJsonSchema<{
         includeCompleted?: boolean;
         assetType?: GeneratableAssetType;
         limit?: number;
         assetIds?: number[];
         assetNames?: string[];
+        skillId?: string;
+        imageModel?: string;
+        concurrentCount?: number;
         generationMode?: AssetImageGenerationMode;
         referencePolicy?: AssetImageReferencePolicy;
         promptPolicy?: AssetImagePromptPolicy;
@@ -1231,6 +1903,9 @@ export function useNovelWorkflowTools(config: ToolConfig) {
         limit: z.number().int().positive().max(100).optional().describe("可选：最多提交多少个资产；用户说前 N 个/生成 N 张时必须填写"),
         assetIds: z.array(z.number().int().positive()).optional().describe("可选：只生成指定资产 ID"),
         assetNames: z.array(z.string().min(1)).optional().describe("可选：只生成指定资产名称，例如 Chloe"),
+        skillId: z.string().optional().describe("可选：本次使用的生图 skill/preset ID，例如四视图、俯视全景、脸部特写+三视图等"),
+        imageModel: z.string().optional().describe("可选：本次资产出图模型；用户要求换模型时必须传，不填才用项目默认出图模型"),
+        concurrentCount: z.number().int().min(1).max(4).optional().describe("可选：后台并发数，默认 1，最高 4"),
         generationMode: assetImageGenerationModeSchema.optional().describe("结构化生图模式。fresh_design=全新设计不沿用旧图；reference_redraw=参考当前图重绘；partial_edit=局部修改；variant=基于当前图生成变体；retry_failed=重试失败任务。总控必须先判断用户真实意图再填写。"),
         referencePolicy: assetImageReferencePolicySchema.optional().describe("参考图策略。none=绝不带当前资产图；current_asset=必须带当前资产图；auto=不自动带图，除非总控明确判断为 current_asset。用户说全新/新的/不参考原图时必须为 none。"),
         promptPolicy: assetImagePromptPolicySchema.optional().describe("提示词策略。asset_description_plus_request=用资产描述+用户本次要求，避免旧 prompt 污染；asset_prompt_plus_request=沿用资产 prompt 并追加要求；reuse_current_prompt=重试原提示词。"),
@@ -1240,7 +1915,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
           .describe("是否把当前已完成资产图作为图生图参考；用户说全新、不参考原图、只按文字生成时必须为 false；用户说参考现有图/沿用原图时为 true"),
         imageQuality: assetImageQualitySchema.optional().describe("可选：本次资产出图质量/分辨率。用户明确说 1K、2K、4K 或低/中/高质量时必须判断后填写；未填写才使用项目默认图片质量。"),
       })),
-      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, generationMode, referencePolicy, promptPolicy, useExistingAssetReference, imageQuality }) => {
+      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, skillId, imageModel, concurrentCount, generationMode, referencePolicy, promptPolicy, useExistingAssetReference, imageQuality }) => {
         return runProjectAssetImageGenerationTool(config, {
           includeCompleted,
           sourceText: config.sourceText,
@@ -1248,6 +1923,9 @@ export function useNovelWorkflowTools(config: ToolConfig) {
           limit,
           assetIds,
           assetNames,
+          skillId,
+          imageModel,
+          concurrentCount,
           generationMode,
           referencePolicy,
           promptPolicy,

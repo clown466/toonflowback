@@ -43,10 +43,10 @@ export function getWorkspaceDomainAgentCatalog(): WorkspaceDomainAgentCatalogIte
     {
       id: "production",
       name: "生产总控",
-      role: "负责小说章节到分镜表、分镜图、视频制作准备的生产流程，并使用项目资产库保持视觉一致。",
-      delegateWhen: ["用户要求分镜、导演规划、分镜表、分镜图、视频制作准备、衍生资产或制作流程。"],
+      role: "负责小说章节到分镜表、章节导演板/分镜图、视频提示词和视频提交的生产流程，并使用项目资产库保持视觉一致。",
+      delegateWhen: ["用户要求分镜、导演规划、分镜表、章节导演板、文字导演板、融合导演板、分镜图、视频提示词、视频生成或制作流程。"],
       doNotUseWhen: ["项目还没有小说和资产且用户只是询问状态。", "用户只要求上传、编辑或查看普通项目资料。"],
-      childAgents: ["deriveAssetsAgent", "generateAssetsAgent", "directorPlanAgent", "storyboardGenAgent", "storyboardPanelAgent", "storyboardTableAgent", "supervisionAgent"],
+      childAgents: ["storyboardTableAgent", "directorBoardAgent", "storyboardPanelAgent", "videoPromptAgent", "videoGenerationAgent", "supervisionAgent"],
       canWriteData: true,
       riskLevel: "cost",
     },

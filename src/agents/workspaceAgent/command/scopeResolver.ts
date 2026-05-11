@@ -101,6 +101,18 @@ function parseOnlyFailed(text: string) {
   return /onlyFailed/i.test(text) || /(只|仅|专门|重新|重试|补).*(失败|报错|错误|未成功)/.test(text);
 }
 
+function parseUseExistingAssetReference(text: string): boolean | undefined {
+  if (
+    /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
+    /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
+    /(全新|重新设计|从零设计|只按文字|纯文本).{0,16}(生成|出图|生图|设计|重绘)/i.test(text)
+  ) {
+    return false;
+  }
+  if (/(参考|基于|沿用|保持).{0,10}(现有|当前|原有|已有|原图|旧图|当前图|现有图|已有图)/i.test(text)) return true;
+  return undefined;
+}
+
 function parseAssetIds(text: string) {
   const ids = new Set<number>();
   const patterns = [
@@ -146,6 +158,7 @@ function resolveAssetImageScope(text: string, snapshot: WorkspaceProjectSnapshot
     assetIds: Array.from(assetIds),
     assetNames: Array.from(assetNames),
     includeCompleted: parseIncludeCompleted(text),
+    useExistingAssetReference: parseUseExistingAssetReference(text),
     onlyFailed: parseOnlyFailed(text),
   };
 }

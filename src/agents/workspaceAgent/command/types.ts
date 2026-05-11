@@ -42,6 +42,7 @@ export interface WorkspaceAssetImageScope {
   assetIds: number[];
   assetNames: string[];
   includeCompleted: boolean;
+  useExistingAssetReference?: boolean;
   onlyFailed: boolean;
 }
 

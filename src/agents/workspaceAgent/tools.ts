@@ -30,6 +30,7 @@ export interface ProjectAssetImageGenerationOptions {
   assetIds?: number[];
   assetNames?: string[];
   disableNaturalLanguageScopeParsing?: boolean;
+  useExistingAssetReference?: boolean;
 }
 
 export interface NovelAssetExtractionOptions {
@@ -472,6 +473,14 @@ function shouldUseExistingAssetImageReference(text: string) {
   return /参考.*(现有|当前|原有|已有)|基于.*(现有|当前|原有|已有)|保持.*(原图|当前图|现有图)|沿用.*(原图|当前图|现有图)|修改|改成|改为|重绘|替换/i.test(text);
 }
 
+function shouldAvoidExistingAssetImageReference(text: string) {
+  return (
+    /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
+    /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
+    /(全新|重新设计|从零设计|只按文字|纯文本).{0,16}(生成|出图|生图|设计|重绘)/i.test(text)
+  );
+}
+
 function formatAssetNames(assets: Array<{ id: number; name: string }>, limit = 12) {
   const names = assets.slice(0, limit).map((asset) => `${asset.name || `#${asset.id}`}`);
   if (assets.length > limit) names.push(`等 ${assets.length} 个`);
@@ -613,7 +622,9 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
   }
 
   const sourceText = options?.userRequirement ?? options?.sourceText ?? "";
-  const useExistingAssetReference = includeCompleted || shouldUseExistingAssetImageReference(sourceText);
+  const useExistingAssetReference =
+    options?.useExistingAssetReference ??
+    (!shouldAvoidExistingAssetImageReference(sourceText) && (includeCompleted || shouldUseExistingAssetImageReference(sourceText)));
   const generationItems = await Promise.all(
     validAssets.map(async (asset: any) => {
       let base64: string | null = null;
@@ -683,6 +694,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
         skippedCompleted: includeCompleted ? 0 : skippedCompleted.length,
         skippedGenerating: skippedGenerating.length,
         skippedNoPrompt: skippedNoPrompt.length,
+        useExistingAssetReference,
         referencedExistingImages: generationItems.filter((item) => item.base64).length,
         assetIds: validAssets.map((asset: any) => asset.id),
       },
@@ -702,6 +714,7 @@ export async function runProjectAssetImageGenerationFastPath(config: ToolConfig,
     skippedGenerating.length ? `已有 ${skippedGenerating.length} 个资产正在生成中，已跳过避免重复任务。` : "",
     skippedNoPrompt.length ? `有 ${skippedNoPrompt.length} 个资产缺少提示词/描述，已跳过。` : "",
     useExistingAssetReference ? `已把 ${generationItems.filter((item) => item.base64).length} 张当前资产图作为参考图传给生图模型。` : "",
+    !useExistingAssetReference && includeCompleted ? "本次已按全新重绘处理：不带入当前资产图参考，只按文字设定、视觉手册和生图预设生成。" : "",
     "你可以在资产区看生成中状态，完成后图片会自动写回对应资产。",
   ].filter(Boolean);
   if (finalizeMessage) {
@@ -1135,15 +1148,28 @@ export function useNovelWorkflowTools(config: ToolConfig) {
         limit?: number;
         assetIds?: number[];
         assetNames?: string[];
+        useExistingAssetReference?: boolean;
       }>(z.object({
         includeCompleted: z.boolean().optional().describe("是否连已完成图片的资产也重新提交；默认 false，只补缺图/失败图"),
         assetType: generatableAssetTypeSchema.optional().describe("可选：只生成某类资产；用户说角色/场景/道具时必须填写"),
         limit: z.number().int().positive().max(100).optional().describe("可选：最多提交多少个资产；用户说前 N 个/生成 N 张时必须填写"),
         assetIds: z.array(z.number().int().positive()).optional().describe("可选：只生成指定资产 ID"),
         assetNames: z.array(z.string().min(1)).optional().describe("可选：只生成指定资产名称，例如 Chloe"),
+        useExistingAssetReference: z
+          .boolean()
+          .optional()
+          .describe("是否把当前已完成资产图作为图生图参考；用户说全新、不参考原图、只按文字生成时必须为 false；用户说参考现有图/沿用原图时为 true"),
       })),
-      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames }) => {
-        return runProjectAssetImageGenerationFastPath(config, { includeCompleted, assetType, limit, assetIds, assetNames, finalizeMessage: false });
+      execute: async ({ includeCompleted, assetType, limit, assetIds, assetNames, useExistingAssetReference }) => {
+        return runProjectAssetImageGenerationFastPath(config, {
+          includeCompleted,
+          assetType,
+          limit,
+          assetIds,
+          assetNames,
+          useExistingAssetReference,
+          finalizeMessage: false,
+        });
       },
     }),
     start_or_report_novel_event_analysis: tool({

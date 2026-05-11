@@ -11,7 +11,10 @@ export type WorkspaceCommandIntent = "asset_image_generation" | "storyboard_gene
 
 export type WorkspaceCommandConfirmationPolicy = "auto" | "confirm" | "require_confirmation" | "skip" | string;
 
-type AssetImageScope = Pick<ProjectAssetImageGenerationOptions, "assetType" | "limit" | "assetIds" | "assetNames" | "includeCompleted" | "skillId">;
+type AssetImageScope = Pick<
+  ProjectAssetImageGenerationOptions,
+  "assetType" | "limit" | "assetIds" | "assetNames" | "includeCompleted" | "skillId" | "useExistingAssetReference"
+>;
 
 export interface WorkspaceCommandScope extends AssetImageScope {
   force?: boolean;
@@ -68,6 +71,7 @@ function normalizeAssetImageScope(scope?: WorkspaceCommandScope): AssetImageScop
     assetNames: uniqueNonEmptyStrings(scope?.assetNames),
     includeCompleted: Boolean(scope?.includeCompleted),
     skillId: typeof scope?.skillId === "string" && scope.skillId.trim() ? scope.skillId.trim() : undefined,
+    useExistingAssetReference: typeof scope?.useExistingAssetReference === "boolean" ? scope.useExistingAssetReference : undefined,
   };
 }
 
@@ -93,7 +97,9 @@ function buildPreflightSummary(plan: WorkspaceCommandPlan): WorkspaceCommandPref
     const scope = normalizeAssetImageScope(plan.scope);
     const explicitCount = scope.assetIds?.length || scope.assetNames?.length || scope.limit;
     const quantityText = explicitCount ? `最多/指定 ${explicitCount} 个` : "范围内所有未完成资产";
-    const message = `预检：提交${buildAssetScopeText(scope)}出图；数量：${quantityText}；${scope.includeCompleted ? "包含已完成资产，允许重绘" : "不包含已完成资产，不重绘"}`;
+    const referenceText =
+      scope.useExistingAssetReference === false ? "不带入当前资产图参考" : scope.useExistingAssetReference === true ? "带入当前资产图参考" : "按指令判断是否带参考图";
+    const message = `预检：提交${buildAssetScopeText(scope)}出图；数量：${quantityText}；${scope.includeCompleted ? "包含已完成资产，允许重绘" : "不包含已完成资产，不重绘"}；${referenceText}`;
     return {
       intent: plan.intent,
       scopeText: buildAssetScopeText(scope),

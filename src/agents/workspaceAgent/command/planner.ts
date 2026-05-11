@@ -37,6 +37,7 @@ export interface WorkspacePlannerResolvedScope {
   assetIds?: number[];
   assetNames?: string[];
   includeCompleted?: boolean;
+  useExistingAssetReference?: boolean;
   onlyFailed?: boolean;
   force?: boolean;
   append?: boolean;
@@ -68,6 +69,7 @@ export interface WorkspaceCommandScope {
   assetIds?: number[];
   assetNames?: string[];
   includeCompleted?: boolean;
+  useExistingAssetReference?: boolean;
   onlyFailed?: boolean;
   force?: boolean;
   append?: boolean;
@@ -197,18 +199,22 @@ function detectIntent(text: string): IntentSignal | null {
 
   const explicitAssetImageIntent =
     /(资产|角色|场景|道具|参考图).*(出图|生图|生成.*图|批量.*图|图片)|(出图|生图|生成.*图).*(资产|角色|场景|道具|参考图)/i.test(text);
+  const separatedAssetImageIntent =
+    /(资产|角色|人物|场景|道具|参考图|资产图|角色图|场景图|道具图).{0,32}(出|生|生成|重绘|重出|重新出|做).{0,12}(图|图片)?/i.test(text) ||
+    /(出|生|生成|重绘|重出|重新出|做).{0,16}(一张|1张|个|幅)?[^\n。；，]{0,32}(资产|角色|人物|场景|道具|参考图|资产图|角色图|场景图|道具图|图片|图像)/i.test(text);
   const modifyAssetImageIntent =
     /(修改|改成|改为|重绘|替换).{0,24}(资产|角色|人物|场景|道具|参考图|图片|图像|角色图|场景图|道具图)|(资产|角色|人物|场景|道具|参考图|图片|图像|角色图|场景图|道具图).{0,24}(修改|改成|改为|重绘|替换)/i.test(text);
   const genericBatchImageIntent =
     /(批量|全部|所有|统一|帮我|开始|直接).{0,16}(出图|生图|生成.*图)|(出图|生图).{0,16}(批量|全部|所有|统一)/i.test(text) &&
     !/(分镜|镜头|storyboard|视频)/i.test(text);
   const vagueImageIntent = /帮我.{0,8}(出图|生图|生成.*图)|(出图|生图)$/i.test(text) && !/(分镜|镜头|storyboard|视频)/i.test(text);
-  if (explicitAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent || vagueImageIntent) {
+  if (explicitAssetImageIntent || separatedAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent || vagueImageIntent) {
     return {
       intent: "asset_image_generation",
-      confidence: explicitAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent ? 0.88 : 0.55,
+      confidence: explicitAssetImageIntent || separatedAssetImageIntent || modifyAssetImageIntent || genericBatchImageIntent ? 0.88 : 0.55,
       signals: [
         explicitAssetImageIntent ? "legacy_regex:explicit_asset_image_generation" : null,
+        separatedAssetImageIntent ? "legacy_regex:separated_asset_image_generation" : null,
         modifyAssetImageIntent ? "legacy_regex:modify_asset_image_generation" : null,
         genericBatchImageIntent ? "legacy_regex:generic_batch_image_generation" : null,
         vagueImageIntent ? "intent_signal:vague_image_generation" : null,
@@ -252,6 +258,18 @@ function parseLimitFromText(text: string): number | undefined {
 
 function parseIncludeCompletedFromText(text: string) {
   return /includeCompleted/i.test(text) || /(重新|重绘|重出|再生成|覆盖|替换|修改|改成|改为)/i.test(text) || /(包含|包括|连同|也要|一起).*(已完成|完成的|已有图|已经出图|出过图)/.test(text);
+}
+
+function parseUseExistingAssetReferenceFromText(text: string): boolean | undefined {
+  if (
+    /(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入).{0,10}(原图|旧图|当前图|现有图|已有图|参考图|图片)/i.test(text) ||
+    /(原图|旧图|当前图|现有图|已有图|参考图|图片).{0,10}(不|不要|别|无需|禁止|完全不).{0,10}(参考|使用|沿用|继承|带入)/i.test(text) ||
+    /(全新|重新设计|从零设计|只按文字|纯文本).{0,16}(生成|出图|生图|设计|重绘)/i.test(text)
+  ) {
+    return false;
+  }
+  if (/(参考|基于|沿用|保持).{0,10}(现有|当前|原有|已有|原图|旧图|当前图|现有图|已有图)/i.test(text)) return true;
+  return undefined;
 }
 
 function parseSkillIdFromText(text: string) {
@@ -382,6 +400,14 @@ function buildPreflightSummary(args: {
   message: string;
 }): WorkspaceCommandPreflightSummary {
   const explicitCount = args.scope.assetIds?.length || args.scope.assetNames?.length || args.scope.limit;
+  const referenceText =
+    args.intent === "asset_image_generation"
+      ? args.scope.useExistingAssetReference === false
+        ? "不带入当前资产图参考"
+        : args.scope.useExistingAssetReference === true
+          ? "带入当前资产图参考"
+          : "按指令判断是否带参考图"
+      : "";
   return {
     intent: args.intent,
     scopeText: args.scope.summary,
@@ -389,7 +415,7 @@ function buildPreflightSummary(args: {
     includeCompleted: Boolean(args.scope.includeCompleted),
     redraw: Boolean(args.scope.includeCompleted),
     confirmationPolicy: args.confirmationPolicy,
-    message: args.message,
+    message: referenceText ? `${args.message} ${referenceText}。` : args.message,
   };
 }
 
@@ -400,6 +426,7 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
   const assetType = assetScope?.assetType ?? parsedAssetType;
   const limit = normalizePositiveLimit(assetScope?.limit) ?? parseLimitFromText(text);
   const includeCompleted = assetScope?.includeCompleted ?? parseIncludeCompletedFromText(text);
+  const useExistingAssetReference = assetScope?.useExistingAssetReference ?? parseUseExistingAssetReferenceFromText(text);
   const skillId = parseSkillIdFromText(text);
   const missingInfo: Array<WorkspaceMissingInfo | string> = [...((isWorkspaceResolvedScope(resolved) ? resolved.missingInfo : resolved?.missingInfo) ?? [])];
   const isVague = signal.confidence < 0.7 || (!assetType && !limit && !assetScope?.assetIds?.length && !assetScope?.assetNames?.length && /帮我.{0,8}(出图|生图|生成.*图)|(出图|生图)$/i.test(text));
@@ -412,6 +439,7 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
     assetIds: assetScope?.assetIds,
     assetNames: assetScope?.assetNames,
     includeCompleted,
+    useExistingAssetReference,
     onlyFailed: assetScope?.onlyFailed,
     skillId,
     missingInfo,
@@ -442,6 +470,7 @@ function buildAssetImagePlan(text: string, signal: IntentSignal, snapshot?: Work
         assetIds: assetScope?.assetIds,
         assetNames: assetScope?.assetNames,
         includeCompleted,
+        useExistingAssetReference,
         skillId,
         disableNaturalLanguageScopeParsing: true,
       },

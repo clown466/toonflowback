@@ -234,7 +234,8 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
         const assetType = item.type as ImageGenerationAssetType;
         const visualManual = getVisualManualForAssetType(project.artStyle, assetType);
         const rawUserRequirement = item.userRequirement ?? input.userRequirement ?? null;
-        const intentDecision = decideAssetImageIntent(rawUserRequirement, {
+        const intentText = [rawUserRequirement, item.prompt].filter((value) => typeof value === "string" && value.trim()).join("\n");
+        const intentDecision = decideAssetImageIntent(intentText, {
           generationMode: item.generationMode ?? input.generationMode,
           referencePolicy: item.referencePolicy ?? input.referencePolicy,
           promptPolicy: item.promptPolicy ?? input.promptPolicy,

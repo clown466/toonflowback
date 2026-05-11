@@ -994,12 +994,6 @@ async function resolveChapterWorkspace(config: ToolConfig, options?: { scriptId?
     return { ok: false as const, reason: `没有找到指定章节工作区 ID ${explicitScriptId}。` };
   }
 
-  const currentScriptId = Number(config.resTool.data.scriptId);
-  if (Number.isInteger(currentScriptId) && currentScriptId > 0) {
-    const script = await u.db("o_script").where({ id: currentScriptId, projectId }).first();
-    if (script?.id) return { ok: true as const, scriptId: Number(script.id), script };
-  }
-
   const requestedChapterIndexes = Array.from(
     new Set([...(options?.chapterIndexes ?? []), ...parseChapterIndexesFromText(options?.sourceText ?? config.sourceText ?? "")].map(Number).filter((index) => Number.isInteger(index) && index > 0)),
   );
@@ -1041,6 +1035,12 @@ async function resolveChapterWorkspace(config: ToolConfig, options?: { scriptId?
         : `项目内第 ${requestedChapterIndexes.join("、")} 条还没有对应的章节分镜工作区。请先生成分镜表。`,
       candidates,
     };
+  }
+
+  const currentScriptId = Number(config.resTool.data.scriptId);
+  if (Number.isInteger(currentScriptId) && currentScriptId > 0) {
+    const script = await u.db("o_script").where({ id: currentScriptId, projectId }).first();
+    if (script?.id) return { ok: true as const, scriptId: Number(script.id), script };
   }
 
   const candidates = await scriptCandidatesWithStoryboardCounts(projectId, scripts);

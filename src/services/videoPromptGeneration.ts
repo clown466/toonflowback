@@ -91,13 +91,13 @@ function chooseTargetDuration(input: { requestedDuration?: unknown; storyboard: 
   return storyboardDuration;
 }
 
-async function loadStoryboardsWithAssets(storyboardIds: number[], projectId: number) {
+async function loadStoryboardsWithAssets(storyboardIds: number[], projectId: number, scriptId: number) {
   const ids = Array.from(new Set(storyboardIds.map(Number).filter((id) => Number.isFinite(id))));
   if (!ids.length) return [];
 
   const rows = await u
     .db("o_storyboard")
-    .where("projectId", projectId)
+    .where({ projectId, scriptId })
     .whereIn("id", ids)
     .select("id", "index", "videoDesc", "prompt", "track", "duration", "shouldGenerateImage");
   const assetRows = await u.db("o_assets2Storyboard").whereIn("storyboardId", ids).orderBy("rowid").select("storyboardId", "assetId");
@@ -152,14 +152,16 @@ function buildDirectorBoardVideoPromptRules(hasDirectorBoard: boolean) {
 export async function generateVideoPromptForTrack(input: GenerateVideoPromptInput) {
   const { trackId, projectId, info, model, duration } = input;
   const videoTrackData = await u.db("o_videoTrack").where({ id: trackId, projectId }).select("scriptId").first();
-  const scriptData = videoTrackData?.scriptId ? await u.db("o_script").where({ id: videoTrackData.scriptId, projectId }).select("name", "content").first() : undefined;
+  const scriptId = Number(videoTrackData?.scriptId);
+  if (!Number.isInteger(scriptId) || scriptId <= 0) throw new Error("视频轨道不存在或未绑定章节工作区，无法生成视频提示词。");
+  const scriptData = await u.db("o_script").where({ id: scriptId, projectId }).select("name", "content").first();
   const images = await Promise.all(
     info.map(async (item) => {
       if (item.sources === "storyboard") {
         const storyboard = await u
           .db("o_storyboard")
           .where("o_storyboard.id", item.id)
-          .where("projectId", projectId)
+          .where({ projectId, scriptId })
           .select("id", "index", "videoDesc", "prompt", "track", "duration", "shouldGenerateImage")
           .first();
         if (!storyboard) return undefined;
@@ -188,7 +190,7 @@ export async function generateVideoPromptForTrack(input: GenerateVideoPromptInpu
       if (item.sources === "directorBoard") {
         const board = await u
           .db("o_directorBoard")
-          .where({ id: item.id, projectId })
+          .where({ id: item.id, projectId, scriptId })
           .select("id", "name", "prompt", "filePath", "storyboardIds", "assetIds", "boardType")
           .first();
         if (!board) return undefined;
@@ -241,7 +243,7 @@ export async function generateVideoPromptForTrack(input: GenerateVideoPromptInpu
     .flatMap((board) => parseNumberArray(board.storyboardIds))
     .filter((id) => !selectedStoryboardIds.has(id));
   if (directorBoardStoryboardIds.length) {
-    storyboard.push(...(await loadStoryboardsWithAssets(directorBoardStoryboardIds, projectId)));
+    storyboard.push(...(await loadStoryboardsWithAssets(directorBoardStoryboardIds, projectId, scriptId)));
     storyboard.sort((a, b) => {
       const aIndex = Number(a.index ?? Number.MAX_SAFE_INTEGER);
       const bIndex = Number(b.index ?? Number.MAX_SAFE_INTEGER);

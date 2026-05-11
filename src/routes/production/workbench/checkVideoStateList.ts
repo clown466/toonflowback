@@ -43,7 +43,7 @@ async function normalizePollingVideo(item: any) {
   return {
     ...item,
     id: item.id,
-    state,
+    state: state === VIDEO_SUCCESS_STATE ? "已完成" : state,
     src,
     filePath: rawFilePath,
     errorReason,

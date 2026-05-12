@@ -16,7 +16,7 @@ export default router.post(
     model: z.string().optional(),
     imageSize: z.enum(["1K", "2K", "4K"]).optional(),
     imageQuality: z.enum(["1K", "2K", "4K"]).optional(),
-    boardType: z.enum(["continuity", "textStoryboard", "hybridStoryboard"]).optional(),
+    boardType: z.enum(["continuity", "textStoryboard", "hybridStoryboard", "spatialSixPanel"]).optional(),
     usePreviousBoardReference: z.boolean().optional(),
   }),
   async (req, res) => {

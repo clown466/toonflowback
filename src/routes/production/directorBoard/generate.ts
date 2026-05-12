@@ -16,7 +16,7 @@ export default router.post(
     model: z.string().optional(),
     imageSize: z.enum(["1K", "2K", "4K"]).optional(),
     imageQuality: z.enum(["1K", "2K", "4K"]).optional(),
-    boardType: z.enum(["continuity", "textStoryboard", "hybridStoryboard"]).optional(),
+    boardType: z.enum(["continuity", "textStoryboard", "hybridStoryboard", "spatialSixPanel"]).optional(),
     shotsPerBoard: z.number().min(3).max(8).optional(),
     replace: z.boolean().optional(),
     generateImages: z.boolean().optional(),

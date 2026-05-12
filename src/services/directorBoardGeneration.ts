@@ -91,7 +91,7 @@ export interface RegenerateDirectorBoardOptions {
 }
 
 export type DirectorBoardPromptLanguage = "english" | "chinese";
-export type DirectorBoardType = "continuity" | "textStoryboard" | "hybridStoryboard";
+export type DirectorBoardType = "continuity" | "textStoryboard" | "hybridStoryboard" | "spatialSixPanel";
 type DirectorBoardImageSize = "1K" | "2K" | "4K";
 
 const MAX_DIRECTOR_BOARD_DURATION_SECONDS = 15;
@@ -100,6 +100,7 @@ const DEFAULT_DIRECTOR_BOARD_TYPE: DirectorBoardType = "continuity";
 function directorBoardTypeName(boardType: DirectorBoardType) {
   if (boardType === "textStoryboard") return "文字分镜导演板";
   if (boardType === "hybridStoryboard") return "融合导演板";
+  if (boardType === "spatialSixPanel") return "空间6宫格导演板";
   return "章节导演板";
 }
 
@@ -142,6 +143,7 @@ async function runDirectorBoardImageTaskWithRetry(rowId: number, task: () => Pro
 }
 
 function normalizeDirectorBoardType(value: unknown): DirectorBoardType {
+  if (value === "spatialSixPanel") return "spatialSixPanel";
   if (value === "hybridStoryboard") return "hybridStoryboard";
   return value === "textStoryboard" ? "textStoryboard" : DEFAULT_DIRECTOR_BOARD_TYPE;
 }
@@ -548,6 +550,53 @@ export function buildChapterDirectorBoardPrompt(input: {
     : "";
 
   if (isChinese) {
+    if (boardType === "spatialSixPanel") {
+      return [
+        "生成一张横向 16:9 视觉型章节导演板。",
+        "核心要求：上面一个空间图，下面一个 6 宫格图；图中不要任何解释性文字。",
+        "",
+        "固定版式：",
+        "上半部分占整张图约 40%：彩色俯视空间调度图。必须显示场景平面布局、入口/出口、关键道具、主光方向、角色当前位置、角色移动箭头、摄像机位置和拍摄方向。",
+        "下半部分占整张图约 60%：严格 2 行 x 3 列的 6 宫格连续画面，按镜头顺序从左到右、从上到下排列。每格是一个彩色电影感关键画面，用来表达镜头画面和动作变化。",
+        "空间图和 6 宫格必须在同一张图内，空间图在上，6 宫格在下，不要改成左右布局。",
+        "",
+        "图中文字限制：",
+        "不要标题栏，不要说明段落，不要分镜表格，不要对白字幕，不要镜头参数文字，不要 UI 截图，不要水印。",
+        "只允许极短定位标签：C1/C2/C3、角色名、1-6 镜头编号、箭头符号、摄像机小图标。除此之外不要写任何文字。",
+        "如果文字可能影响画面或不可读，宁可只用颜色、图标、箭头和位置关系表达。",
+        "",
+        "角色与场景：",
+        "角色必须用清晰高对比色和 C编号保持可区分。角色可以简化，但必须保留最显著身份符号：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
+        "角色事实卡和参考图是身份最高依据；不要根据镜头描述发明新外观。C编号在空间图和 6 宫格中必须始终对应同一角色。",
+        "场景必须彩色、清晰、有空间层次，尽量参考场景资产的布局、颜色、入口、墙面、灯光和关键道具。",
+        "",
+        previousBoardReferenceNote,
+        "",
+        "按顺序使用附加参考图：",
+        referenceLines.length ? referenceLines.join("\n") : "无可用参考图。",
+        "",
+        "角色短标签：",
+        characterLabelLines.length ? characterLabelLines.join("\n") : "无角色参考；从分镜中提取临时 C编号。",
+        "",
+        "项目信息（只作为生成参考，不要画成文字）：",
+        `标题：${project.name || "未命名"}`,
+        `工作区：${script.name || `script ${script.id}`}`,
+        `导演板：${boardIndex + 1}/${totalBoards}`,
+        `视频画幅比例：${project.videoRatio || "9:16"}`,
+        `项目类型：${projectTypeText}`,
+        `视觉风格：${visualStyleText}`,
+        "",
+        "场景参考（只作为生成参考，不要画成文字）：",
+        sceneLines.length ? sceneLines.join("\n") : "没有关联场景资产。只根据分镜描述构建场景。",
+        "",
+        "其他素材（只作为生成参考，不要画成文字）：",
+        otherAssetLines.length ? otherAssetLines.join("\n") : "无其他素材。",
+        "",
+        "镜头内容（只作为生成参考，不要画成文字）：",
+        shotLines.join("\n"),
+      ].join("\n");
+    }
+
     if (boardType === "hybridStoryboard") {
       return [
         "生成一张横向 16:9 融合型章节导演板，把“空间连续性导演板”和“文字分镜导演板”合并在同一张图里。",
@@ -700,6 +749,53 @@ export function buildChapterDirectorBoardPrompt(input: {
       otherAssetLines.length ? otherAssetLines.join("\n") : "无其他素材。",
       "",
       "覆盖镜头：",
+      shotLines.join("\n"),
+    ].join("\n");
+  }
+
+  if (boardType === "spatialSixPanel") {
+    return [
+      "Create one wide 16:9 visual chapter director board.",
+      "Core requirement: one spatial map on top and one six-panel storyboard grid below. Do not include any explanatory text in the image.",
+      "",
+      "Fixed layout:",
+      "Top half, about 40% of the image: a colored overhead spatial blocking map. Show the scene floor plan, entrances/exits, key props, main light direction, current character positions, character movement arrows, camera positions, and camera facing directions.",
+      "Bottom half, about 60% of the image: exactly six storyboard panels in a 2 x 3 grid, ordered left to right and top to bottom. Each panel is a colored cinematic keyframe showing the shot composition and action change.",
+      "The spatial map and the six-panel grid must be inside the same single image. Spatial map on top, six-panel grid below. Do not change it into a left-right layout.",
+      "",
+      "Visible text restriction:",
+      "No title bar, no explanatory paragraphs, no storyboard tables, no dialogue subtitles, no camera-setting text, no software UI screenshot, no watermark.",
+      "Only tiny locator labels are allowed: C1/C2/C3, character names, shot numbers 1-6, arrow symbols, and small camera icons. Do not write any other words.",
+      "If text would clutter the board or become unreadable, use colors, icons, arrows, and spatial relationships instead.",
+      "",
+      "Characters and scene:",
+      "Characters must stay distinguishable through high-contrast colors and C-number identity. They may be simplified, but preserve only the strongest identity symbols: fruit/species color, body scale, fixed outfit, key prop, weapon, or tool.",
+      "Role fact cards and reference images are the highest identity authority. Do not invent new character appearances from shot descriptions. The same C-number must remain the same character in both the map and all six panels.",
+      "The scene must be colored, readable, and spatially clear. Follow scene references for layout, colors, entrances, walls, lighting, and key props.",
+      "",
+      previousBoardReferenceNote,
+      "",
+      "Use the attached reference images in order:",
+      referenceLines.length ? referenceLines.join("\n") : "No attached references.",
+      "",
+      "Character labels:",
+      characterLabelLines.length ? characterLabelLines.join("\n") : "No role assets are linked. Derive temporary C-number labels from the storyboard descriptions and keep them stable across this board.",
+      "",
+      "Project information, for generation guidance only. Do not render this as visible text:",
+      `title: ${project.name || "Untitled"}`,
+      `workspace: ${script.name || `script ${script.id}`}`,
+      `board: ${boardIndex + 1}/${totalBoards}`,
+      `video aspect ratio: ${project.videoRatio || "9:16"}`,
+      `project type: ${projectTypeText}`,
+      `visual style: ${visualStyleText}`,
+      "",
+      "Scene references, for generation guidance only. Do not render this as visible text:",
+      sceneLines.length ? sceneLines.join("\n") : "No scene asset is linked. Build a scene only from the storyboard descriptions.",
+      "",
+      "Other assets, for generation guidance only. Do not render this as visible text:",
+      otherAssetLines.length ? otherAssetLines.join("\n") : "No other assets.",
+      "",
+      "Shot content, for generation guidance only. Do not render this as visible text:",
       shotLines.join("\n"),
     ].join("\n");
   }

@@ -174,9 +174,21 @@ const vendor: VendorConfig = {
         { label: "公开 URL 表单", value: "publicUrlForm" },
       ],
     },
+    {
+      key: "imageAsyncMode",
+      label: "GPT Image 异步模式",
+      type: "select",
+      required: false,
+      placeholder: "自动：2K/4K、长提示词、参考图走异步",
+      options: [
+        { label: "自动", value: "auto" },
+        { label: "始终异步", value: "async" },
+        { label: "始终同步", value: "sync" },
+      ],
+    },
     { key: "publicOssBaseUrl", label: "公开资源地址", type: "url", required: false, placeholder: "示例：http://你的服务器:10588" },
   ],
-  inputValues: { apiKey: "", baseUrl: "https://api.openai.com/v1", imageQuality: "default", imageReferenceTransport: "multipart", publicOssBaseUrl: "" },
+  inputValues: { apiKey: "", baseUrl: "https://api.openai.com/v1", imageQuality: "default", imageReferenceTransport: "multipart", imageAsyncMode: "auto", publicOssBaseUrl: "" },
   models: [{ name: "GPT-4o", modelName: "gpt-4o", type: "text", think: false }],
 };
 
@@ -279,9 +291,17 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   const requestResolution = usesAspectResolutionParams ? String(config.size || "1K").toLowerCase() : "";
   const qualityValue = String(vendor.inputValues.imageQuality || "default").trim().toLowerCase();
   const resolvedQuality = ["low", "medium", "high", "auto"].includes(qualityValue) ? qualityValue : "";
-  const shouldSendQuality = /^gpt-image/i.test(model.modelName) && Boolean(resolvedQuality);
+  const isGptImageModel = /^gpt-image/i.test(model.modelName);
+  const shouldSendQuality = isGptImageModel && Boolean(resolvedQuality);
   const referenceTransport = String(vendor.inputValues.imageReferenceTransport || "multipart");
   const usesAirelayzoneGenerationReferences = /airelayzone\.com/i.test(baseUrl);
+  const imageAsyncMode = String(vendor.inputValues.imageAsyncMode || "auto").trim().toLowerCase();
+  const promptLength = String(config.prompt || "").length;
+  const shouldUseAirelayzoneAsync =
+    usesAspectResolutionParams &&
+    isGptImageModel &&
+    imageAsyncMode !== "sync" &&
+    (imageAsyncMode === "async" || imageBase64List.length > 0 || config.size !== "1K" || promptLength > 1200 || resolvedQuality === "high");
 
   const pickImageResult = (data: any): string | undefined => {
     const first = data?.data?.[0] || data?.data || data;
@@ -365,6 +385,32 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     return await normalizeImageResult(result.data);
   };
 
+  const submitAirelayzoneGeneration = async (body: Record<string, any>, useAsync: boolean, logSuffix: string): Promise<string> => {
+    const endpoint = useAsync ? "/images/generations/async" : "/images/generations";
+    logger(
+      `[custom1 imageRequest] POST ${endpoint} baseUrl=${baseUrl} model=${model.modelName} size=${body.size} resolution=${body.resolution || "default"} quality=${body.quality || "default"} refs=${body.image_urls?.length || 0} ${logSuffix}`,
+    );
+    const response = await axios.post(`${baseUrl}${endpoint}`, body, {
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      validateStatus: () => true,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`custom1图片请求失败，接口: ${endpoint}, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
+    }
+    if (!useAsync) return await parseAxiosResponse(response, endpoint);
+
+    const taskId = response.data?.id || response.data?.task_id || response.data?.taskId;
+    if (!taskId) {
+      const immediate = pickImageResult(response.data);
+      if (immediate && typeof immediate === "string") return await normalizeImageResult(immediate);
+      throw new Error(`custom1图片异步提交响应中未找到任务ID: ${JSON.stringify(response.data).slice(0, 800)}`);
+    }
+    logger(`[custom1 imageRequest] airelayzone async task=${taskId}`);
+    return await pollAirelayzoneImageTask(String(taskId));
+  };
+
   if (imageBase64List.length && usesAirelayzoneGenerationReferences) {
     const imageUrls = await Promise.all(imageBase64List.map((base64) => base64ToPublicUrl(base64, "image", vendor.inputValues.publicOssBaseUrl || "")));
     const body: Record<string, any> = {
@@ -376,24 +422,7 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
     };
     if (requestResolution) body.resolution = requestResolution;
     if (shouldSendQuality) body.quality = resolvedQuality;
-    logger(`[custom1 imageRequest] POST /images/generations/async baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${shouldSendQuality ? resolvedQuality : "default"} refs=${imageUrls.length} transport=airelayzoneImageUrlsAsync`);
-    const response = await axios.post(`${baseUrl}/images/generations/async`, body, {
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      validateStatus: () => true,
-    });
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`custom1图片请求失败，接口: /images/generations/async, 状态码: ${response.status}, 错误信息: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
-    }
-    const taskId = response.data?.id || response.data?.task_id || response.data?.taskId;
-    if (!taskId) {
-      const immediate = pickImageResult(response.data);
-      if (immediate && typeof immediate === "string") return await normalizeImageResult(immediate);
-      throw new Error(`custom1图片异步提交响应中未找到任务ID: ${JSON.stringify(response.data).slice(0, 800)}`);
-    }
-    logger(`[custom1 imageRequest] airelayzone async task=${taskId}`);
-    return await pollAirelayzoneImageTask(String(taskId));
+    return await submitAirelayzoneGeneration(body, shouldUseAirelayzoneAsync, `transport=airelayzoneImageUrls asyncMode=${imageAsyncMode} promptChars=${promptLength}`);
   }
 
   if (imageBase64List.length && referenceTransport === "publicUrlJson") {
@@ -488,6 +517,10 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   };
   if (requestResolution) body.resolution = requestResolution;
   if (shouldSendQuality) body.quality = resolvedQuality;
+
+  if (usesAspectResolutionParams && isGptImageModel) {
+    return await submitAirelayzoneGeneration(body, shouldUseAirelayzoneAsync, `transport=text asyncMode=${imageAsyncMode} promptChars=${promptLength}`);
+  }
 
   logger(`[custom1 imageRequest] POST /images/generations baseUrl=${baseUrl} model=${model.modelName} size=${requestSize} resolution=${requestResolution || "default"} quality=${body.quality || "default"} refs=0`);
   const response = await fetch(`${baseUrl}/images/generations`, {

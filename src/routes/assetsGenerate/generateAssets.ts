@@ -3,6 +3,7 @@ import { z } from "zod";
 import { error, success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
 import { submitAssetImageGeneration } from "@/services/assetImageGeneration";
+import u from "@/utils";
 
 const router = express.Router();
 
@@ -35,6 +36,21 @@ export default router.post("/", validateFields(requestSchema), async (req, res) 
   try {
     const { projectId, model, resolution, id, type, name, prompt, describe, base64, skillId, generationMode, referencePolicy, promptPolicy, userRequirement } = req.body;
     if (!["role", "scene", "tool"].includes(type)) return res.status(400).send(error("不支持的类型"));
+    const currentAsset = await u
+      .db("o_assets")
+      .leftJoin("o_image", "o_assets.imageId", "o_image.id")
+      .where("o_assets.id", id)
+      .select("o_assets.imageId", "o_image.filePath as imageFilePath")
+      .first();
+    const effectiveBase64 =
+      base64 ||
+      (referencePolicy === "current_asset" && currentAsset?.imageFilePath
+        ? await u.oss.getImageBase64(currentAsset.imageFilePath).catch(() => "")
+        : "");
+    if (referencePolicy === "current_asset" && !effectiveBase64) {
+      return res.status(400).send(error("当前资产没有可用参考图，无法按原图修改"));
+    }
+    await u.db("o_assets").where("id", id).update({ prompt });
 
     const result = await submitAssetImageGeneration({
       projectId,
@@ -53,7 +69,7 @@ export default router.post("/", validateFields(requestSchema), async (req, res) 
           name,
           prompt,
           describe,
-          base64,
+          base64: effectiveBase64,
           skillId,
           generationMode,
           referencePolicy,

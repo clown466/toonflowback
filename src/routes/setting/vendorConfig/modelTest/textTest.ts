@@ -3,7 +3,6 @@ import { success, error } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
 import u from "@/utils";
 import { z } from "zod";
-import { tool, jsonSchema } from "ai";
 const router = express.Router();
 
 // 检查语言模型
@@ -32,26 +31,8 @@ export default router.post(
       const selectedModel = modelList.find((i: any) => i.modelName == modelName);
       if (!selectedModel) return res.status(500).send(error(`未找到模型 ${modelName}`));
 
-      const getWeatherTool = tool({
-        description: "Get the weather in a location",
-        inputSchema: jsonSchema<{ location: string }>(
-          z
-            .object({
-              location: z.string().describe("The location to get the weather for"),
-            })
-            .toJSONSchema(),
-        ),
-        execute: async ({ location }) => {
-          return {
-            location,
-            temperature: 72 + Math.floor(Math.random() * 21) - 10,
-          };
-        },
-      });
-
       const data = await u.Ai.Text(`${id}:${modelName}`).invoke({
         messages,
-        tools: { getWeatherTool },
       });
       if (!data?.text?.trim()) return res.status(500).send(error("模型未返回文本结果"));
       res.status(200).send(success({ thinking: data.reasoningText, content: data.text }));

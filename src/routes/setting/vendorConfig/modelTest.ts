@@ -3,7 +3,6 @@ import { success, error } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
 import u from "@/utils";
 import { z } from "zod";
-import { tool, jsonSchema } from "ai";
 const router = express.Router();
 
 // 检查语言模型
@@ -27,7 +26,7 @@ export default router.post(
               "一张16:9比例的图片，完美等分为2x2四宫格布局，各区域无缝衔接：\n左上宫格：一只可爱的猫，毛发蓬松，眼睛明亮，姿态俏皮\n右上宫格：一只友善的狗，金毛犬，表情愉悦，摇着尾巴\n左下宫格：一头健壮的牛，田园背景，目光温和，皮毛光泽\n右下宫格：一匹骏马，姿态优雅，鬃毛飘逸，肌肉健美\n风格要求：四个宫格风格统一，色彩鲜艳饱和，高清画质，细节清晰锐利，专业插画风格，线条干净，统一的左上方光源，柔和阴影，和谐配色，卡通/半写实风格，宫格间用白色或浅灰细线分隔", //图片提示词
             referenceList: [], //输入的图片提示词
             size: "1K", // 图片尺寸
-            aspectRatio: "16:9",
+            aspectRatio: "1:1",
           },
         },
         video: { fnName: "videoRequest", modelData: {} },
@@ -59,27 +58,9 @@ export default router.post(
       }
       const reqConfig = requestFn[type as "text" | "video" | "image"];
 
-      const getWeatherTool = tool({
-        description: "Get the weather in a location",
-        inputSchema: jsonSchema<{ location: string }>(
-          z
-            .object({
-              location: z.string().describe("The location to get the weather for"),
-            })
-            .toJSONSchema(),
-        ),
-        execute: async ({ location }) => {
-          return {
-            location,
-            temperature: 72 + Math.floor(Math.random() * 21) - 10,
-          };
-        },
-      });
-
       if (type == "text") {
         const { textStream } = await u.Ai.Text(`${id}:${modelName}`).stream({
-          prompt: "请调用工具获取火星的天气，并回答我多少气温",
-          tools: { getWeatherTool },
+          prompt: "请只回复 OK，用于测试模型是否可用。",
         });
         let fullResponse = "";
         for await (const chunk of textStream) {

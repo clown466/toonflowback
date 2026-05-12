@@ -514,6 +514,11 @@ export async function runNovelAssetExtractionTool(config: ToolConfig, options: N
   return { handled: true, message: lines.join("\n"), result };
 }
 
+// Compatibility alias for older agent plans/tests that still import the former name.
+export async function runNovelAssetExtractionFastPath(config: ToolConfig, options: NovelAssetExtractionOptions = {}) {
+  return runNovelAssetExtractionTool(config, options);
+}
+
 function buildAssetImagePromptSource(asset: any, freshAssetText: boolean) {
   const describe = nonEmpty(asset.describe);
   const prompt = nonEmpty(asset.prompt);
@@ -921,6 +926,14 @@ export async function runProjectStoryboardDraftTool(
   return { handled: true, result };
 }
 
+// Compatibility alias for older agent plans/tests that still import the former name.
+export async function runProjectStoryboardDraftFastPath(
+  config: ToolConfig,
+  options?: { sourceText?: string; force?: boolean; append?: boolean; novelIds?: number[]; chapterIndexes?: number[]; skillId?: string; userRequirement?: string },
+) {
+  return runProjectStoryboardDraftTool(config, options);
+}
+
 export async function runProjectStoryboardClearTool(config: ToolConfig, options?: { sourceText?: string }) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
@@ -963,6 +976,11 @@ export async function runProjectStoryboardClearTool(config: ToolConfig, options?
   msg.complete();
 
   return { handled: true, result };
+}
+
+// Compatibility alias for older agent plans/tests that still import the former name.
+export async function runProjectStoryboardClearFastPath(config: ToolConfig, options?: { sourceText?: string }) {
+  return runProjectStoryboardClearTool(config, options);
 }
 
 function parseStoredNumberArray(value: unknown): number[] {

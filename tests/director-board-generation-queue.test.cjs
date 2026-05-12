@@ -53,6 +53,10 @@ async function createSchema(db) {
     table.text('duration');
     table.text('filePath');
     table.integer('trackId');
+    table.text('focalLength');
+    table.text('aperture');
+    table.text('shutterSpeed');
+    table.text('iso');
   });
   await db.schema.createTable('o_directorBoard', (table) => {
     table.increments('id').primary();

@@ -118,12 +118,12 @@ function buildPrompt(language) {
   assert.doesNotMatch(englishPrompt, /简单版式：/, "English director board prompt should not use Chinese structure");
   assert.match(englishPrompt, /All visible text must be English only/, "English prompt should constrain visible labels");
   assert.match(englishPrompt, /simple readable colored pencil figures/, "English prompt should use the simpler board style");
-  assert.match(englishPrompt, /Ref 1: Chloe\. a peach fruit woman, pink-orange peach head, clear peach groove, tactical vest, shotgun or long gun, confident sarcastic attitude\./, "English role refs should keep concise identifying Chloe details");
-  assert.match(englishPrompt, /Ref 2: Bob\. a stocky orange fruit soldier, orange peel body, gas mask, military gear, tense and practical\./, "English role refs should keep concise identifying Bob details");
-  assert.match(englishPrompt, /Ref 3: Leo\. a yellow lemon fruit man, bright yellow lemon body, tactical vest\./, "English role refs should keep concise identifying Leo details");
+  assert.match(englishPrompt, /Ref 1 \(C1\): Chloe\. a peach figure\./, "English role refs should keep minimal identifying Chloe details");
+  assert.match(englishPrompt, /Ref 2 \(C2\): Bob\. an orange soldier figure\./, "English role refs should keep minimal identifying Bob details");
+  assert.match(englishPrompt, /Ref 3 \(C3\): Leo\. a bright yellow lemon figure\./, "English role refs should keep minimal identifying Leo details");
   assert.doesNotMatch(englishPrompt, /[\u3400-\u9fff]/, "English prompt should not keep Chinese source text");
-  const roleRefLines = englishPrompt.split("\n").filter((line) => /^Ref \d+: (Chloe|Bob|Leo)\./.test(line));
-  assert.ok(roleRefLines.every((line) => line.length <= 165), "English role ref lines should stay short enough for image prompts");
+  const roleRefLines = englishPrompt.split("\n").filter((line) => /^Ref \d+ \(C\d+\): (Chloe|Bob|Leo)\./.test(line));
+  assert.ok(roleRefLines.every((line) => line.length <= 90), "English role ref lines should stay minimal enough for image prompts");
   assert.ok(englishPrompt.length < 3500, "English director board prompt should stay concise");
 
   const englishTextStoryboardPrompt = service.buildChapterDirectorBoardPrompt({

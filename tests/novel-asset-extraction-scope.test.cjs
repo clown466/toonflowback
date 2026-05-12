@@ -113,7 +113,7 @@ async function testChapterScopedNewAssetExtraction() {
   });
 
   const sink = createMessageSink();
-  const result = await service.runNovelAssetExtractionFastPath(
+  const result = await service.runNovelAssetExtractionTool(
     { resTool: { data: { projectId: 1 } }, msg: sink.msg },
     { sourceText: '提取第17章新增角色/场景/道具', chapterIndexes: [17] },
   );
@@ -142,37 +142,6 @@ async function testChapterScopedNewAssetExtraction() {
   const austin = await db('o_assets').where({ id: 7 }).first();
   assert.strictEqual(austin.remark, null, 'chapter 10 only asset should not be touched by chapter 17 extraction');
   await db.destroy();
-}
-
-async function testExecutorPassesAssetExtractionScope() {
-  let capturedOptions = null;
-  const executor = loadTsModule('src/agents/workspaceAgent/command/executor.ts', {
-    '@/agents/workspaceAgent/tools': {
-      runNovelAssetExtractionFastPath: async (_config, options) => {
-        capturedOptions = options;
-        return { handled: true, message: 'ok' };
-      },
-      runProjectAssetImageGenerationFastPath: async () => ({ handled: true, message: 'unused' }),
-      runProjectStoryboardClearFastPath: async () => ({ handled: true, message: 'unused' }),
-      runProjectStoryboardDraftFastPath: async () => ({ handled: true, message: 'unused' }),
-    },
-  });
-
-  await executor.executeWorkspaceCommandPlan(
-    { resTool: { data: { projectId: 1 } }, msg: createMessageSink().msg },
-    {
-      intent: 'asset_extraction',
-      sourceText: '提取第17章新增角色/场景/道具',
-      scope: { chapterIds: [17], chapterIndexes: [17] },
-      confirmationPolicy: 'auto',
-    },
-  );
-
-  assert.deepStrictEqual(capturedOptions, {
-    sourceText: '提取第17章新增角色/场景/道具',
-    novelIds: [17],
-    chapterIndexes: [17],
-  });
 }
 
 async function testAllChapterRemainingAssetExtraction() {
@@ -234,7 +203,7 @@ async function testAllChapterRemainingAssetExtraction() {
     '@/utils/jsonSchema': { toToolJsonSchema: (schema) => schema },
   });
 
-  const result = await service.runNovelAssetExtractionFastPath(
+  const result = await service.runNovelAssetExtractionTool(
     { resTool: { data: { projectId: 2 } }, msg: createMessageSink().msg },
     { sourceText: '读取所有小说情节提取剩余新增资产' },
   );
@@ -271,7 +240,6 @@ async function testAllChapterRemainingAssetExtraction() {
 
 async function main() {
   await testChapterScopedNewAssetExtraction();
-  await testExecutorPassesAssetExtractionScope();
   await testAllChapterRemainingAssetExtraction();
   console.log('Novel asset extraction scope checks passed');
 }

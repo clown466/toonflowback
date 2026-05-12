@@ -79,6 +79,10 @@ async function createSchema(db) {
     table.text('track');
     table.integer('trackId');
     table.text('videoDesc');
+    table.text('focalLength');
+    table.text('aperture');
+    table.text('shutterSpeed');
+    table.text('iso');
     table.integer('shouldGenerateImage');
     table.integer('index');
     table.integer('createTime');

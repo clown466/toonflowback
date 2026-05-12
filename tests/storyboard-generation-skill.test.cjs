@@ -1,6 +1,28 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const { transform } = require("sucrase");
+
+const root = path.resolve(__dirname, "..");
+
+function loadTsModule(file, mocks = {}) {
+  const filename = path.join(root, file);
+  const code = fs.readFileSync(filename, "utf8");
+  const js = transform(code, { transforms: ["typescript", "imports"] }).code;
+  const module = { exports: {} };
+  const localRequire = (id) => {
+    if (Object.prototype.hasOwnProperty.call(mocks, id)) return mocks[id];
+    if (id.startsWith("@/")) return loadTsModule(path.join("src", `${id.slice(2)}.ts`), mocks);
+    if (id.startsWith("./") || id.startsWith("../")) {
+      const target = path.join(path.dirname(file), id);
+      return loadTsModule(target.endsWith(".ts") || target.endsWith(".json") ? target : `${target}.ts`, mocks);
+    }
+    return require(id);
+  };
+  const fn = new Function("require", "module", "exports", "__dirname", "__filename", js);
+  fn(localRequire, module, module.exports, path.dirname(filename), filename);
+  return module.exports;
+}
 
 const {
   deleteStoryboardGenerationSkill,
@@ -9,7 +31,9 @@ const {
   renderStoryboardGenerationSkillPrompt,
   resolveStoryboardGenerationSkill,
   saveStoryboardGenerationSkill,
-} = require("../src/services/storyboardGenerationSkill.ts");
+} = loadTsModule("src/services/storyboardGenerationSkill.ts", {
+  "@/utils/getPath": (parts) => path.join(root, "data", ...(Array.isArray(parts) ? parts : [parts])),
+});
 
 const skillsRoot = fs.existsSync("/root/toonflow-data/skills")
   ? "/root/toonflow-data/skills"

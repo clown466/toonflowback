@@ -80,12 +80,42 @@ function isIdentifierBoundary(char: string | undefined) {
   return !char || !/[A-Za-z0-9_$]/.test(char);
 }
 
-function replaceVendorName(code: string, name: string) {
+function replaceVendorNameValue(code: string, name: string, propEnd: number) {
+  let colon = propEnd;
+  while (/\s/.test(code[colon] || "")) colon += 1;
+  if (code[colon] !== ":") return null;
+  let valueStart = colon + 1;
+  while (/\s/.test(code[valueStart] || "")) valueStart += 1;
+  const quote = code[valueStart];
+  if (quote !== "\"" && quote !== "'") throw new Error("vendor.name 必须是字符串字面量");
+  let valueEnd = valueStart + 1;
+  while (valueEnd < code.length) {
+    if (code[valueEnd] === quote && !isEscaped(code, valueEnd)) break;
+    valueEnd += 1;
+  }
+  if (valueEnd >= code.length) throw new Error("vendor.name 字符串未闭合");
+  return `${code.slice(0, valueStart)}${JSON.stringify(name)}${code.slice(valueEnd + 1)}`;
+}
+
+export function replaceVendorName(code: string, name: string) {
   const range = findVendorObjectRange(code);
   const state: ScanState = { quote: null, lineComment: false, blockComment: false };
   let depth = 0;
 
   for (let i = range.start; i <= range.end; i += 1) {
+    const quotedNameKey =
+      !state.quote &&
+      !state.lineComment &&
+      !state.blockComment &&
+      depth === 1 &&
+      (code[i] === "\"" || code[i] === "'") &&
+      code.slice(i + 1, i + 5) === "name" &&
+      code[i + 5] === code[i];
+    if (quotedNameKey) {
+      const replaced = replaceVendorNameValue(code, name, i + 6);
+      if (replaced) return replaced;
+    }
+
     const skipped = stepState(code, i, state);
     if (skipped) {
       i += skipped;
@@ -104,31 +134,14 @@ function replaceVendorName(code: string, name: string) {
     }
     if (depth !== 1) continue;
 
-    let propStart = -1;
     let propEnd = -1;
     if (code.startsWith("name", i) && isIdentifierBoundary(code[i - 1]) && isIdentifierBoundary(code[i + 4])) {
-      propStart = i;
       propEnd = i + 4;
-    } else if ((char === "\"" || char === "'") && code.slice(i + 1, i + 5) === "name" && code[i + 5] === char) {
-      propStart = i;
-      propEnd = i + 6;
     }
-    if (propStart < 0) continue;
+    if (propEnd < 0) continue;
 
-    let colon = propEnd;
-    while (/\s/.test(code[colon] || "")) colon += 1;
-    if (code[colon] !== ":") continue;
-    let valueStart = colon + 1;
-    while (/\s/.test(code[valueStart] || "")) valueStart += 1;
-    const quote = code[valueStart];
-    if (quote !== "\"" && quote !== "'") throw new Error("vendor.name 必须是字符串字面量");
-    let valueEnd = valueStart + 1;
-    while (valueEnd < code.length) {
-      if (code[valueEnd] === quote && !isEscaped(code, valueEnd)) break;
-      valueEnd += 1;
-    }
-    if (valueEnd >= code.length) throw new Error("vendor.name 字符串未闭合");
-    return `${code.slice(0, valueStart)}${JSON.stringify(name)}${code.slice(valueEnd + 1)}`;
+    const replaced = replaceVendorNameValue(code, name, propEnd);
+    if (replaced) return replaced;
   }
 
   throw new Error("未找到 vendor.name 字段");

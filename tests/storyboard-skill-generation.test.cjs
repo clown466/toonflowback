@@ -255,21 +255,15 @@ async function main() {
   capturedPrompts = [];
   capturedModelKeys = [];
   mockStoryboardResponses = ['not json'];
-  await assert.rejects(
-    () =>
-      service.generateProjectStoryboardWithSkill(3, {
-        sourceText: '请针对 juben10 重新生成分镜',
-        force: true,
-      }),
-    (error) => {
-      assert.ok(String(error.message).includes('结构化分镜生成失败'), error.message);
-      assert.ok(String(error.message).includes('已停止写入'), error.message);
-      return true;
-    },
-  );
+  const invalidJsonFallbackResult = await service.generateProjectStoryboardWithSkill(3, {
+    sourceText: '请针对 juben10 重新生成分镜',
+    force: true,
+  });
+  assert.ok(invalidJsonFallbackResult.createdCount >= 4, `invalid JSON fallback should create a usable storyboard, got ${invalidJsonFallbackResult.createdCount}`);
+  assert.ok(String(invalidJsonFallbackResult.fallbackReason).includes('稳定分镜草案'), invalidJsonFallbackResult.fallbackReason);
   assert.strictEqual(capturedPrompts.length, 1, 'structured path should still call the model once');
   const invalidStoryboards = await db('o_storyboard').where({ projectId: 3 });
-  assert.strictEqual(invalidStoryboards.length, 0, 'invalid model output must not write fallback storyboards');
+  assert.strictEqual(invalidStoryboards.length, invalidJsonFallbackResult.createdCount, 'invalid model output should recover with stable fallback storyboards');
 
   await db('o_project').insert({
     id: 9,
@@ -316,6 +310,56 @@ async function main() {
   assert.ok(timeoutTotal <= 120, `fallback total duration should stay under two minutes, got ${timeoutTotal}s`);
   assert.ok(timeoutStoryboards.some((row) => String(row.videoDesc).includes('Chloe')), 'fallback should still use matched chapter assets');
   assert.ok(timeoutStoryboards.some((row) => String(row.prompt).includes('Reference assets')), 'fallback prompts should be production-ready keyframe prompts');
+
+  await db('o_project').insert({
+    id: 10,
+    name: 'Short Duration Repair',
+    intro: 'English-language fast dark comedy',
+    type: '水果美剧',
+    artStyle: 'American 3D animated black comedy',
+    directorManual: 'Keep dialogue readable while cutting fast',
+    videoRatio: '16:9',
+  });
+  const longDialogue =
+    'Chloe says, "Move now before the cameras wake up, because if the alarm sees Bob carrying that frying pan, the bunker doors will lock, Leo will start explaining physics again, and every guard in this place will sprint here like they are late for a promotion. I need the left corridor covered, the elevator disabled, the vent camera turned around, and nobody improvises unless the improvisation is quieter than Bob breathing. Bob, keep the pressure door half open, not fully open, because fully open means the hallway microphone hears us and half open means the security desk blames maintenance. Leo, stop polishing the pan and watch the red light. If it blinks twice we move, if it stays solid we freeze, and if it sings the company anthem we pretend we are already captured."';
+  await db('o_novel').insert({
+    id: 100,
+    projectId: 10,
+    chapterIndex: 17,
+    chapter: 'juben17',
+    chapterData: longDialogue,
+    event: '| juben17 | Chloe, Bob, Leo, bunker | Chloe pushes the team through a fast bunker escape while issuing urgent instructions |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 101, projectId: 10, name: 'Chloe', type: 'role', describe: 'peach lead', prompt: 'Chloe prompt' },
+    { id: 102, projectId: 10, name: 'Bob', type: 'role', describe: 'orange soldier', prompt: 'Bob prompt' },
+    { id: 103, projectId: 10, name: 'Leo', type: 'role', describe: 'yellow lemon', prompt: 'Leo prompt' },
+    { id: 104, projectId: 10, name: 'bunker', type: 'scene', describe: 'safe bunker', prompt: 'bunker prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  const shortShots = Array.from({ length: 18 }, (_, index) => ({
+    duration: index % 3 === 0 ? 2 : 3,
+    videoDesc: `Too short bunker dialogue beat ${index + 1}.`,
+    imagePrompt: `Chloe, Bob, and Leo in bunker beat ${index + 1}`,
+    associateAssetNames: ['Chloe', 'Bob', 'Leo', 'bunker'],
+    dialogue: index < 12 ? 'Chloe: Go now.' : '无台词',
+  }));
+  mockStoryboardResponses = [{ storyboardTable: '', shots: shortShots }];
+
+  const shortDurationResult = await service.generateProjectStoryboardWithSkill(10, {
+    sourceText: '删除17章原有分镜，重新推理出新的17章分镜，要求总时长足够承载对白',
+    force: true,
+  });
+  assert.strictEqual(capturedPrompts.length, 1, 'short duration should be repaired locally without repeated model retries');
+  assert.strictEqual(shortDurationResult.fallbackReason, undefined, 'local duration repair should not need stable fallback when model JSON is usable');
+  const shortDurationRows = await db('o_storyboard').where({ projectId: 10, scriptId: shortDurationResult.episodesId }).orderBy('index');
+  const shortDurationTotal = shortDurationRows.reduce((sum, row) => sum + Number(row.duration), 0);
+  assert.ok(shortDurationTotal >= 60, `local repair should expand short storyboard duration, got ${shortDurationTotal}s`);
+  assert.ok(shortDurationTotal <= 120, `local repair must stay under two minutes, got ${shortDurationTotal}s`);
+  assert.ok(shortDurationRows.length >= shortShots.length, 'duration repair should keep or add fast-cut shots instead of collapsing the storyboard');
 
   await db('o_project').insert({
     id: 4,

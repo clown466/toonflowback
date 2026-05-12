@@ -207,7 +207,7 @@ function isAbortLikeError(error: unknown) {
 }
 
 function isRecoverableStoryboardModelFailure(message: string) {
-  return /分镜模型响应超过|storyboard_model_timeout|timed?\s*out|timeout|socket hang up|ECONNRESET|ETIMEDOUT/i.test(message);
+  return /分镜模型响应超过|storyboard_model_timeout|timed?\s*out|timeout|socket hang up|ECONNRESET|ETIMEDOUT|模型未返回合法 JSON|模型 JSON|缺少 shots|缺少 videoDesc|缺少 imagePrompt|模型分镜质量不合格/i.test(message);
 }
 
 async function resolveStoryboardSkill(skillId?: string, requestText?: string): Promise<StoryboardGenerationSkill | null> {
@@ -838,10 +838,120 @@ function varyFlatStoryboardTiming(parsed: SkillStoryboardJson, planning?: Storyb
   return { ...parsed, storyboardTable: "", shots };
 }
 
+function createDurationExpansionShot(seed: SkillShot, input: { index: number; dialogue?: string; english: boolean }): SkillShot {
+  const cue = fastCutVariant(input.index, input.english);
+  const noDialogue = input.english ? "No dialogue" : "无台词";
+  const dialogue = input.dialogue || noDialogue;
+  const functionText = input.english ? "supplemental fast-cut beat for dialogue pacing" : "补足对白承载的快切镜头";
+  const actionCue = input.english
+    ? `${cue} continues the same beat while preserving screen direction and character blocking`
+    : `${cue}，延续同一事件节拍，保持角色站位和空间方向`;
+  return {
+    ...seed,
+    duration: input.dialogue ? clamp(estimateSpeechDurationSeconds(input.dialogue, seed.emotion), 2, PREFERRED_STORYBOARD_SHOT_MAX) : input.index % 4 === 0 ? 2 : 3,
+    videoDesc: appendFastCutCue(seed.videoDesc, cue, input.index + 1, input.index + 1, input.english),
+    imagePrompt: appendFastCutCue(seed.imagePrompt, cue, input.index + 1, input.index + 1, input.english),
+    shouldGenerateImage: seed.shouldGenerateImage ?? true,
+    narrativeFunction: seed.narrativeFunction || functionText,
+    pictureDescription: appendFastCutCue(seed.pictureDescription ?? seed.action ?? seed.videoDesc, cue, input.index + 1, input.index + 1, input.english),
+    cameraMove: seed.cameraMove || cue,
+    action: joinShotText([seed.action ?? seed.videoDesc, actionCue], input.english ? "; " : "；"),
+    dialogue,
+    beat: appendFastCutCue(seed.beat ?? functionText, cue, input.index + 1, input.index + 1, input.english),
+    videoMotionPrompt: appendFastCutCue(seed.videoMotionPrompt ?? seed.videoDesc, cue, input.index + 1, input.index + 1, input.english),
+    sound: input.dialogue ? seed.sound || (input.english ? "dialogue with room tone" : "对白 + 环境音") : seed.sound,
+    emotion: seed.emotion || (input.english ? "fast short-drama tension" : "快节奏短剧情绪"),
+    lighting: seed.lighting,
+    focalLength: seed.focalLength,
+    aperture: seed.aperture,
+    shutterSpeed: seed.shutterSpeed,
+    iso: seed.iso,
+  };
+}
+
+function expandStoryboardToMinimumDuration(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint): SkillStoryboardJson {
+  if (planning?.explicitShotCount || !planning) return parsed;
+  const targetMax = planning.targetDurationMax || CHAPTER_DURATION_HARD_CAP_SECONDS;
+  const targetMin = Math.min(targetMax, planning.estimatedMinimumDuration || 0);
+  if (!parsed.shots.length) return parsed;
+
+  const shots = parsed.shots.map((shot) => ({ ...shot }));
+  let total = getTotalDuration({ ...parsed, shots });
+
+  for (let pass = 0; targetMin && pass < 4 && total < targetMin; pass++) {
+    let changed = false;
+    for (let index = 0; index < shots.length && total < targetMin; index++) {
+      const shot = shots[index];
+      if (!shot) continue;
+      const floor = getShotDurationFloor(shot);
+      const cap = getPreferredShotDurationCap(shot, floor);
+      if (shot.duration >= cap) continue;
+      shots[index] = { ...shot, duration: shot.duration + 1 };
+      total += 1;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+
+  const minimumDialogueCoverage = getMinimumDialogueCoverage(planning);
+  const maxShots = Math.min(planning.estimatedMaximumShots || MAX_STORYBOARD_SHOTS, MAX_STORYBOARD_SHOTS);
+  const existingDialogue = new Set(
+    shots
+      .map(extractShotDialogueText)
+      .filter(Boolean)
+      .map((text) => text.replace(/\s+/g, " ").trim().toLowerCase()),
+  );
+  const dialogueQueue = planning.sourceDialogueFastCutChunks
+    .map((chunk) => chunk.text)
+    .filter((text) => {
+      const key = text.replace(/\s+/g, " ").trim().toLowerCase();
+      return key && !existingDialogue.has(key);
+    });
+  const english = hasMostlyEnglishText([planning.sourceDialogueText, ...shots.map((shot) => `${shot.videoDesc}\n${shot.imagePrompt}`)].join("\n"));
+  const sourceShots = shots.slice();
+  let expansionIndex = 0;
+  let outputDialogueSeconds = getOutputDialogueSeconds({ ...parsed, shots });
+
+  for (let index = 0; outputDialogueSeconds < minimumDialogueCoverage && index < shots.length && dialogueQueue.length; index++) {
+    const shot = shots[index];
+    if (!shot || extractShotDialogueText(shot)) continue;
+    const dialogue = dialogueQueue.shift();
+    if (!dialogue) break;
+    const desiredDuration = clamp(estimateSpeechDurationSeconds(dialogue, shot.emotion), 2, PREFERRED_STORYBOARD_SHOT_MAX);
+    const durationDelta = Math.max(0, desiredDuration - shot.duration);
+    const canGrow = durationDelta > 0 && total + durationDelta <= targetMax;
+    shots[index] = {
+      ...createDurationExpansionShot(shot, { index: expansionIndex, dialogue, english }),
+      duration: canGrow ? shot.duration + durationDelta : shot.duration,
+    };
+    if (canGrow) total += durationDelta;
+    outputDialogueSeconds = getOutputDialogueSeconds({ ...parsed, shots });
+    expansionIndex += 1;
+  }
+
+  while ((total < targetMin || outputDialogueSeconds < minimumDialogueCoverage) && shots.length < maxShots && sourceShots.length) {
+    const seed = sourceShots[expansionIndex % sourceShots.length];
+    if (!seed) break;
+    const remaining = targetMax - total;
+    if (remaining < MIN_STORYBOARD_SHOT_DURATION) break;
+    const dialogue = dialogueQueue.shift();
+    const nextShot = createDurationExpansionShot(seed, { index: expansionIndex, dialogue, english });
+    nextShot.duration = Math.min(nextShot.duration, remaining);
+    shots.push(nextShot);
+    total += nextShot.duration;
+    outputDialogueSeconds = getOutputDialogueSeconds({ ...parsed, shots });
+    expansionIndex += 1;
+  }
+
+  return { ...parsed, storyboardTable: "", shots };
+}
+
 function repairStoryboardQuality(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint): SkillStoryboardJson {
   let repaired = splitOversizedDialogueShots(parsed, planning);
   repaired = repairExcessiveStoryboardCount(repaired, planning);
+  repaired = splitOversizedDialogueShots(repaired, planning);
   repaired = varyFlatStoryboardTiming(repaired, planning);
+  repaired = expandStoryboardToMinimumDuration(repaired, planning);
   return repaired;
 }
 
@@ -1140,6 +1250,10 @@ function storyboardCountInstruction(planning?: StoryboardPlanningHint) {
   ].join("\n");
 }
 
+function getMinimumDialogueCoverage(planning?: StoryboardPlanningHint) {
+  return planning?.sourceDialogueSeconds ? Math.min(planning.sourceDialogueSeconds * 0.6, (planning.targetDurationMax || CHAPTER_DURATION_HARD_CAP_SECONDS) * 0.75) : 0;
+}
+
 function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint) {
   const count = parsed.shots.length;
   if (planning?.explicitShotCount && count !== planning.explicitShotCount) return `用户要求 ${planning.explicitShotCount} 个分镜，你返回了 ${count} 个`;
@@ -1169,7 +1283,7 @@ function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: Story
     return `总时长过长：当前 ${getTotalDuration(parsed)}s，当前章节硬上限 ${planning.targetDurationMax}s；请压缩节奏、减少冗余镜头或浓缩对白`;
   }
 
-  const minimumDialogueCoverage = planning?.sourceDialogueSeconds ? Math.min(planning.sourceDialogueSeconds * 0.6, (planning.targetDurationMax || CHAPTER_DURATION_HARD_CAP_SECONDS) * 0.75) : 0;
+  const minimumDialogueCoverage = getMinimumDialogueCoverage(planning);
   if (planning?.sourceDialogueSeconds && planning.sourceDialogueSeconds >= 8 && getOutputDialogueSeconds(parsed) < minimumDialogueCoverage) {
     return `输出对白覆盖不足：选中章节对白约 ${planning.sourceDialogueSeconds}s，但分镜对白字段明显缺失；请在 120 秒内保留关键对白并浓缩次要台词`;
   }
@@ -1205,7 +1319,8 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",
-    "输出要求：只返回 JSON，不要 Markdown，不要解释。",
+    "输出要求：只返回原始 JSON，不要 Markdown，不要解释，不要代码块，不要注释。",
+    "第一个字符必须是 {，最后一个字符必须是 }。如果不确定某个字段，也必须返回合法 JSON，并用空字符串或无台词占位。",
     "JSON schema:",
     JSON.stringify(
       {
@@ -1367,7 +1482,6 @@ export async function generateProjectStoryboardWithSkill(
   } catch (error) {
     if (options.abortSignal?.aborted) throw error;
     const message = error instanceof Error ? error.message : "模型生成失败";
-    if (message.startsWith("模型分镜质量不合格")) throw new Error(message);
     if (!isRecoverableStoryboardModelFailure(message)) stopStructuredStoryboardWrite(message);
     stableFallbackReason = `${message}；已改用当前章节事件、对白切片和资产库生成稳定分镜草案`;
     console.warn("[storyboardSkillGeneration] structured model failed, using stable fallback:", message);
@@ -1382,6 +1496,10 @@ export async function generateProjectStoryboardWithSkill(
       }),
       planning,
     );
+    const fallbackQualityReason = validateStoryboardQuality(parsed, planning);
+    if (fallbackQualityReason) {
+      stopStructuredStoryboardWrite(`模型输出不可用，稳定分镜草案也未通过质量校验：${fallbackQualityReason}`);
+    }
   }
 
   if (!parsed) stopStructuredStoryboardWrite("模型未生成可用分镜");
@@ -1418,6 +1536,6 @@ export async function generateProjectStoryboardWithSkill(
     usedSkillId: skill.id,
     usedSkillName: skill.name,
     fallbackReason: stableFallbackReason || undefined,
-    message: `${stableFallbackReason ? "分镜模型未及时返回，已启用稳定分镜草案；" : ""}${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。`,
+    message: `${stableFallbackReason ? "分镜模型输出不可直接写入，已启用稳定分镜草案；" : ""}${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。`,
   };
 }

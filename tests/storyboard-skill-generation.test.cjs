@@ -231,6 +231,71 @@ async function main() {
   assert.deepStrictEqual(links.map((row) => row.assetId), [1, 2]);
 
   await db('o_project').insert({
+    id: 12,
+    name: 'Preferred Workspace Chapter',
+    intro: 'Project intro',
+    artStyle: 'animated thriller',
+    directorManual: 'Use clear beats',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert([
+    {
+      id: 121,
+      projectId: 12,
+      chapterIndex: 10,
+      chapter: 'juben10',
+      chapterData: 'J10_ONLY should not be used when current workspace is chapter 17.',
+      event: '| juben10 | old room | J10_EVENT_ONLY |',
+      eventState: 1,
+    },
+    {
+      id: 122,
+      projectId: 12,
+      chapterIndex: 17,
+      chapter: 'juben17',
+      chapterData: 'J17_ONLY current workspace chapter should be used for vague retry commands.',
+      event: '| juben17 | bunker | J17_EVENT_ONLY |',
+      eventState: 1,
+    },
+  ]);
+  await db('o_script').insert({
+    id: 120,
+    projectId: 12,
+    name: 'Flova 小说章节工作区 - 第17章 juben17',
+    content: 'J17_ONLY current workspace chapter should be used for vague retry commands.',
+    createTime: Date.now(),
+  });
+  await db('o_assets').insert([
+    { id: 123, projectId: 12, name: 'Chloe', type: 'role', describe: 'lead', prompt: 'Chloe prompt' },
+    { id: 124, projectId: 12, name: 'bunker', type: 'scene', describe: 'bunker', prompt: 'bunker prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  mockStoryboardResponses = [
+    {
+      storyboardTable: '',
+      shots: Array.from({ length: 4 }, (_, index) => ({
+        duration: 3,
+        videoDesc: `J17_EVENT_ONLY retry beat ${index + 1}.`,
+        imagePrompt: `Chloe in bunker retry beat ${index + 1}`,
+        associateAssetNames: ['Chloe', 'bunker'],
+        dialogue: '无台词',
+      })),
+    },
+  ];
+  const preferredWorkspaceResult = await service.generateProjectStoryboardWithSkill(12, {
+    sourceText: '再次推理，要求系统把镜头总时长拉长并增加对白承载镜头',
+    preferredScriptId: 120,
+    force: true,
+  });
+  assert.strictEqual(preferredWorkspaceResult.selectedChapterIndexes[0], 17, 'vague retry should resolve the current workspace chapter');
+  assert.ok(capturedPrompts[0].includes('J17_ONLY'), 'current workspace chapter body should reach model');
+  assert.ok(capturedPrompts[0].includes('J17_EVENT_ONLY'), 'current workspace chapter event should reach model');
+  assert.ok(!capturedPrompts[0].includes('J10_ONLY'), 'first imported chapter must not leak into vague retry');
+  assert.ok(!capturedPrompts[0].includes('J10_EVENT_ONLY'), 'first imported event must not leak into vague retry');
+
+  await db('o_project').insert({
     id: 3,
     name: 'Invalid Model Output',
     intro: 'Project intro',

@@ -815,7 +815,7 @@ export async function upsertProductionWorkData(projectId: number, scriptId: numb
 }
 
 export function shouldForce(sourceText?: string) {
-  return /重新|重做|覆盖|替换|清空|再生成|重建/i.test(sourceText ?? "");
+  return /重新|重做|重推|再次推理|重新推理|覆盖|替换|清空|删除.*重|再生成|重建/i.test(sourceText ?? "");
 }
 
 export function shouldAppend(sourceText?: string) {

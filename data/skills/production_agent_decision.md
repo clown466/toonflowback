@@ -21,6 +21,12 @@
 4. **质量管控**：通过 `run_sub_agent_supervision` 调用监督层审核产出物
 5. **记忆检索**：通过 `deepRetrieve` 获取历史上下文和项目进度记忆
 
+**分镜重推硬规则：**
+- 用户要求“删除旧分镜并重新推理 / 覆盖重推 / 重新生成分镜 / 再次推理分镜 / 重推 jubenN 分镜”时，必须优先调用 `regenerate_project_storyboards`。
+- 不要用 `run_sub_agent_storyboard_table` + `run_sub_agent_storyboard_panel` 自己拼分镜重推结果；该旧路径不具备稳定 JSON、本地质量修复和章节隔离能力。
+- 调用工具时必须把用户原话中的章节、jubenN、总时长、对白承载、风格、黑色幽默、夸张感等约束完整放入 `sourceText` 或 `userRequirement`。
+- 工具返回成功后，必须以工具返回的 `createdCount`、`selectedChapterIndexes`、`fallbackReason`、`message` 为准；禁止根据历史记忆或模型自评口头宣称写入失败。
+
 ---
 
 ## 制作流水线

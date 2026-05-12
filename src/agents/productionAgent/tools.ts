@@ -4,6 +4,8 @@ import _ from "lodash";
 import ResTool from "@/socket/resTool";
 import u from "@/utils";
 import { toToolJsonSchema } from "@/utils/jsonSchema";
+import { shouldAppend, shouldForce } from "@/services/storyboardDraftGeneration";
+import { generateProjectStoryboardWithSkill } from "@/services/storyboardSkillGeneration";
 
 const deriveAssetSchema = z.object({
   id: z.number().describe("衍生资产ID,如果新增则为空"),
@@ -67,6 +69,101 @@ interface ToolConfig {
 export default (toolCpnfig: ToolConfig) => {
   const { resTool, toolsNames, msg } = toolCpnfig;
   const { socket } = resTool;
+
+  const createProjectStoryboardsTool = (defaultForce: boolean, description: string) => tool({
+    description,
+    inputSchema: toToolJsonSchema<{
+      sourceText?: string;
+      novelIds?: number[];
+      chapterIndexes?: number[];
+      skillId?: string;
+      userRequirement?: string;
+      force?: boolean;
+      append?: boolean;
+    }>(z.object({
+      sourceText: z.string().optional().describe("用户原始要求；必须尽量完整保留章节、jubenN、时长、风格、对白承载等约束"),
+      novelIds: z.array(z.number()).optional().describe("可选：只处理指定小说章节 ID"),
+      chapterIndexes: z.array(z.number()).optional().describe("可选：只处理指定项目内章节序号，例如 juben17 传 17"),
+      skillId: z.string().optional().describe("可选：使用指定分镜 Skill"),
+      userRequirement: z.string().optional().describe("用户额外分镜要求"),
+      force: z.boolean().optional().describe("是否覆盖旧分镜；重新推理/再次推理/重推时默认为 true"),
+      append: z.boolean().optional().describe("是否追加；默认 false"),
+    })),
+    execute: async (options) => {
+      const projectId = Number(resTool.data.projectId);
+      const sourceText = [options.sourceText, options.userRequirement].filter(Boolean).join("\n");
+      const thinking = msg.thinking("正在生成生产分镜草案...");
+      thinking.updateTitle("正在调用分镜模型生成结构化分镜...");
+      const result = await generateProjectStoryboardWithSkill(projectId, {
+        sourceText,
+        userRequirement: options.userRequirement,
+        skillId: options.skillId,
+        preferredScriptId: typeof resTool.data.scriptId === "number" ? resTool.data.scriptId : undefined,
+        force: options.force ?? (defaultForce || shouldForce(sourceText)),
+        append: options.append ?? shouldAppend(sourceText),
+        novelIds: options.novelIds,
+        chapterIndexes: options.chapterIndexes,
+        onWorkspaceResolved: (workspace) => {
+          socket.emit("productionDataUpdated", {
+            projectId,
+            episodesId: workspace.episodesId,
+            scriptName: workspace.scriptName,
+            scriptCreated: workspace.scriptCreated,
+            existingCount: workspace.existingCount,
+            selectedNovelIds: workspace.selectedNovelIds,
+            selectedChapterIndexes: workspace.selectedChapterIndexes,
+            selectedChapterLabels: workspace.selectedChapterLabels,
+            createdCount: 0,
+            storyboardIds: [],
+            stage: "workspace_resolved",
+          });
+        },
+      });
+      socket.emit("productionDataUpdated", {
+        projectId,
+        episodesId: result.episodesId,
+        scriptName: result.scriptName,
+        scriptCreated: result.scriptCreated,
+        existingCount: result.existingCount,
+        replaced: result.replaced,
+        appended: result.appended,
+        createdCount: result.createdCount,
+        storyboardIds: result.storyboardIds,
+        selectedNovelIds: result.selectedNovelIds,
+        selectedChapterIndexes: result.selectedChapterIndexes,
+        selectedChapterLabels: result.selectedChapterLabels,
+        stage: "storyboard_generated",
+      });
+      thinking.appendText(JSON.stringify({
+        projectId,
+        episodesId: result.episodesId,
+        scriptName: result.scriptName,
+        createdCount: result.createdCount,
+        existingCount: result.existingCount,
+        replaced: result.replaced,
+        appended: result.appended,
+        selectedChapterIndexes: result.selectedChapterIndexes,
+        usedSkillId: result.usedSkillId,
+        usedSkillName: result.usedSkillName,
+        fallbackReason: result.fallbackReason,
+      }, null, 2));
+      thinking.updateTitle(result.createdCount > 0 ? "分镜草案已写入章节工作区" : "已有分镜，已切换章节工作区");
+      thinking.complete();
+      return {
+        ok: true,
+        ...result,
+        message: `${result.message}${shouldForce(sourceText) ? " 已按覆盖重推语义处理。" : ""}`,
+      };
+    },
+  });
+  const regenerateProjectStoryboardsTool = createProjectStoryboardsTool(
+    true,
+    "可靠覆盖重推项目章节分镜表并直接写回分镜面板。用户要求删除旧分镜、覆盖重推、重新推理、再次推理分镜时优先使用；不要用旧 XML 子 Agent 自己拼写。",
+  );
+  const generateProjectStoryboardsTool = createProjectStoryboardsTool(
+    false,
+    "按小说章节/事件分析生成章节分镜表并写回分镜面板。用户要求做分镜、生成分镜表时使用；重新推理/重推/覆盖时请使用 regenerate_project_storyboards。",
+  );
 
   const generateStoryboardTool = tool({
     description: "生成分镜图片",
@@ -192,6 +289,8 @@ export default (toolCpnfig: ToolConfig) => {
     }),
     generate_storyboard: generateStoryboardTool,
     generate_storyboard_images: generateStoryboardTool,
+    regenerate_project_storyboards: regenerateProjectStoryboardsTool,
+    generate_project_storyboard_draft: generateProjectStoryboardsTool,
   };
 
   return toolsNames ? Object.fromEntries(Object.entries(tools).filter(([n]) => toolsNames.includes(n))) : tools;

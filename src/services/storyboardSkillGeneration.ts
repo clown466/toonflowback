@@ -1406,7 +1406,18 @@ export async function generateProjectStoryboardWithSkill(
   ]);
   const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(sourceText)]);
   const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);
-  const novels = selectStoryboardNovels(allNovels, { ...options, sourceText });
+  let effectiveChapterIndexes = requestedChapterIndexes;
+  let effectiveNovelIds = requestedNovelIds;
+  if (!effectiveChapterIndexes.length && !effectiveNovelIds.length && options.preferredScriptId) {
+    const preferredScript = await u.db("o_script").where({ id: options.preferredScriptId, projectId }).select("name", "content").first();
+    effectiveChapterIndexes = toUniquePositiveNumbers(parseStoryboardChapterIndexes(preferredScript?.name ?? undefined));
+    if (!effectiveChapterIndexes.length && preferredScript?.content) {
+      const content = String(preferredScript.content ?? "").trim();
+      const matchedNovel = allNovels.find((novel) => content && String(novel.chapterData ?? "").trim() === content);
+      if (matchedNovel?.id) effectiveNovelIds = [matchedNovel.id];
+    }
+  }
+  const novels = selectStoryboardNovels(allNovels, { ...options, sourceText, novelIds: effectiveNovelIds, chapterIndexes: effectiveChapterIndexes });
   if (allNovels.length && (requestedChapterIndexes.length || requestedNovelIds.length) && !novels.length) {
     throw new Error(`没有匹配到指定章节，已停止生成，避免把其他章节误写入分镜。`);
   }

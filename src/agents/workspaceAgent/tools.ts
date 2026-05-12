@@ -10,7 +10,7 @@ import {
   type AssetImagePromptPolicy,
   type AssetImageReferencePolicy,
 } from "@/services/assetImageIntent";
-import { clearProjectStoryboards, toPublicWorkspaceName } from "@/services/storyboardDraftGeneration";
+import { clearProjectStoryboards, shouldAppend, shouldForce, toPublicWorkspaceName } from "@/services/storyboardDraftGeneration";
 import { generateProjectStoryboardWithSkill } from "@/services/storyboardSkillGeneration";
 import {
   listDirectorBoards,
@@ -878,17 +878,18 @@ export async function runProjectStoryboardDraftTool(
 ) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
+  const sourceText = [options?.sourceText, options?.userRequirement, config.sourceText].filter(Boolean).join("\n");
   msg.updateStatus("streaming");
   const thinking = msg.thinking("正在生成生产分镜草案...");
   thinking.updateTitle("正在调用分镜模型生成结构化分镜...");
 
   const result = await generateProjectStoryboardWithSkill(projectId, {
-    sourceText: options?.sourceText,
+    sourceText,
     userRequirement: options?.userRequirement,
     skillId: options?.skillId,
     preferredScriptId: typeof resTool.data.scriptId === "number" ? resTool.data.scriptId : undefined,
-    force: options?.force,
-    append: options?.append,
+    force: options?.force ?? shouldForce(sourceText),
+    append: options?.append ?? shouldAppend(sourceText),
     novelIds: options?.novelIds,
     chapterIndexes: options?.chapterIndexes,
     abortSignal: config.abortSignal,

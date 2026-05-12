@@ -567,6 +567,43 @@ function emitProjectAssetImageUpdate(resTool: ResTool, payload: Record<string, u
   });
 }
 
+async function attachLatestAssetImageFields<T extends { id?: number | null }>(assets: T[]) {
+  const assetIds = assets.map((asset) => Number(asset.id)).filter((id) => Number.isFinite(id));
+  if (!assetIds.length) return assets;
+  const rows = await u
+    .db("o_image")
+    .whereIn("assetsId", assetIds)
+    .select("id", "assetsId", "state", "filePath", "errorReason")
+    .orderBy("id", "desc");
+  const latestByAssetId = new Map<number, any>();
+  rows.forEach((row: any) => {
+    const assetId = Number(row.assetsId);
+    if (!latestByAssetId.has(assetId)) latestByAssetId.set(assetId, row);
+  });
+  return assets.map((asset: any) => {
+    const latest = latestByAssetId.get(Number(asset.id));
+    return {
+      ...asset,
+      latestImageId: latest?.id ?? null,
+      latestImageState: latest?.state ?? null,
+      latestImageFilePath: latest?.filePath ?? null,
+      latestImageErrorReason: latest?.errorReason ?? null,
+    };
+  });
+}
+
+function isGeneratingAssetImage(asset: any) {
+  return asset.imageState === "生成中" || asset.latestImageState === "生成中";
+}
+
+function hasMissingOrFailedAssetImage(asset: any) {
+  return !asset.imageId || asset.imageState === "生成失败" || asset.latestImageState === "生成失败" || (asset.imageState === "已完成" && !asset.imageFilePath);
+}
+
+function isAssetImageRepairRequest(text: string, mode: AssetImageGenerationMode) {
+  return mode === "retry_failed" || /(失败|报错|错误|未成功|未开始|缺图|补生成|补图|重试|重新跑|补跑)/i.test(text);
+}
+
 export async function runProjectAssetImageGenerationTool(config: ToolConfig, options?: ProjectAssetImageGenerationOptions) {
   const { resTool, msg } = config;
   const projectId = Number(resTool.data.projectId);
@@ -617,7 +654,7 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
   }
   const effectiveImageQuality = requestedImageQuality ?? normalizeAssetImageQuality(projectDefaultImageQuality) ?? projectDefaultImageQuality ?? "2K";
 
-  const assets = await u
+  const rawAssets = await u
     .db("o_assets")
     .leftJoin("o_image", "o_assets.imageId", "o_image.id")
     .where("o_assets.projectId", projectId)
@@ -635,6 +672,8 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
     )
     .orderByRaw(`CASE o_assets.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
     .orderBy("o_assets.id", "asc");
+  const assets = await attachLatestAssetImageFields(rawAssets as any[]);
+  const wantsRepairMissingOrFailed = isAssetImageRepairRequest(requestText, intentDecision.generationMode);
 
   const scopedAssets = assets.filter((asset: any) => {
     if (assetType && asset.type !== assetType) return false;
@@ -643,10 +682,11 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
     return true;
   });
   const selectedAssets = limit ? scopedAssets.slice(0, limit) : scopedAssets;
-  const skippedCompleted = selectedAssets.filter((asset: any) => asset.imageState === "已完成");
-  const skippedGenerating = selectedAssets.filter((asset: any) => asset.imageState === "生成中");
+  const skippedCompleted = selectedAssets.filter((asset: any) => asset.imageState === "已完成" && !(wantsRepairMissingOrFailed && hasMissingOrFailedAssetImage(asset)));
+  const skippedGenerating = selectedAssets.filter((asset: any) => isGeneratingAssetImage(asset));
   const targetAssets = selectedAssets.filter((asset: any) => {
-    if (asset.imageState === "生成中") return false;
+    if (isGeneratingAssetImage(asset)) return false;
+    if (wantsRepairMissingOrFailed) return hasMissingOrFailedAssetImage(asset);
     if (!includeCompleted && asset.imageState === "已完成") return false;
     return true;
   });
@@ -1880,7 +1920,7 @@ export function useNovelWorkflowTools(config: ToolConfig) {
           .orderBy("o_assets.id", "asc");
 
         if (type) query.andWhere("o_assets.type", type);
-        const assets = await query;
+        const assets = await attachLatestAssetImageFields(await query);
 
         thinking.appendText(JSON.stringify(assets, null, 2));
         thinking.updateTitle("项目资产列表获取完成");

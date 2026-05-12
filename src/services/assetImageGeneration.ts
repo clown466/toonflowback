@@ -56,6 +56,7 @@ export interface AssetImageGenerationStatusEvent {
   src?: string | null;
   filePath?: string | null;
   errorReason?: string | null;
+  fallbackImageId?: number | null;
 }
 
 const assetTypeConfig: Record<AssetType, AssetTypeConfig> = {
@@ -145,6 +146,10 @@ function notifyStatusChange(input: SubmitAssetImageGenerationInput, event: Asset
   });
 }
 
+function imageModelName(model: SubmitAssetImageGenerationInput["model"]) {
+  return String(model).split(/:(.+)/)[1] || String(model);
+}
+
 async function runImageTaskWithRetry(task: () => Promise<void>, maxAttempts = 3) {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -197,6 +202,8 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
       type: item.type,
       state: "生成中",
       assetsId: item.id,
+      model: imageModelName(model),
+      resolution,
     });
     imageIdByAssetId.set(item.id, imageId);
     await u.db("o_assets").where("id", item.id).update({ imageId });
@@ -352,7 +359,7 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
             filePath: imagePath,
             errorReason: null,
             type: item.type,
-            model: String(model).split(/:(.+)/)[1],
+            model: imageModelName(model),
             resolution,
           });
 
@@ -381,15 +388,15 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
         const previousCompletedImageId = previousCompletedImageIds.get(item.id);
         if (previousCompletedImageId) {
           await u.db("o_assets").where("id", item.id).where("imageId", imageId).update({ imageId: previousCompletedImageId });
-        } else {
-          notifyStatusChange(input, {
-            projectId,
-            assetId: item.id,
-            imageId,
-            state: "生成失败",
-            errorReason,
-          });
         }
+        notifyStatusChange(input, {
+          projectId,
+          assetId: item.id,
+          imageId,
+          state: "生成失败",
+          errorReason,
+          fallbackImageId: previousCompletedImageId ?? null,
+        });
       }
     }),
   );

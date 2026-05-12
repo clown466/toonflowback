@@ -43,14 +43,17 @@ export default router.post(
       childQuery = childQuery.andWhere("o_assets.name", "like", `%${name}%`);
     }
     const childAssets = await childQuery;
+    const allLoadedAssets = [...parentAssets, ...childAssets];
+    const latestImagesByAssetId = await getLatestImagesByAssetId(allLoadedAssets);
     const historyImagesByAssetId = includeHistoryImages
-      ? await getHistoryImagesByAssetId([...parentAssets, ...childAssets])
+      ? await getHistoryImagesByAssetId(allLoadedAssets)
       : new Map<number, any[]>();
 
     // 为每个子资产添加图片地址
     const childAssetsWithSrc = await Promise.all(
       childAssets.map(async (child) => ({
         ...child,
+        ...latestImageFields(latestImagesByAssetId.get(Number(child.id))),
         src: child.filePath && (await filterTypeGetFileUrl(child.filePath!, child.type)),
         historyImages: historyImagesByAssetId.get(Number(child.id)) ?? [],
       })),
@@ -60,6 +63,7 @@ export default router.post(
     const result = await Promise.all(
       parentAssets.map(async (parent) => ({
         ...parent,
+        ...latestImageFields(latestImagesByAssetId.get(Number(parent.id))),
         sonAssets: childAssetsWithSrc.filter((child) => child.assetsId === parent.id),
         src: parent.filePath && (await filterTypeGetFileUrl(parent.filePath!, parent.type)),
         historyImages: historyImagesByAssetId.get(Number(parent.id)) ?? [],
@@ -90,6 +94,32 @@ async function filterTypeGetFileUrl(url: string, type: string) {
   } else {
     return await u.oss.getFileUrl(url)
   }
+}
+
+function latestImageFields(image: any | undefined) {
+  return {
+    latestImageId: image?.id ?? null,
+    latestImageState: image?.state ?? null,
+    latestImageErrorReason: image?.errorReason ?? null,
+    latestImageFilePath: image?.filePath ?? null,
+  };
+}
+
+async function getLatestImagesByAssetId(assets: any[]) {
+  const assetIds = assets.map((asset) => Number(asset.id)).filter((id) => Number.isFinite(id));
+  if (!assetIds.length) return new Map<number, any>();
+  const rows = await u
+    .db("o_image")
+    .whereIn("assetsId", assetIds)
+    .select("id", "assetsId", "filePath", "state", "errorReason")
+    .orderBy("id", "desc");
+
+  const latest = new Map<number, any>();
+  rows.forEach((row: any) => {
+    const assetId = Number(row.assetsId);
+    if (!latest.has(assetId)) latest.set(assetId, row);
+  });
+  return latest;
 }
 
 async function getHistoryImagesByAssetId(assets: any[]) {

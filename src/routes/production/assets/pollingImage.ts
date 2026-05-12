@@ -53,6 +53,34 @@ async function normalizePollingAssetImage(item: any) {
   };
 }
 
+async function getLatestImagesByAssetIds(assetIds: number[]) {
+  if (!assetIds.length) return new Map<number, any>();
+  const rows = await u
+    .db("o_image")
+    .whereIn("assetsId", assetIds)
+    .select("id", "assetsId", "filePath", "state", "errorReason")
+    .orderBy("id", "desc");
+  const latest = new Map<number, any>();
+  rows.forEach((row: any) => {
+    const assetId = Number(row.assetsId);
+    if (!latest.has(assetId)) latest.set(assetId, row);
+  });
+  return latest;
+}
+
+function preferLatestAttempt(item: any, latest: any | undefined) {
+  if (!latest || Number(latest.id) === Number(item.imageId)) return item;
+  if (latest.state !== "生成中" && latest.state !== "生成失败") return item;
+  return {
+    ...item,
+    imageId: latest.id,
+    state: latest.state,
+    filePath: latest.filePath,
+    errorReason: latest.errorReason,
+    currentImageId: item.imageId,
+  };
+}
+
 export default router.post(
   "/",
   validateFields({
@@ -66,7 +94,8 @@ export default router.post(
       .whereIn("o_assets.id", ids)
       .whereNot("o_image.state", "生成中")
       .select("o_image.id as imageId", "o_image.state", "o_assets.id", "o_image.filePath", "o_image.errorReason", "o_assets.prompt");
-    const result = await Promise.all(data.map(normalizePollingAssetImage));
+    const latestImagesByAssetId = await getLatestImagesByAssetIds(ids);
+    const result = await Promise.all(data.map((item: any) => normalizePollingAssetImage(preferLatestAttempt(item, latestImagesByAssetId.get(Number(item.id))))));
     res.status(200).send(success(result));
   },
 );

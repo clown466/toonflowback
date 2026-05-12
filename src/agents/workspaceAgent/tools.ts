@@ -822,6 +822,11 @@ export async function runProjectAssetImageGenerationTool(config: ToolConfig, opt
   return { handled: true, message: lines.join("\n"), result };
 }
 
+// Compatibility alias for older agent plans/tests that still import the former name.
+export async function runProjectAssetImageGenerationFastPath(config: ToolConfig, options?: ProjectAssetImageGenerationOptions) {
+  return runProjectAssetImageGenerationTool(config, options);
+}
+
 export async function runProjectStoryboardDraftTool(
   config: ToolConfig,
   options?: { sourceText?: string; force?: boolean; append?: boolean; novelIds?: number[]; chapterIndexes?: number[]; skillId?: string; userRequirement?: string },

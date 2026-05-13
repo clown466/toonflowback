@@ -4,7 +4,7 @@ import { z } from "zod";
 import u from "@/utils";
 import Memory from "@/utils/agent/memory";
 import { getSkillContentForAgent } from "@/utils/agent/skillsTools";
-import useTools, { useNovelWorkflowTools } from "@/agents/workspaceAgent/tools";
+import useTools, { runProjectStoryboardDraftTool, useNovelWorkflowTools } from "@/agents/workspaceAgent/tools";
 import {
   getWorkspaceDomainAgentCatalog,
   getWorkspaceSkillCatalog,
@@ -63,11 +63,33 @@ function summarizeAssetRows(rows: Array<{ type?: string | null; count?: unknown 
   return summary;
 }
 
+export function isDirectStoryboardRegenerationRequest(text: string) {
+  const source = String(text ?? "").trim();
+  if (!source) return false;
+  const wantsRegeneration = /再次推理|重新推理|覆盖重推|重推|重新生成[^。！？\n]*(?:分镜|镜头)|删除[^。！？\n]*(?:分镜|镜头)[^。！？\n]*重|清空[^。！？\n]*(?:分镜|镜头)[^。！？\n]*重/i.test(source);
+  const hasStoryboardContext = /分镜|镜头|对白|总时长|juben\s*\d+|第\s*\d+\s*(?:章|条)/i.test(source);
+  const targetsOtherProduction = /导演板|故事板|视频提示词|生成视频|资产图|角色图|场景图|道具图|塑角造景/i.test(source);
+  return wantsRegeneration && hasStoryboardContext && !targetsOtherProduction;
+}
+
 export async function runDecisionAI(ctx: AgentContext) {
   const { isolationKey, text, userMessageTime, abortSignal, resTool } = ctx;
 
   const memory = new Memory("workspaceAgent", isolationKey);
   await memory.add("user", text, { createTime: userMessageTime });
+
+  if (isDirectStoryboardRegenerationRequest(text)) {
+    await runProjectStoryboardDraftTool(
+      {
+        resTool: ctx.resTool,
+        msg: ctx.msg,
+        sourceText: text,
+      },
+      { force: true },
+    );
+    await memory.add("assistant:decision", "已通过可靠分镜重推工具处理覆盖重推分镜请求。");
+    return;
+  }
 
   const skill = path.join(u.getPath("skills"), "workspace_agent_decision.md");
   const prompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "workspaceAgent:decisionAgent");

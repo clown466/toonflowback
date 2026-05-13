@@ -377,6 +377,41 @@ async function main() {
   assert.ok(timeoutStoryboards.some((row) => String(row.prompt).includes('Reference assets')), 'fallback prompts should be production-ready keyframe prompts');
 
   await db('o_project').insert({
+    id: 11,
+    name: 'Terminated Stable Fallback',
+    intro: 'English-language fast drama',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Recover from interrupted model streams',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 110,
+    projectId: 11,
+    chapterIndex: 17,
+    chapter: 'juben17',
+    chapterData: 'Chloe says, "Keep moving. The lab alarm is not a suggestion." Bob opens the service door while Leo checks the pan reflection.',
+    event: '| juben17 | Chloe, Bob, Leo, lab | The team pushes through an alarm escape |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 111, projectId: 11, name: 'Chloe', type: 'role', describe: 'peach lead', prompt: 'Chloe prompt' },
+    { id: 112, projectId: 11, name: 'lab', type: 'scene', describe: 'white lab', prompt: 'lab prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  mockStoryboardResponses = [{ __throw: true, message: 'terminated' }];
+  const terminatedFallbackResult = await service.generateProjectStoryboardWithSkill(11, {
+    sourceText: '再次推理 juben17 分镜，增加对白承载镜头',
+    force: true,
+  });
+  assert.ok(terminatedFallbackResult.createdCount >= 4, `terminated model stream should recover with fallback, got ${terminatedFallbackResult.createdCount}`);
+  assert.ok(String(terminatedFallbackResult.fallbackReason).includes('稳定分镜草案'), terminatedFallbackResult.fallbackReason);
+  const terminatedStoryboards = await db('o_storyboard').where({ projectId: 11, scriptId: terminatedFallbackResult.episodesId });
+  assert.strictEqual(terminatedStoryboards.length, terminatedFallbackResult.createdCount, 'terminated fallback should still write usable storyboards');
+
+  await db('o_project').insert({
     id: 10,
     name: 'Short Duration Repair',
     intro: 'English-language fast dark comedy',

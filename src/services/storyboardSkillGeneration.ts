@@ -207,7 +207,7 @@ function isAbortLikeError(error: unknown) {
 }
 
 function isRecoverableStoryboardModelFailure(message: string) {
-  return /分镜模型响应超过|storyboard_model_timeout|timed?\s*out|timeout|socket hang up|ECONNRESET|ETIMEDOUT|模型未返回合法 JSON|模型 JSON|缺少 shots|缺少 videoDesc|缺少 imagePrompt|模型分镜质量不合格/i.test(message);
+  return /分镜模型响应超过|storyboard_model_timeout|timed?\s*out|timeout|socket hang up|ECONNRESET|ETIMEDOUT|terminated|stream.*interrupt|response.*abort|aborted|模型未返回合法 JSON|模型 JSON|缺少 shots|缺少 videoDesc|缺少 imagePrompt|模型分镜质量不合格/i.test(message);
 }
 
 async function resolveStoryboardSkill(skillId?: string, requestText?: string): Promise<StoryboardGenerationSkill | null> {

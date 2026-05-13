@@ -1493,24 +1493,10 @@ export async function generateProjectStoryboardWithSkill(
   } catch (error) {
     if (options.abortSignal?.aborted) throw error;
     const message = error instanceof Error ? error.message : "模型生成失败";
-    if (!isRecoverableStoryboardModelFailure(message)) stopStructuredStoryboardWrite(message);
-    stableFallbackReason = `${message}；已改用当前章节事件、对白切片和资产库生成稳定分镜草案`;
-    console.warn("[storyboardSkillGeneration] structured model failed, using stable fallback:", message);
-    parsed = normalizeStoryboardTimings(
-      buildStableFallbackParsed({
-        project,
-        novels,
-        assets,
-        scriptContent,
-        planning,
-        requestText,
-      }),
-      planning,
-    );
-    const fallbackQualityReason = validateStoryboardQuality(parsed, planning);
-    if (fallbackQualityReason) {
-      stopStructuredStoryboardWrite(`模型输出不可用，稳定分镜草案也未通过质量校验：${fallbackQualityReason}`);
-    }
+    const reason = isRecoverableStoryboardModelFailure(message)
+      ? `${message}。正式分镜不会自动写入兜底模板；需要低保真占位稿时，请明确使用“快速草稿”。`
+      : message;
+    stopStructuredStoryboardWrite(reason);
   }
 
   if (!parsed) stopStructuredStoryboardWrite("模型未生成可用分镜");

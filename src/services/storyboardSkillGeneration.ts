@@ -1494,7 +1494,7 @@ export async function generateProjectStoryboardWithSkill(
     if (options.abortSignal?.aborted) throw error;
     const message = error instanceof Error ? error.message : "模型生成失败";
     const reason = isRecoverableStoryboardModelFailure(message)
-      ? `${message}。正式分镜不会自动写入兜底模板；需要低保真占位稿时，请明确使用“快速草稿”。`
+      ? `${message}。正式分镜不会自动写入兜底模板`
       : message;
     stopStructuredStoryboardWrite(reason);
   }

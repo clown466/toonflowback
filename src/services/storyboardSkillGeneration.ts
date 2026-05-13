@@ -210,6 +210,10 @@ function isRecoverableStoryboardModelFailure(message: string) {
   return /分镜模型响应超过|storyboard_model_timeout|timed?\s*out|timeout|socket hang up|ECONNRESET|ETIMEDOUT|terminated|stream.*interrupt|response.*abort|aborted|模型未返回合法 JSON|模型 JSON|缺少 shots|缺少 videoDesc|缺少 imagePrompt|模型分镜质量不合格/i.test(message);
 }
 
+function stableFallbackMessage(message: string) {
+  return `结构化分镜模型失败：${message}。已启用稳定分镜草案（基于当前章节事件、对白切片和资产库生成，不是三段式兜底模板；请审核后再出图）`;
+}
+
 async function resolveStoryboardSkill(skillId?: string, requestText?: string): Promise<StoryboardGenerationSkill | null> {
   try {
     const service = require("@/services/storyboardGenerationSkill");
@@ -1365,6 +1369,19 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
   ].join("\n");
   const timeout = createStoryboardModelSignal(abortSignal);
   let text = "";
+  const startedAt = Date.now();
+  const selectedChapters = Array.isArray(context.selectedChapters)
+    ? context.selectedChapters.map((chapter: any) => chapter?.chapter || chapter?.chapterIndex).filter(Boolean)
+    : [];
+  console.info("[storyboardSkillGeneration] invoke storyboard model", {
+    modelKey: STORYBOARD_MODEL_KEY,
+    promptChars: prompt.length,
+    selectedChapters,
+    estimatedMinimumShots: planning?.estimatedMinimumShots,
+    estimatedMaximumShots: planning?.estimatedMaximumShots,
+    targetDurationMin: planning?.targetDurationMin,
+    targetDurationMax: planning?.targetDurationMax,
+  });
   try {
     const { textStream } = await u.Ai.Text(STORYBOARD_MODEL_KEY).stream({ prompt, abortSignal: timeout.signal });
     for await (const chunk of textStream) {
@@ -1377,6 +1394,12 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     }
     throw error;
   } finally {
+    console.info("[storyboardSkillGeneration] storyboard model finished", {
+      modelKey: STORYBOARD_MODEL_KEY,
+      elapsedMs: Date.now() - startedAt,
+      outputChars: text.length,
+      aborted: timeout.signal.aborted,
+    });
     timeout.cleanup();
   }
   if (!nonEmpty(text)) throw new Error("模型未返回文本");
@@ -1493,10 +1516,16 @@ export async function generateProjectStoryboardWithSkill(
   } catch (error) {
     if (options.abortSignal?.aborted) throw error;
     const message = error instanceof Error ? error.message : "模型生成失败";
-    const reason = isRecoverableStoryboardModelFailure(message)
-      ? `${message}。正式分镜不会自动写入兜底模板`
-      : message;
-    stopStructuredStoryboardWrite(reason);
+    if (!isRecoverableStoryboardModelFailure(message)) stopStructuredStoryboardWrite(message);
+    stableFallbackReason = stableFallbackMessage(message);
+    parsed = buildStableFallbackParsed({
+      project,
+      novels,
+      assets,
+      scriptContent,
+      planning,
+      requestText,
+    });
   }
 
   if (!parsed) stopStructuredStoryboardWrite("模型未生成可用分镜");

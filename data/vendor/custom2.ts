@@ -155,6 +155,7 @@ const vendor: VendorConfig = {
       required: false,
       placeholder: "OpenAI 兼容 GPT Image：auto / low / medium / high",
       options: [
+        { label: "默认/不传", value: "default" },
         { label: "自动 auto", value: "auto" },
         { label: "低 low", value: "low" },
         { label: "中 medium", value: "medium" },
@@ -202,8 +203,8 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   };
   const resolvedSize = sizeMap[config.aspectRatio]?.[config.size] || (config.aspectRatio === "9:16" ? "1024x1536" : "1536x1024");
   const qualityValue = String(vendor.inputValues.imageQuality || "high").trim().toLowerCase();
-  const resolvedQuality = ["low", "medium", "high", "auto"].includes(qualityValue) ? qualityValue : "high";
-  const shouldSendQuality = /^gpt-image/i.test(model.modelName);
+  const resolvedQuality = ["low", "medium", "high", "auto"].includes(qualityValue) ? qualityValue : "";
+  const shouldSendQuality = /^gpt-image/i.test(model.modelName) && Boolean(resolvedQuality);
   const referenceTransport = String(vendor.inputValues.imageReferenceTransport || "multipart");
 
   const pickImageResult = (data: any): string | undefined => {

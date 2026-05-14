@@ -90,8 +90,24 @@ export async function urlToBase64(url: string): Promise<string> {
 
 export async function base64ToPublicUrl(completeBase64: string, mediaType = "image", publicBaseUrl = ""): Promise<string> {
   const match = String(completeBase64 || "").match(/^data:([^;]+);base64,(.+)$/);
-  const mime = match?.[1] || (mediaType === "audio" ? "audio/mpeg" : mediaType === "video" ? "video/mp4" : "image/png");
+  let mime = match?.[1] || (mediaType === "audio" ? "audio/mpeg" : mediaType === "video" ? "video/mp4" : "image/png");
   const payload = match?.[2] || String(completeBase64 || "").replace(/^data:[^;]+;base64,/, "");
+  let buffer = Buffer.from(payload, "base64");
+  if (mediaType === "image") {
+    try {
+      const compressed = await sharp(buffer)
+        .resize(1536, 1536, { fit: "inside", withoutEnlargement: true })
+        .flatten({ background: "#ffffff" })
+        .jpeg({ quality: 82, mozjpeg: true })
+        .toBuffer();
+      if (buffer.length > 2 * 1024 * 1024 || compressed.length < buffer.length) {
+        buffer = Buffer.from(compressed);
+        mime = "image/jpeg";
+      }
+    } catch {
+      // Keep the original reference if sharp cannot process it.
+    }
+  }
   const extMap: Record<string, string> = {
     "image/jpeg": "jpg",
     "image/png": "png",
@@ -105,7 +121,7 @@ export async function base64ToPublicUrl(completeBase64: string, mediaType = "ima
   const ext = extMap[mime] || mime.split("/")[1]?.replace(/\W+/g, "") || "bin";
   const filename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
   const relPath = `vendor-references/${filename}`;
-  await u.oss.writeFile(relPath, Buffer.from(payload, "base64"));
+  await u.oss.writeFile(relPath, buffer);
   if (publicBaseUrl.trim()) {
     return `${publicBaseUrl.replace(/\/+$/, "")}/oss/${relPath}`;
   }

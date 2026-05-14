@@ -390,7 +390,7 @@ yarn lint
 完成所有任务后，由主控执行：
 
 ```bash
-cd /root/projects/Toonflow-app
+cd /srv/cc-connect-workspaces/codex-discord/toonflowback
 yarn lint
 node tests/seedance-storyboard-mode.test.cjs
 node tests/ai-empty-result.test.cjs

@@ -15,7 +15,7 @@
 Repo root:
 
 ```text
-/root/projects/Toonflow-app
+/srv/cc-connect-workspaces/codex-discord/toonflowback
 ```
 
 Important existing files:
@@ -99,7 +99,7 @@ Run these tasks with separate OpenClaw agents, but avoid parallel edits to the s
 Before starting implementation, each bot must run:
 
 ```bash
-cd /root/projects/Toonflow-app
+cd /srv/cc-connect-workspaces/codex-discord/toonflowback
 git status --short
 ```
 
@@ -122,7 +122,7 @@ Do not overwrite existing uncommitted user changes. Current repo already has sev
 1. Search for existing socket route imports/usages:
 
 ```bash
-cd /root/projects/Toonflow-app
+cd /srv/cc-connect-workspaces/codex-discord/toonflowback
 python3 - <<'PY'
 from pathlib import Path
 for p in Path('src').rglob('*.ts'):
@@ -652,7 +652,7 @@ Then watch logs for startup errors.
 1. Static search:
 
 ```bash
-cd /root/projects/Toonflow-app
+cd /srv/cc-connect-workspaces/codex-discord/toonflowback
 python3 - <<'PY'
 from pathlib import Path
 required = [

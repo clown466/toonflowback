@@ -1,13 +1,13 @@
 <p>
-  <a href="https://github.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitee.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/Gitee-C71D23?style=flat-square&logo=gitee&logoColor=white" alt="Gitee" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitcode.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="./atomgitLogo.svg" alt="Atomgit" style="height:20px"/>
   </a>
 </p>
@@ -38,14 +38,14 @@
     </b>
   </p>
   <p align="center">
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/stargazers">
-      <img src="https://img.shields.io/github/stars/HBAI-Ltd/Toonflow-app?style=for-the-badge&logo=github" alt="Stars Badge" />
+    <a href="https://github.com/clown466/toonflowback/stargazers">
+      <img src="https://img.shields.io/github/stars/clown466/toonflowback?style=for-the-badge&logo=github" alt="Stars Badge" />
     </a>
     <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank">
       <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="Apache-2.0 License Badge" />
     </a>
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/releases">
-      <img alt="release" src="https://img.shields.io/github/v/release/HBAI-Ltd/Toonflow-app?style=for-the-badge" />
+    <a href="https://github.com/clown466/toonflowback/releases">
+      <img alt="release" src="https://img.shields.io/github/v/release/clown466/toonflowback?style=for-the-badge" />
     </a>
   </p>
   
@@ -130,9 +130,9 @@ Toonflow เป็นเครื่องมือ AI สำหรับสร�
 
 | ระบบปฏิบัติการ | GitHub                                                     | Atomgit                                                       | ดาวน์โหลดผ่าน Quark Drive                       | คำอธิบาย           |
 | :------: | :----------------------------------------------------------- | :------------------------------------------------------------ | :---------------------------------------------- | :------------- |
-| Windows  | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | ตัวติดตั้งอย่างเป็นทางการ |
-|  Linux   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | ตัวติดตั้งอย่างเป็นทางการ |
-|  macOS   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | ตัวติดตั้งอย่างเป็นทางการ |
+| Windows  | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | ตัวติดตั้งอย่างเป็นทางการ |
+|  Linux   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | ตัวติดตั้งอย่างเป็นทางการ |
+|  macOS   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | ตัวติดตั้งอย่างเป็นทางการ |
 
 > [!CAUTION]
 > สำหรับระบบ macOS โปรดไปที่ **การตั้งค่า > ความเป็นส่วนตัวและความปลอดภัย** เพื่ออนุญาตให้แอปพลิเคชันทำงาน มิฉะนั้นอาจเปิดโปรแกรมไม่ได้เนื่องจากปัญหาใบรับรองความปลอดภัย
@@ -167,7 +167,7 @@ Toonflow เป็นเครื่องมือ AI สำหรับสร�
 
 ```shell
 # โคลนโปรเจกต์ก่อน (ข้ามขั้นตอนนี้ถ้ามีอยู่แล้ว)
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 
 # ใช้ docker-compose ในการ Build และรันบนเครื่อง
@@ -224,7 +224,7 @@ npm install -g yarn pm2
 
 ```bash
 cd /opt
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -234,7 +234,7 @@ yarn build
 
 ```bash
 cd /opt
-git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -293,8 +293,8 @@ pm2 monit             # เปิดหน้าต่าง Monitoring
 
 หากต้องการติดตั้งหรือปรับแต่งอินเทอร์เฟซฟรอนต์เอนด์แยกต่างหาก โปรดอ้างอิง Repository ฟรอนต์เอนด์ดังนี้:
 
-- **GitHub**: [Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**: [Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**: [Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**: [Toonflow-web](https://github.com/clown466/toonflowweb)
 
 > 💡 **หมายเหตุ**: Repository นี้มาพร้อมไฟล์ฟรอนต์เอนด์ที่คอมไพล์เสร็จสมบูรณ์แล้ว  
 > ผู้ใช้ทั่วไปไม่จำเป็นต้องติดตั้งฟรอนต์เอนด์แยก Repository นี้มีไว้สำหรับนักพัฒนาที่ต้องการปรับแต่งหรือพัฒนาเพิ่มเติมเท่านั้น
@@ -338,14 +338,14 @@ pm2 monit             # เปิดหน้าต่าง Monitoring
    **โคลนจาก GitHub:**
 
    ```bash
-   git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
    **โคลนจาก Gitee (แนะนำสำหรับประเทศจีน):**
 
    ```bash
-   git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
@@ -435,8 +435,8 @@ pm2 monit             # เปิดหน้าต่าง Monitoring
 
 หากต้องการแก้ไขหรือพัฒนาอินเทอร์เฟซฟรอนต์เอนด์ โปรดไปที่ Repository ฟรอนต์เอนด์ดังนี้:
 
-- **GitHub**: [Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**: [Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**: [Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**: [Toonflow-web](https://github.com/clown466/toonflowweb)
 
 หลังจาก Build ฟรอนต์เอนด์เสร็จสิ้นแล้ว ให้คัดลอกโฟลเดอร์ `dist` ทั้งหมดไปวางในโฟลเดอร์ `data/web` ของโปรเจกต์นี้เพื่อทำการรวมเข้ากับระบบ
 
@@ -503,8 +503,8 @@ pm2 monit             # เปิดหน้าต่าง Monitoring
 
 | Repository       | คำอธิบาย                                      | GitHub                                             | Gitee                                            |
 | ---------------- | --------------------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
-| **Toonflow-app** | ไคลเอนต์แบบสมบูรณ์ (Repository นี้ แนะนำสำหรับผู้ใช้ทั่วไป) | [GitHub](https://github.com/HBAI-Ltd/Toonflow-app) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-app) |
-| **Toonflow-web** | ซอร์สโค้ดฟรอนต์เอนด์ (เหมาะสำหรับนักพัฒนาฟรอนต์เอนด์)       | [GitHub](https://github.com/HBAI-Ltd/Toonflow-web) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-web) |
+| **Toonflow-app** | ไคลเอนต์แบบสมบูรณ์ (Repository นี้ แนะนำสำหรับผู้ใช้ทั่วไป) | [GitHub](https://github.com/clown466/toonflowback) | [Gitee](https://github.com/clown466/toonflowback) |
+| **Toonflow-web** | ซอร์สโค้ดฟรอนต์เอนด์ (เหมาะสำหรับนักพัฒนาฟรอนต์เอนด์)       | [GitHub](https://github.com/clown466/toonflowweb) | [Gitee](https://github.com/clown466/toonflowweb) |
 
 > 💡 **เคล็ดลับ**: หากคุณต้องการใช้งาน Toonflow เพียงดาวน์โหลดไคลเอนต์จาก Repository นี้ก็เพียงพอแล้ว  
 > Repository Toonflow-web มีไว้สำหรับนักพัฒนาที่ต้องการปรับแต่งหรือพัฒนาต่อยอดอินเทอร์เฟซเท่านั้น
@@ -564,7 +564,7 @@ Toonflow เปิดเผยเป็นโอเพ่นซอร์สภ�
 
 # ⭐️ ประวัติการให้ดาว (Star History)
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)](https://www.star-history.com/#HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=clown466/toonflowback&type=timeline&legend=top-left)](https://www.star-history.com/#clown466/toonflowback&type=timeline&legend=top-left)
 
 ---
 

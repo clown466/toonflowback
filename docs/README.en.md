@@ -1,13 +1,13 @@
 <p>
-  <a href="https://github.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitee.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/Gitee-C71D23?style=flat-square&logo=gitee&logoColor=white" alt="Gitee" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitcode.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="./atomgitLogo.svg" alt="Atomgit" style="height:20px"/>
   </a>
 </p>
@@ -38,14 +38,14 @@
     </b>
   </p>
   <p align="center">
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/stargazers">
-      <img src="https://img.shields.io/github/stars/HBAI-Ltd/Toonflow-app?style=for-the-badge&logo=github" alt="Stars Badge" />
+    <a href="https://github.com/clown466/toonflowback/stargazers">
+      <img src="https://img.shields.io/github/stars/clown466/toonflowback?style=for-the-badge&logo=github" alt="Stars Badge" />
     </a>
     <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank">
       <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="Apache-2.0 License Badge" />
     </a>
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/releases">
-      <img alt="release" src="https://img.shields.io/github/v/release/HBAI-Ltd/Toonflow-app?style=for-the-badge" />
+    <a href="https://github.com/clown466/toonflowback/releases">
+      <img alt="release" src="https://img.shields.io/github/v/release/clown466/toonflowback?style=for-the-badge" />
     </a>
   </p>
   
@@ -135,9 +135,9 @@ Before installing and using Toonflow, please prepare the following:
 
 | OS | GitHub | Atomgit | Quark Drive Download | Description |
 | :------: | :----------------------------------------------------------- | :------------------------------------------------------------ | :---------------------------------------------- | :------------- |
-| Windows  | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Official Installer |
-|  Linux   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Official Installer |
-|  macOS   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Official Installer |
+| Windows  | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Official Installer |
+|  Linux   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Official Installer |
+|  macOS   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Official Installer |
 
 > [!CAUTION]
 > **MacOS Users:** Please go to `System Settings > Privacy & Security` to allow the application to run; otherwise, it may fail to open due to certificate issues.
@@ -170,7 +170,7 @@ Build directly using the local source code. This is suitable for developers or u
 
 ```shell
 # Clone the repository first (skip if already cloned)
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 
 # Build and start locally using docker-compose
@@ -227,7 +227,7 @@ npm install -g yarn pm2
 
 ```bash
 cd /opt
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -237,7 +237,7 @@ yarn build
 
 ```bash
 cd /opt
-git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -296,8 +296,8 @@ pm2 monit             # Monitoring dashboard
 
 If you need to deploy or customize the frontend interface separately, please refer to the frontend repository:
 
-- **GitHub**: [Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**: [Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**: [Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**: [Toonflow-web](https://github.com/clown466/toonflowweb)
 
 > 💡 **Note**: This repository already includes the compiled frontend resources.  
 > Regular users do not need to deploy the frontend separately. The Toonflow-web repository is intended only for developers who want to make custom modifications or contribute to the frontend.
@@ -342,14 +342,14 @@ If you're interested in joining, please contact the project maintainer (ACT) in 
    **From GitHub:**
 
    ```bash
-   git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
    **From Gitee (Recommended for China):**
 
    ```bash
-   git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
@@ -435,8 +435,8 @@ If you're interested in joining, please contact the project maintainer (ACT) in 
 
 If you need to modify or customize the frontend interface, please go to the frontend repository:
 
-- **GitHub**: [Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**: [Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**: [Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**: [Toonflow-web](https://github.com/clown466/toonflowweb)
 
 After building the frontend, copy the entire `dist` folder into the `data/web` directory of this project to integrate it.
 
@@ -503,8 +503,8 @@ After building the frontend, copy the entire `dist` folder into the `data/web` d
 
 | Repository       | Description                                                                 | GitHub                                             | Gitee                                            |
 |------------------|-----------------------------------------------------------------------------|----------------------------------------------------|--------------------------------------------------|
-| **Toonflow-app** | Full client (This repository — recommended for most users)                  | [GitHub](https://github.com/HBAI-Ltd/Toonflow-app) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-app) |
-| **Toonflow-web** | Frontend source code (For frontend developers)                              | [GitHub](https://github.com/HBAI-Ltd/Toonflow-web) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-web) |
+| **Toonflow-app** | Full client (This repository — recommended for most users)                  | [GitHub](https://github.com/clown466/toonflowback) | [Gitee](https://github.com/clown466/toonflowback) |
+| **Toonflow-web** | Frontend source code (For frontend developers)                              | [GitHub](https://github.com/clown466/toonflowweb) | [Gitee](https://github.com/clown466/toonflowweb) |
 
 > 💡 **Tip**: If you just want to use Toonflow, downloading the client from this repository is sufficient. The Toonflow-web repository is intended only for developers who need to customize the UI or perform secondary development.
 
@@ -563,7 +563,7 @@ For the full agreement, please refer to the [LICENSE](./LICENSE) file.
 
 # ⭐️ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)](https://www.star-history.com/#HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=clown466/toonflowback&type=timeline&legend=top-left)](https://www.star-history.com/#clown466/toonflowback&type=timeline&legend=top-left)
 
 ---
 

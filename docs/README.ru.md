@@ -1,13 +1,13 @@
 <p>
-  <a href="https://github.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitee.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/Gitee-C71D23?style=flat-square&logo=gitee&logoColor=white" alt="Gitee" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitcode.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="./atomgitLogo.svg" alt="Atomgit" style="height:20px"/>
   </a>
 </p>
@@ -38,14 +38,14 @@
     </b>
   </p>
   <p align="center">
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/stargazers">
-      <img src="https://img.shields.io/github/stars/HBAI-Ltd/Toonflow-app?style=for-the-badge&logo=github" alt="Stars Badge" />
+    <a href="https://github.com/clown466/toonflowback/stargazers">
+      <img src="https://img.shields.io/github/stars/clown466/toonflowback?style=for-the-badge&logo=github" alt="Stars Badge" />
     </a>
     <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank">
       <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="Apache-2.0 License Badge" />
     </a>
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/releases">
-      <img alt="release" src="https://img.shields.io/github/v/release/HBAI-Ltd/Toonflow-app?style=for-the-badge" />
+    <a href="https://github.com/clown466/toonflowback/releases">
+      <img alt="release" src="https://img.shields.io/github/v/release/clown466/toonflowback?style=for-the-badge" />
     </a>
   </p>
   
@@ -133,9 +133,9 @@ Toonflow — это мощный ИИ-инструмент для создани
 
 | ОС | GitHub | Atomgit | Скачать (Quark Drive) | Описание |
 | :------: | :----------------------------------------------------------- | :------------------------------------------------------------ | :---------------------------------------------- | :------------- |
-| Windows  | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Официальный установщик |
-|  Linux   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Официальный установщик |
-|  macOS   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Официальный установщик |
+| Windows  | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Официальный установщик |
+|  Linux   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Официальный установщик |
+|  macOS   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Официальный установщик |
 
 > [!CAUTION]
 > Пользователям macOS необходимо перейти в **Системные настройки → Конфиденциальность и безопасность** и разрешить запуск приложения. В противном случае программа может не открыться из-за проблем с сертификатом.
@@ -170,7 +170,7 @@ Toonflow — это мощный ИИ-инструмент для создани
 
 ```shell
 # Сначала клонируйте проект (пропустите, если уже сделано)
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 
 # Локальная сборка и запуск с помощью docker-compose
@@ -227,7 +227,7 @@ npm install -g yarn pm2
 
 ```bash
 cd /opt
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -237,7 +237,7 @@ yarn build
 
 ```bash
 cd /opt
-git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -296,8 +296,8 @@ pm2 monit             # Панель мониторинга
 
 Если вам нужно отдельно развернуть или кастомизировать фронтенд, перейдите в репозиторий Toonflow-web:
 
-- **GitHub**: [Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**: [Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**: [Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**: [Toonflow-web](https://github.com/clown466/toonflowweb)
 
 > 💡 **Примечание**: Этот репозиторий уже содержит скомпилированные файлы Frontend. Обычным пользователям не требуется отдельно устанавливать фронтенд. Репозиторий Toonflow-web предназначен только для разработчиков, которые хотят внести изменения или доработать интерфейс.
 
@@ -340,14 +340,14 @@ pm2 monit             # Панель мониторинга
    **С GitHub:**
 
    ```bash
-   git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
    **С Gitee:**
 
    ```bash
-   git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
@@ -437,8 +437,8 @@ pm2 monit             # Панель мониторинга
 
 Если вам нужно внести изменения в пользовательский интерфейс, перейдите в репозиторий фронтенда:
 
-- **GitHub**: [Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**: [Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**: [Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**: [Toonflow-web](https://github.com/clown466/toonflowweb)
 
 После сборки (build) фронтенда скопируйте всю папку `dist` в директорию `data/web` этого проекта для интеграции.
 
@@ -505,8 +505,8 @@ pm2 monit             # Панель мониторинга
 
 | Репозиторий      | Описание                                                      | GitHub                                             | Gitee                                            |
 |------------------|---------------------------------------------------------------|----------------------------------------------------|--------------------------------------------------|
-| **Toonflow-app** | Полноценный клиент (этот репозиторий, рекомендуется для большинства пользователей) | [GitHub](https://github.com/HBAI-Ltd/Toonflow-app) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-app) |
-| **Toonflow-web** | Исходный код Frontend (для frontend-разработчиков)            | [GitHub](https://github.com/HBAI-Ltd/Toonflow-web) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-web) |
+| **Toonflow-app** | Полноценный клиент (этот репозиторий, рекомендуется для большинства пользователей) | [GitHub](https://github.com/clown466/toonflowback) | [Gitee](https://github.com/clown466/toonflowback) |
+| **Toonflow-web** | Исходный код Frontend (для frontend-разработчиков)            | [GitHub](https://github.com/clown466/toonflowweb) | [Gitee](https://github.com/clown466/toonflowweb) |
 
 > 💡 **Совет**: Если вы просто хотите использовать Toonflow, достаточно скачать клиент из этого репозитория. Репозиторий Toonflow-web предназначен только для разработчиков, желающих внести изменения или доработать интерфейс.
 
@@ -565,7 +565,7 @@ Toonflow распространяется как open-source проект под
 
 # ⭐️ История звезд (Star History)
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)](https://www.star-history.com/#HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=clown466/toonflowback&type=timeline&legend=top-left)](https://www.star-history.com/#clown466/toonflowback&type=timeline&legend=top-left)
 
 ---
 

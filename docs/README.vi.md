@@ -1,13 +1,13 @@
 <p>
-  <a href="https://github.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitee.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/Gitee-C71D23?style=flat-square&logo=gitee&logoColor=white" alt="Gitee" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitcode.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="./atomgitLogo.svg" alt="Atomgit" style="height:20px"/>
   </a>
 </p>
@@ -38,14 +38,14 @@
     </b>
   </p>
   <p align="center">
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/stargazers">
-      <img src="https://img.shields.io/github/stars/HBAI-Ltd/Toonflow-app?style=for-the-badge&logo=github" alt="Stars Badge" />
+    <a href="https://github.com/clown466/toonflowback/stargazers">
+      <img src="https://img.shields.io/github/stars/clown466/toonflowback?style=for-the-badge&logo=github" alt="Stars Badge" />
     </a>
     <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank">
       <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="Apache-2.0 License Badge" />
     </a>
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/releases">
-      <img alt="release" src="https://img.shields.io/github/v/release/HBAI-Ltd/Toonflow-app?style=for-the-badge" />
+    <a href="https://github.com/clown466/toonflowback/releases">
+      <img alt="release" src="https://img.shields.io/github/v/release/clown466/toonflowback?style=for-the-badge" />
     </a>
   </p>
   
@@ -124,9 +124,9 @@ Trước khi cài đặt và sử dụng phần mềm, vui lòng chuẩn bị:
 
 | Hệ điều hành | GitHub                                                     | Atomgit                                                       | Tải qua Quark Drive                             | Mô tả          |
 | :------: | :----------------------------------------------------------- | :------------------------------------------------------------ | :---------------------------------------------- | :------------- |
-| Windows  | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Bản cài đặt chính thức |
-|  Linux   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Bản cài đặt chính thức |
-|  macOS   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Bản cài đặt chính thức |
+| Windows  | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Bản cài đặt chính thức |
+|  Linux   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Bản cài đặt chính thức |
+|  macOS   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | Bản cài đặt chính thức |
 
 > [!CAUTION]
 > Với hệ điều hành MacOS, vui lòng vào "Cài đặt hệ thống" -> "Quyền riêng tư & Bảo mật" để cấp quyền mở ứng dụng, nếu không phần mềm có thể không mở được do vấn đề chứng chỉ.
@@ -159,7 +159,7 @@ Sử dụng mã nguồn có sẵn để build trực tiếp. Phù hợp với l�
 
 ```shell
 # Clone dự án (Bỏ qua nếu đã clone)
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 
 # Sử dụng docker-compose để build và chạy
@@ -216,7 +216,7 @@ npm install -g yarn pm2
 
 ```bash
 cd /opt
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -226,7 +226,7 @@ yarn build
 
 ```bash
 cd /opt
-git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -285,8 +285,8 @@ pm2 monit             # Mở bảng điều khiển giám sát
 
 Nếu bạn cần triển khai riêng hoặc tùy chỉnh giao diện Frontend, vui lòng tham khảo Repository Frontend:
 
-- **GitHub**: [Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**: [Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**: [Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**: [Toonflow-web](https://github.com/clown466/toonflowweb)
 
 > 💡 **Lưu ý**: Repository này đã được tích hợp sẵn tài nguyên Frontend đã build. Người dùng thông thường không cần tự triển khai Frontend riêng. Repository Frontend chỉ dành cho các nhà phát triển muốn tùy chỉnh chuyên sâu.
 
@@ -328,14 +328,14 @@ Nếu bạn cần triển khai riêng hoặc tùy chỉnh giao diện Frontend, 
    **Clone từ GitHub:**
 
    ```bash
-   git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
    **Clone từ Gitee:**
 
    ```bash
-   git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
@@ -421,8 +421,8 @@ Nếu bạn cần triển khai riêng hoặc tùy chỉnh giao diện Frontend, 
 
 Nếu bạn cần chỉnh sửa giao diện Frontend, vui lòng chuyển sang kho lưu trữ Frontend riêng:
 
-- **GitHub**: [Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**: [Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**: [Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**: [Toonflow-web](https://github.com/clown466/toonflowweb)
 
 Sau khi build Frontend xong, hãy copy toàn bộ thư mục dist vào thư mục data/web của dự án này để tích hợp.
 
@@ -489,8 +489,8 @@ Sau khi build Frontend xong, hãy copy toàn bộ thư mục dist vào thư mụ
 
 | Repository (Kho) | Mô tả | GitHub | Gitee |
 | ---------------- | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
-| **Toonflow-app** | Client hoàn chỉnh (Repo này, khuyến nghị cho người dùng) | [GitHub](https://github.com/HBAI-Ltd/Toonflow-app) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-app) |
-| **Toonflow-web** | Mã nguồn Frontend (Dành cho lập trình viên Frontend) | [GitHub](https://github.com/HBAI-Ltd/Toonflow-web) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-web) |
+| **Toonflow-app** | Client hoàn chỉnh (Repo này, khuyến nghị cho người dùng) | [GitHub](https://github.com/clown466/toonflowback) | [Gitee](https://github.com/clown466/toonflowback) |
+| **Toonflow-web** | Mã nguồn Frontend (Dành cho lập trình viên Frontend) | [GitHub](https://github.com/clown466/toonflowweb) | [Gitee](https://github.com/clown466/toonflowweb) |
 
 > 💡 **Mẹo nhỏ**: Nếu bạn chỉ muốn sử dụng Toonflow, hãy tải Client hoàn chỉnh từ kho này là đủ. Kho Toonflow-web chỉ dành cho các nhà phát triển cần chỉnh sửa hoặc phát triển lại giao diện (secondary development).
 
@@ -549,7 +549,7 @@ Xem toàn bộ thỏa thuận tại tệp [LICENSE](./LICENSE).
 
 # ⭐️ Lịch sử Thả sao (Star History)
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)](https://www.star-history.com/#HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=clown466/toonflowback&type=timeline&legend=top-left)](https://www.star-history.com/#clown466/toonflowback&type=timeline&legend=top-left)
 
 ---
 

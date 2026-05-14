@@ -1,13 +1,13 @@
 <p>
-  <a href="https://github.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitee.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/Gitee-C71D23?style=flat-square&logo=gitee&logoColor=white" alt="Gitee" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitcode.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="./atomgitLogo.svg" alt="Atomgit" style="height:20px"/>
   </a>
 </p>
@@ -38,14 +38,14 @@
     </b>
   </p>
   <p align="center">
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/stargazers">
-      <img src="https://img.shields.io/github/stars/HBAI-Ltd/Toonflow-app?style=for-the-badge&logo=github" alt="Stars Badge" />
+    <a href="https://github.com/clown466/toonflowback/stargazers">
+      <img src="https://img.shields.io/github/stars/clown466/toonflowback?style=for-the-badge&logo=github" alt="Stars Badge" />
     </a>
     <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank">
       <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="Apache-2.0 License Badge" />
     </a>
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/releases">
-      <img alt="release" src="https://img.shields.io/github/v/release/HBAI-Ltd/Toonflow-app?style=for-the-badge" />
+    <a href="https://github.com/clown466/toonflowback/releases">
+      <img alt="release" src="https://img.shields.io/github/v/release/clown466/toonflowback?style=for-the-badge" />
     </a>
   </p>
   
@@ -129,9 +129,9 @@ Toonflow は、AI技術を活用して小説を自動的に脚本へ変換し、
 
 | OS | GitHub | Atomgit | Quark Drive | 説明 |
 | :------: | :----------------------------------------------------------- | :------------------------------------------------------------ | :---------------------------------------------- | :------------- |
-| Windows  | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | 公式インストーラ |
-|  Linux   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | 公式インストーラ |
-|  macOS   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | 公式インストーラ |
+| Windows  | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | 公式インストーラ |
+|  Linux   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | 公式インストーラ |
+|  macOS   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [Quark Drive](https://pan.quark.cn/s/94ef07509df0) | 公式インストーラ |
 
 > [!CAUTION]
 > MacOS システムをご利用の場合、「システム設定」-「プライバシーとセキュリティ」からセキュリティ設定を行ってください。そうしないと、証明書の問題で正常に開けない場合があります。
@@ -164,7 +164,7 @@ Toonflow は、AI技術を活用して小説を自動的に脚本へ変換し、
 
 ```shell
 # まずプロジェクトをクローン（既に存在する場合はスキップ）
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 
 # docker-compose を使用してローカルでビルド・起動
@@ -221,7 +221,7 @@ npm install -g yarn pm2
 
 ```bash
 cd /opt
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -231,7 +231,7 @@ yarn build
 
 ```bash
 cd /opt
-git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -290,8 +290,8 @@ pm2 monit             # 監視パネルの表示
 
 フロントエンド画面を単独で配置、またはカスタマイズしたい場合は、フロントエンドのリポジトリを参照してください：
 
-- **GitHub**：[Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**：[Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**：[Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**：[Toonflow-web](https://github.com/clown466/toonflowweb)
 
 > 💡 **補足**：本リポジトリには既にコンパイル済みのフロントエンド成果物が組み込まれているため、一般ユーザーはフロントエンドを個別に配置する必要はありません。フロントエンドのリポジトリは、二次開発を行う開発者向けです。
 
@@ -333,14 +333,14 @@ pm2 monit             # 監視パネルの表示
    **GitHub からクローン：**
 
    ```bash
-   git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
    **Gitee からクローン（中国国内推奨）：**
 
    ```bash
-   git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
@@ -426,8 +426,8 @@ pm2 monit             # 監視パネルの表示
 
 フロントエンド画面を修正する必要がある場合は、フロントエンドのリポジトリで開発を行ってください：
 
-- **GitHub**：[Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**：[Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**：[Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**：[Toonflow-web](https://github.com/clown466/toonflowweb)
 
 フロントエンドのビルド後、`dist` ディレクトリの内容を本プロジェクトの `data/web` ディレクトリにコピーするだけで統合できます。
 
@@ -494,8 +494,8 @@ pm2 monit             # 監視パネルの表示
 
 | リポジトリ         | 説明                               | GitHub                                             | Gitee                                            |
 | ---------------- | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
-| **Toonflow-app** | 完全版クライアント（本リポジトリ、一般ユーザー向け） | [GitHub](https://github.com/HBAI-Ltd/Toonflow-app) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-app) |
-| **Toonflow-web** | フロントエンドソースコード（フロントエンド開発者向け） | [GitHub](https://github.com/HBAI-Ltd/Toonflow-web) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-web) |
+| **Toonflow-app** | 完全版クライアント（本リポジトリ、一般ユーザー向け） | [GitHub](https://github.com/clown466/toonflowback) | [Gitee](https://github.com/clown466/toonflowback) |
+| **Toonflow-web** | フロントエンドソースコード（フロントエンド開発者向け） | [GitHub](https://github.com/clown466/toonflowweb) | [Gitee](https://github.com/clown466/toonflowweb) |
 
 > 💡 **ヒント**：Toonflow を使用するだけであれば、本リポジトリのクライアントを直接ダウンロードするだけで十分です。フロントエンドのリポジトリは、二次開発やフロントエンド画面のカスタマイズが必要な開発者向けです。
 
@@ -554,7 +554,7 @@ Toonflow は Apache-2.0 ライセンスに基づいてオープンソースと�
 
 # ⭐️ Star 獲得履歴
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)](https://www.star-history.com/#HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=clown466/toonflowback&type=timeline&legend=top-left)](https://www.star-history.com/#clown466/toonflowback&type=timeline&legend=top-left)
 
 ---
 

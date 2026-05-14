@@ -1,13 +1,13 @@
 <p>
-  <a href="https://github.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitee.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="https://img.shields.io/badge/Gitee-C71D23?style=flat-square&logo=gitee&logoColor=white" alt="Gitee" />
   </a>
   &nbsp;|&nbsp;
-  <a href="https://gitcode.com/HBAI-Ltd/Toonflow-app">
+  <a href="https://github.com/clown466/toonflowback">
     <img src="./atomgitLogo.svg" alt="Atomgit" style="height:20px"/>
   </a>
 </p>
@@ -38,14 +38,14 @@
     </b>
   </p>
   <p align="center">
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/stargazers">
-      <img src="https://img.shields.io/github/stars/HBAI-Ltd/Toonflow-app?style=for-the-badge&logo=github" alt="Stars Badge" />
+    <a href="https://github.com/clown466/toonflowback/stargazers">
+      <img src="https://img.shields.io/github/stars/clown466/toonflowback?style=for-the-badge&logo=github" alt="Stars Badge" />
     </a>
     <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank">
       <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="Apache-2.0 License Badge" />
     </a>
-    <a href="https://github.com/HBAI-Ltd/Toonflow-app/releases">
-      <img alt="release" src="https://img.shields.io/github/v/release/HBAI-Ltd/Toonflow-app?style=for-the-badge" />
+    <a href="https://github.com/clown466/toonflowback/releases">
+      <img alt="release" src="https://img.shields.io/github/v/release/clown466/toonflowback?style=for-the-badge" />
     </a>
   </p>
   
@@ -132,9 +132,9 @@ Toonflow 是一款 AI 短劇與漫畫創作工具，能夠利用 AI 技術將小
 
 | 作業系統 | GitHub                                                     | Atomgit                                                       | 夸克網碟下載                                    | 說明           |
 | :------: | :----------------------------------------------------------- | :------------------------------------------------------------ | :---------------------------------------------- | :------------- |
-| Windows  | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [夸克網碟](https://pan.quark.cn/s/94ef07509df0) | 官方發佈安裝包 |
-|  Linux   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [夸克網碟](https://pan.quark.cn/s/94ef07509df0) | 官方發佈安裝包 |
-|  macOS   | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) | [Release](https://gitcode.com/HBAI-Ltd/Toonflow-app/releases) | [夸克網碟](https://pan.quark.cn/s/94ef07509df0) | 官方發佈安裝包 |
+| Windows  | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [夸克網碟](https://pan.quark.cn/s/94ef07509df0) | 官方發佈安裝包 |
+|  Linux   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [夸克網碟](https://pan.quark.cn/s/94ef07509df0) | 官方發佈安裝包 |
+|  macOS   | [Release](https://github.com/clown466/toonflowback/releases) | [Release](https://github.com/clown466/toonflowback/releases) | [夸克網碟](https://pan.quark.cn/s/94ef07509df0) | 官方發佈安裝包 |
 
 > [!CAUTION]
 > MacOS 系統請至「系統設定」-「隱私權與安全性」設定安全性，否則可能因憑證問題無法正常開啟。
@@ -167,7 +167,7 @@ Toonflow 是一款 AI 短劇與漫畫創作工具，能夠利用 AI 技術將小
 
 ```shell
 # 先 Clone 專案（若已有則跳過）
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 
 # 使用 docker-compose 進行本機建置並啟動
@@ -224,7 +224,7 @@ npm install -g yarn pm2
 
 ```bash
 cd /opt
-git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -234,7 +234,7 @@ yarn build
 
 ```bash
 cd /opt
-git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+git clone https://github.com/clown466/toonflowback.git
 cd Toonflow-app
 yarn install
 yarn build
@@ -293,8 +293,8 @@ pm2 monit             # 監控面板
 
 若需單獨部署或客製化前端介面，請參考前端儲存庫：
 
-- **GitHub**：[Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**：[Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**：[Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**：[Toonflow-web](https://github.com/clown466/toonflowweb)
 
 > 💡 **說明**：本儲存庫已內建編譯好的前端資源，一般使用者無需單獨部署前端。前端儲存庫僅供需要二次開發的開發者使用。
 
@@ -336,14 +336,14 @@ pm2 monit             # 監控面板
    **從 GitHub Clone：**
 
    ```bash
-   git clone https://github.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
    **從 Gitee Clone（內地網路使用）：**
 
    ```bash
-   git clone https://gitee.com/HBAI-Ltd/Toonflow-app.git
+   git clone https://github.com/clown466/toonflowback.git
    cd Toonflow-app
    ```
 
@@ -429,8 +429,8 @@ pm2 monit             # 監控面板
 
 若需修改前端介面，請前往前端儲存庫進行開發：
 
-- **GitHub**：[Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**：[Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+- **GitHub**：[Toonflow-web](https://github.com/clown466/toonflowweb)
+- **Gitee**：[Toonflow-web](https://github.com/clown466/toonflowweb)
 
 前端建置後，將 `dist` 目錄內容複製到本專案的 `data/web` 目錄即可整合。
 
@@ -497,8 +497,8 @@ pm2 monit             # 監控面板
 
 | 儲存庫           | 說明                               | GitHub                                             | Gitee                                            |
 | ---------------- | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
-| **Toonflow-app** | 完整用戶端（本儲存庫，推薦一般使用者） | [GitHub](https://github.com/HBAI-Ltd/Toonflow-app) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-app) |
-| **Toonflow-web** | 前端原始碼（適合前端開發者）       | [GitHub](https://github.com/HBAI-Ltd/Toonflow-web) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-web) |
+| **Toonflow-app** | 完整用戶端（本儲存庫，推薦一般使用者） | [GitHub](https://github.com/clown466/toonflowback) | [Gitee](https://github.com/clown466/toonflowback) |
+| **Toonflow-web** | 前端原始碼（適合前端開發者）       | [GitHub](https://github.com/clown466/toonflowweb) | [Gitee](https://github.com/clown466/toonflowweb) |
 
 > 💡 **提示**：如果您只是想使用 Toonflow，直接下載本儲存庫的用戶端即可。前端儲存庫僅供需要二次開發或客製化前端介面的開發者使用。
 
@@ -557,7 +557,7 @@ Toonflow 基於 Apache-2.0 協定開源發佈，並附有補充商業協議。
 
 # ⭐️ Star 歷史
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)](https://www.star-history.com/#HBAI-Ltd/Toonflow-app&type=timeline&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=clown466/toonflowback&type=timeline&legend=top-left)](https://www.star-history.com/#clown466/toonflowback&type=timeline&legend=top-left)
 
 ---
 

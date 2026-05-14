@@ -474,6 +474,50 @@ function buildShotVisualCue(shot: StoryboardRow, roleAssets: AssetRow[], isChine
     : "Use only shot composition, action, scene, and props; final character appearance comes from the role references.";
 }
 
+function isNoDialogueCue(value: unknown) {
+  const text = clean(value).replace(/^["“”'‘’]+|["“”'‘’]+$/g, "");
+  return !text || /^(?:无台词|无对白|无|none|no dialogue|no lines|n\/a|-)+[.。！!？?]*$/i.test(text);
+}
+
+function extractLabeledCue(source: string, labels: string[]) {
+  const labelPattern = labels.map(escapeRegExp).join("|");
+  const englishStopPattern = "Main assets|Assets|Characters|Scene|Location|Dialogue|Lines|Sound|SFX|Action|Visual|Prompt";
+  const chineseStopPattern = "主要资产|关联资产|场景|地点|对白|台词|音效|动作|画面|提示词";
+  const stopLookahead = `(?=(?:(?:\\b(?:${englishStopPattern})\\s*[:：])|(?:(?:${chineseStopPattern})\\s*[:：])|$))`;
+  const match = source.match(new RegExp(`(?:${labelPattern})\\s*[:：]\\s*([\\s\\S]*?)${stopLookahead}`, "i"));
+  return clean(match?.[1]);
+}
+
+function extractQuotedDialogue(source: string) {
+  const matches = [...source.matchAll(/["“]([^"”]{2,180})["”]/g)].map((match) => clean(match[1])).filter(Boolean);
+  return matches.find((item) => !isNoDialogueCue(item)) || "";
+}
+
+function buildVisibleDialogueCue(shot: StoryboardRow, isChinese: boolean) {
+  const source = clean([shot.videoDesc, shot.prompt].filter(Boolean).join(" "));
+  const labeled = extractLabeledCue(source, isChinese ? ["对白", "台词", "Dialogue", "Lines"] : ["Dialogue", "Lines", "对白", "台词"]);
+  const dialogue = labeled || extractQuotedDialogue(source);
+  if (isNoDialogueCue(dialogue)) return isChinese ? "无台词" : "No dialogue";
+  return compact(dialogue.replace(/\s*[.。]+$/g, ""), isChinese ? 42 : 78);
+}
+
+function stripStoryboardMetadata(source: string) {
+  return clean(source)
+    .replace(/\b(?:Main assets|Assets|Characters|Scene|Location|Dialogue|Lines|Sound|SFX)\s*[:：][\s\S]*?(?=(?:\b(?:Main assets|Assets|Characters|Scene|Location|Dialogue|Lines|Sound|SFX)\s*[:：])|$)/gi, " ")
+    .replace(/(?:主要资产|关联资产|场景|地点|对白|台词|音效)\s*[:：][\s\S]*?(?=(?:(?:主要资产|关联资产|场景|地点|对白|台词|音效)\s*[:：])|$)/g, " ")
+    .replace(/^\s*(?:Shot\s*\d+|镜头\s*\d+)\s*[:：]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildVisibleActionCue(shot: StoryboardRow, roleAssets: AssetRow[], isChinese: boolean) {
+  const source = clean([shot.videoDesc, shot.prompt].filter(Boolean).join(" "));
+  const labeled = extractLabeledCue(source, isChinese ? ["动作", "角色动作", "Action"] : ["Action", "动作", "角色动作"]);
+  const rawAction = labeled || stripStoryboardMetadata(clean(shot.videoDesc || shot.prompt));
+  const sanitized = sanitizeRoleAppearanceCue(rawAction, roleAssets, isChinese) || buildShotVisualCue(shot, roleAssets, isChinese);
+  return compact(sanitized.replace(/\s*[.。]+$/g, ""), isChinese ? 70 : 115);
+}
+
 export function buildChapterDirectorBoardPrompt(input: {
   project: ProjectRow;
   script: ScriptRow;
@@ -490,7 +534,7 @@ export function buildChapterDirectorBoardPrompt(input: {
   const boardType = normalizeDirectorBoardType(input.boardType);
   const isChinese = language === "chinese";
   const roleAssets = assets.filter(isRoleAsset);
-  const startSecond = storyboards.reduce((sum, shot, index) => (index === 0 ? 0 : sum + parseDuration(storyboards[index - 1]?.duration)), 0);
+  const startSecond = 0;
   let cursor = startSecond;
   const shotLines = storyboards.map((shot) => {
     const duration = parseDuration(shot.duration);
@@ -514,6 +558,31 @@ export function buildChapterDirectorBoardPrompt(input: {
       `${isChinese ? "构图动作线索" : "composition/action cue"}=${buildShotVisualCue(shot, roleAssets, isChinese)}`,
       boardType === "textStoryboard" ? `${isChinese ? "时长" : "duration"}=${duration}s` : "",
     ].filter(Boolean).join(" | ");
+  });
+  let spatialCursor = startSecond;
+  const spatialSixPanelShotLines = storyboards.map((shot, panelIndex) => {
+    const duration = parseDuration(shot.duration);
+    const cameraTech = inferCameraTechnicalSettings({
+      shotSize: shot.videoDesc,
+      cameraMove: shot.videoDesc,
+      lighting: shot.videoDesc,
+      action: `${shot.videoDesc || ""} ${shot.prompt || ""}`,
+      focalLength: shot.focalLength,
+      aperture: shot.aperture,
+      shutterSpeed: shot.shutterSpeed,
+      iso: shot.iso,
+    });
+    const start = spatialCursor;
+    spatialCursor += duration;
+    return [
+      `${isChinese ? "格子" : "Panel"} ${panelIndex + 1}`,
+      `${isChinese ? "来源镜头" : "source shot"}=${String((shot.index ?? panelIndex) + 1).padStart(2, "0")}`,
+      `${isChinese ? "时间" : "time"}=${start}-${spatialCursor}s`,
+      `${isChinese ? "画面动作" : "visible action"}=${buildVisibleActionCue(shot, roleAssets, isChinese)}`,
+      `${isChinese ? "可见台词" : "visible dialogue"}=${buildVisibleDialogueCue(shot, isChinese)}`,
+      `${isChinese ? "摄影参数" : "camera settings"}=${cameraTech.focalLength}, ${cameraTech.aperture}, ${cameraTech.shutterSpeed}, ${cameraTech.iso}`,
+      `${isChinese ? "构图线索" : "composition cue"}=${buildShotVisualCue(shot, roleAssets, isChinese)}`,
+    ].join(" | ");
   });
 
   const referenceLines = buildReferenceLines(assets, isChinese);
@@ -559,17 +628,19 @@ export function buildChapterDirectorBoardPrompt(input: {
     if (boardType === "spatialSixPanel") {
       return [
         "生成一张横向 16:9 视觉型章节导演板。",
-        "核心要求：上面一个空间图，下面一个 6 宫格图；图中不要任何解释性文字。",
+        "核心要求：上面一个空间图，下面一个 6 宫格图；空间图少字，下方每个格子必须把动作和台词加入进去。",
         "",
         "固定版式：",
         "上半部分占整张图约 40%：彩色俯视空间调度图。必须显示场景平面布局、入口/出口、关键道具、主光方向、角色当前位置、角色移动箭头、摄像机位置和拍摄方向。",
-        "下半部分占整张图约 60%：严格 2 行 x 3 列的 6 宫格连续画面，按镜头顺序从左到右、从上到下排列。每格是一个彩色电影感关键画面，用来表达镜头画面和动作变化。",
+        "下半部分占整张图约 60%：严格 2 行 x 3 列的 6 宫格连续画面，按镜头顺序从左到右、从上到下排列。每格是一个彩色电影感关键画面，用来表达镜头画面、角色动作和动作变化。",
+        "每个 6 宫格面板底部必须有两条很短的正常印刷字信息条：Action: 本格核心动作；Dialogue: 本格台词或“无台词”。这两条必须可读，不能省略。",
         "空间图和 6 宫格必须在同一张图内，空间图在上，6 宫格在下，不要改成左右布局。",
         "",
         "图中文字限制：",
-        "不要标题栏，不要说明段落，不要分镜表格，不要对白字幕，不要镜头参数文字，不要 UI 截图，不要水印。",
-        "只允许极短定位标签：C1/C2/C3、角色名、1-6 镜头编号、箭头符号、摄像机小图标。除此之外不要写任何文字。",
-        "如果文字可能影响画面或不可读，宁可只用颜色、图标、箭头和位置关系表达。",
+        "不要标题栏，不要说明段落，不要完整分镜表格，不要大段对白字幕，不要镜头参数文字，不要 UI 截图，不要水印。",
+        "空间图只允许极短定位标签：C1/C2/C3、角色名、1-6 镜头编号、箭头符号、摄像机小图标。",
+        "6 宫格每格只允许：镜头编号、C编号/角色名、Action 短动作条、Dialogue 短台词条。除此之外不要写任何文字。",
+        "如果台词太长，只截取最关键的短句；如果无台词，明确写“无台词”。所有文字必须清晰正常打印字，不要手写、草写或涂鸦字。",
         "",
         "角色与场景：",
         "角色必须用清晰高对比色和 C编号保持可区分。角色可以简化，但必须保留最显著身份符号：水果/物种颜色、体型、固定服装、关键道具、武器或工具。",
@@ -598,8 +669,9 @@ export function buildChapterDirectorBoardPrompt(input: {
         "其他素材（只作为生成参考，不要画成文字）：",
         otherAssetLines.length ? otherAssetLines.join("\n") : "无其他素材。",
         "",
-        "镜头内容（只作为生成参考，不要画成文字）：",
-        shotLines.join("\n"),
+        "6宫格面板内容：",
+        "每行的“画面动作”必须画成对应面板的角色动作；“可见台词”必须写进该面板底部 Dialogue 条。",
+        spatialSixPanelShotLines.join("\n"),
       ].join("\n");
     }
 
@@ -762,17 +834,19 @@ export function buildChapterDirectorBoardPrompt(input: {
   if (boardType === "spatialSixPanel") {
     return [
       "Create one wide 16:9 visual chapter director board.",
-      "Core requirement: one spatial map on top and one six-panel storyboard grid below. Do not include any explanatory text in the image.",
+      "Core requirement: one spatial map on top and one six-panel storyboard grid below. Keep the spatial map text-light, but every lower panel must include the shot action and dialogue.",
       "",
       "Fixed layout:",
       "Top half, about 40% of the image: a colored overhead spatial blocking map. Show the scene floor plan, entrances/exits, key props, main light direction, current character positions, character movement arrows, camera positions, and camera facing directions.",
-      "Bottom half, about 60% of the image: exactly six storyboard panels in a 2 x 3 grid, ordered left to right and top to bottom. Each panel is a colored cinematic keyframe showing the shot composition and action change.",
+      "Bottom half, about 60% of the image: exactly six storyboard panels in a 2 x 3 grid, ordered left to right and top to bottom. Each panel is a colored cinematic keyframe showing the shot composition, character action, and action change.",
+      "Each lower storyboard panel must include two very short printed text strips at the bottom: Action: the core action for that panel; Dialogue: the dialogue snippet or 'No dialogue'. These two strips must be readable and must not be omitted.",
       "The spatial map and the six-panel grid must be inside the same single image. Spatial map on top, six-panel grid below. Do not change it into a left-right layout.",
       "",
       "Visible text restriction:",
-      "No title bar, no explanatory paragraphs, no storyboard tables, no dialogue subtitles, no camera-setting text, no software UI screenshot, no watermark.",
-      "Only tiny locator labels are allowed: C1/C2/C3, character names, shot numbers 1-6, arrow symbols, and small camera icons. Do not write any other words.",
-      "If text would clutter the board or become unreadable, use colors, icons, arrows, and spatial relationships instead.",
+      "No title bar, no explanatory paragraphs, no full storyboard tables, no large dialogue subtitles, no camera-setting text, no software UI screenshot, no watermark.",
+      "In the spatial map, only tiny locator labels are allowed: C1/C2/C3, character names, shot numbers 1-6, arrow symbols, and small camera icons.",
+      "In each six-grid panel, only these text items are allowed: shot number, C-number/character name, short Action strip, short Dialogue strip. Do not write any other words.",
+      "If dialogue is too long, use the most important short phrase. If there is no dialogue, write 'No dialogue'. All text must be clean normal printed typography, not handwriting, sketch lettering, or doodle text.",
       "",
       "Characters and scene:",
       "Characters must stay distinguishable through high-contrast colors and C-number identity. They may be simplified, but preserve only the strongest identity symbols: fruit/species color, body scale, fixed outfit, key prop, weapon, or tool.",
@@ -801,8 +875,9 @@ export function buildChapterDirectorBoardPrompt(input: {
       "Other assets, for generation guidance only. Do not render this as visible text:",
       otherAssetLines.length ? otherAssetLines.join("\n") : "No other assets.",
       "",
-      "Shot content, for generation guidance only. Do not render this as visible text:",
-      shotLines.join("\n"),
+      "Six-panel content:",
+      "The 'visible action' field must be drawn as the character action in that panel. The 'visible dialogue' field must be printed in that panel's bottom Dialogue strip.",
+      spatialSixPanelShotLines.join("\n"),
     ].join("\n");
   }
 

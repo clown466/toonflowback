@@ -72,6 +72,31 @@ export function isDirectStoryboardRegenerationRequest(text: string) {
   return wantsRegeneration && hasStoryboardContext && !targetsOtherProduction;
 }
 
+function formatDirectStoryboardMemory(toolResult: Awaited<ReturnType<typeof runProjectStoryboardDraftTool>>) {
+  const result = toolResult?.result;
+  if (!result) return "分镜重推工具已执行，但未返回可持久化结果。";
+  const tableRows = String(result.storyboardTable ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && line.includes("|") && !/^\|\s*-/.test(line));
+  const tableDataRows = Math.max(0, tableRows.length - 1);
+  const tablePreview = tableRows.slice(0, 5).join("\n");
+  const reviewFailed = result.reviewStatus === "failed";
+  return [
+    result.message,
+    result.usedSkillName ? `分镜方法：${result.usedSkillName}。` : "",
+    result.reviewFailures?.length ? `审核未通过：${result.reviewFailures.join("；")}。` : "",
+    result.reviewWarnings?.length ? `审核提醒：${result.reviewWarnings.join("；")}。` : "",
+    result.reviewRetryInstruction ? `按审核结论重推指令：${result.reviewRetryInstruction}` : "",
+    result.selectedChapterLabels?.length ? `本次章节：${result.selectedChapterLabels.join("、")}。` : "",
+    tableDataRows > 0 && !reviewFailed ? `分镜表已生成 ${tableDataRows} 行并写入章节工作区数据。` : "",
+    tableDataRows > 0 && reviewFailed ? `候选分镜表有 ${tableDataRows} 行，但本次未写入。` : "",
+    tablePreview ? `${reviewFailed ? "候选分镜表预览" : "分镜表预览"}：\n${tablePreview}` : "",
+    result.createdCount > 0 ? `写入分镜 ID：${result.storyboardIds.join(", ")}。` : "",
+    reviewFailed ? "旧分镜保持不变；确认重推前不会覆盖当前章节工作区。" : "",
+  ].filter(Boolean).join("\n");
+}
+
 export async function runDecisionAI(ctx: AgentContext) {
   const { isolationKey, text, userMessageTime, abortSignal, resTool } = ctx;
 
@@ -79,7 +104,7 @@ export async function runDecisionAI(ctx: AgentContext) {
   await memory.add("user", text, { createTime: userMessageTime });
 
   if (isDirectStoryboardRegenerationRequest(text)) {
-    await runProjectStoryboardDraftTool(
+    const toolResult = await runProjectStoryboardDraftTool(
       {
         resTool: ctx.resTool,
         msg: ctx.msg,
@@ -88,7 +113,9 @@ export async function runDecisionAI(ctx: AgentContext) {
       },
       { force: true },
     );
-    await memory.add("assistant:decision", "已通过可靠分镜重推工具处理覆盖重推分镜请求。");
+    await memory.add("assistant:decision", formatDirectStoryboardMemory(toolResult), {
+      createTime: new Date(ctx.msg.datetime).getTime(),
+    });
     return;
   }
 

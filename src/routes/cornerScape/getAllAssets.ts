@@ -3,6 +3,8 @@ import u from "@/utils";
 import { z } from "zod";
 import { success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
+import { listRoleFactCards } from "@/services/projectContext";
+import { normalizeAssetSourcePrompt } from "@/services/assetImageGeneration";
 const router = express.Router();
 
 export default router.post(
@@ -45,6 +47,9 @@ export default router.post(
       if (!repleAssets[item.id]) repleAssets[item.id] = [item];
       else repleAssets[item.id].push(item);
     });
+    const roleFactCards = await listRoleFactCards({ projectId });
+    const roleFactCardsByAssetId = new Map(roleFactCards.filter((card) => card.assetId != null).map((card) => [Number(card.assetId), card]));
+
     const result = await Promise.all(
       data.map(async (parent: any) => {
         const historyImages = await u.db("o_image").where("assetsId", parent.id).andWhere("state", "已完成").select("id", "filePath");
@@ -54,11 +59,23 @@ export default router.post(
             filePath: img.filePath && (await u.oss.getSmallImageUrl(img.filePath)),
           })),
         );
+        const factCard = parent.type === "role" ? roleFactCardsByAssetId.get(Number(parent.id)) : null;
+        const sourcePrompt = normalizeAssetSourcePrompt(parent.prompt, parent.describe || parent.name || "");
         return {
           ...parent,
+          prompt: sourcePrompt,
+          sourcePrompt,
           filePath: parent.filePath && (await u.oss.getSmallImageUrl(parent.filePath!)),
           historyImages: historyImagesWithUrl,
-          relepedAudio:repleAssets[parent.id] ?? []
+          relepedAudio:repleAssets[parent.id] ?? [],
+          factCardSummary: factCard?.facts ?? "",
+          factCard: factCard
+            ? {
+                body: factCard.facts,
+                conflictRules: factCard.negativeFacts ?? "",
+                sourceType: factCard.sourceType,
+              }
+            : null,
         };
       }),
     );

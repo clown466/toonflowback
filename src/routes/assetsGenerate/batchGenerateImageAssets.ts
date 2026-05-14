@@ -34,6 +34,7 @@ const requestSchema = {
       referencePolicy: assetImageReferencePolicySchema.optional().nullable(),
       promptPolicy: assetImagePromptPolicySchema.optional().nullable(),
       userRequirement: z.string().optional().nullable(),
+      promptMode: z.enum(["source", "final"]).optional(),
     }),
   ),
 };

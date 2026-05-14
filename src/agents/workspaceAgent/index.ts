@@ -4,16 +4,15 @@ import { z } from "zod";
 import u from "@/utils";
 import Memory from "@/utils/agent/memory";
 import { getSkillContentForAgent } from "@/utils/agent/skillsTools";
-import useTools, { runProjectStoryboardDraftTool, useNovelWorkflowTools } from "@/agents/workspaceAgent/tools";
+import useTools, { useNovelWorkflowTools } from "@/agents/workspaceAgent/tools";
 import {
   getWorkspaceDomainAgentCatalog,
   getWorkspaceSkillCatalog,
   WORKSPACE_DOMAIN_AGENT_IDS,
   WorkspaceDomainAgentId,
 } from "@/agents/workspaceAgent/orchestrationRegistry";
-import { toPublicWorkspaceName } from "@/services/storyboardDraftGeneration";
 import ResTool from "@/socket/resTool";
-import { toToolJsonSchema } from "@/utils/jsonSchema";
+import { formatProjectFactBundleForPrompt, loadProjectFactBundle } from "@/services/imageGenerationSkill";
 import * as fs from "fs";
 import path from "path";
 
@@ -63,67 +62,17 @@ function summarizeAssetRows(rows: Array<{ type?: string | null; count?: unknown 
   return summary;
 }
 
-export function isDirectStoryboardRegenerationRequest(text: string) {
-  const source = String(text ?? "").trim();
-  if (!source) return false;
-  const wantsRegeneration = /再次推理|重新推理|覆盖重推|重推|重新生成[^。！？\n]*(?:分镜|镜头)|删除[^。！？\n]*(?:分镜|镜头)[^。！？\n]*重|清空[^。！？\n]*(?:分镜|镜头)[^。！？\n]*重/i.test(source);
-  const hasStoryboardContext = /分镜|镜头|对白|总时长|juben\s*\d+|第\s*\d+\s*(?:章|条)/i.test(source);
-  const targetsOtherProduction = /导演板|故事板|视频提示词|生成视频|资产图|角色图|场景图|道具图|塑角造景/i.test(source);
-  return wantsRegeneration && hasStoryboardContext && !targetsOtherProduction;
-}
-
-function formatDirectStoryboardMemory(toolResult: Awaited<ReturnType<typeof runProjectStoryboardDraftTool>>) {
-  const result = toolResult?.result;
-  if (!result) return "分镜重推工具已执行，但未返回可持久化结果。";
-  const tableRows = String(result.storyboardTable ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && line.includes("|") && !/^\|\s*-/.test(line));
-  const tableDataRows = Math.max(0, tableRows.length - 1);
-  const tablePreview = tableRows.slice(0, 5).join("\n");
-  const reviewFailed = result.reviewStatus === "failed";
-  return [
-    result.message,
-    result.usedSkillName ? `分镜方法：${result.usedSkillName}。` : "",
-    result.reviewFailures?.length ? `审核未通过：${result.reviewFailures.join("；")}。` : "",
-    result.reviewWarnings?.length ? `审核提醒：${result.reviewWarnings.join("；")}。` : "",
-    result.reviewRetryInstruction ? `按审核结论重推指令：${result.reviewRetryInstruction}` : "",
-    result.selectedChapterLabels?.length ? `本次章节：${result.selectedChapterLabels.join("、")}。` : "",
-    tableDataRows > 0 && !reviewFailed ? `分镜表已生成 ${tableDataRows} 行并写入章节工作区数据。` : "",
-    tableDataRows > 0 && reviewFailed ? `候选分镜表有 ${tableDataRows} 行，但本次未写入。` : "",
-    tablePreview ? `${reviewFailed ? "候选分镜表预览" : "分镜表预览"}：\n${tablePreview}` : "",
-    result.createdCount > 0 ? `写入分镜 ID：${result.storyboardIds.join(", ")}。` : "",
-    reviewFailed ? "旧分镜保持不变；确认重推前不会覆盖当前章节工作区。" : "",
-  ].filter(Boolean).join("\n");
-}
-
 export async function runDecisionAI(ctx: AgentContext) {
   const { isolationKey, text, userMessageTime, abortSignal, resTool } = ctx;
 
   const memory = new Memory("workspaceAgent", isolationKey);
   await memory.add("user", text, { createTime: userMessageTime });
 
-  if (isDirectStoryboardRegenerationRequest(text)) {
-    const toolResult = await runProjectStoryboardDraftTool(
-      {
-        resTool: ctx.resTool,
-        msg: ctx.msg,
-        sourceText: text,
-        abortSignal,
-      },
-      { force: true },
-    );
-    await memory.add("assistant:decision", formatDirectStoryboardMemory(toolResult), {
-      createTime: new Date(ctx.msg.datetime).getTime(),
-    });
-    return;
-  }
-
   const skill = path.join(u.getPath("skills"), "workspace_agent_decision.md");
   const prompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "workspaceAgent:decisionAgent");
 
   const projectId = resTool.data.projectId;
-  const [projectData, novels, assetRows, workspaceRows] = await Promise.all([
+  const [projectData, novels, assetRows, scripts] = await Promise.all([
     u.db("o_project").where("id", projectId).first(),
     u.db("o_novel").where("projectId", projectId).select("id", "chapter", "chapterIndex", "eventState", "event", "chapterData").orderBy("chapterIndex", "asc"),
     u.db("o_assets").where("projectId", projectId).whereNull("assetsId").select("type").count({ count: "id" }).groupBy("type"),
@@ -131,27 +80,28 @@ export async function runDecisionAI(ctx: AgentContext) {
   ]);
 
   const novelContents = new Map((novels as any[]).map((novel) => [String(novel.chapterData ?? "").trim(), novel]));
-  const workspaceSummaries = (workspaceRows as any[]).map((workspace) => {
-    const matchedNovel = novelContents.get(String(workspace.content ?? "").trim());
+  const scriptSummaries = (scripts as any[]).map((script) => {
+    const matchedNovel = novelContents.get(String(script.content ?? "").trim());
     return {
-      id: workspace.id,
-      name: toPublicWorkspaceName(workspace.name ?? "未命名分镜工作区"),
-      extractState: workspace.extractState,
+      id: script.id,
+      name: script.name ?? "未命名",
+      extractState: script.extractState,
       matchedNovelChapter: matchedNovel ? `第${matchedNovel.chapterIndex}章 ${matchedNovel.chapter ?? ""}`.trim() : null,
     };
   });
   const assetSummary = summarizeAssetRows(assetRows as Array<{ type?: string | null; count?: unknown }>);
   const completedNovelCount = (novels as any[]).filter((novel) => novel.eventState === 1).length;
+  const factBundlePrompt = formatProjectFactBundleForPrompt(await loadProjectFactBundle({ projectId }), { includeProject: true, maxAssets: 20 });
 
   const mem = buildMemPrompt(await memory.get(text));
   const importedChapterEpisodeHint =
-    (novels as any[]).length > workspaceSummaries.length
-      ? `按当前导入形态，应优先按小说章节规划集数：${(novels as any[]).length} 章≈${(novels as any[]).length} 集；内部章节工作区只有 ${workspaceSummaries.length} 条记录，不代表项目只有 ${workspaceSummaries.length} 集。`
+    (novels as any[]).length > scriptSummaries.length
+      ? `按当前导入形态，应优先按小说章节规划集数：${(novels as any[]).length} 章≈${(novels as any[]).length} 集；剧本表只有 ${scriptSummaries.length} 条记录，不代表项目只有 ${scriptSummaries.length} 集。`
       : "";
+  const hasDirectStoryboardIntent = /不(?:想|要).*剧本|跳过.*剧本|忽略.*剧本|不要.*改编|直接.*(?:Seedance|分镜|镜头)|Seedance.*分镜/i.test(text);
   const projectInfo = [
     "## 当前数据库项目级上下文（最高优先级）",
-    "注意：如果 Memory/历史摘要里的工作区数、资产数、章节状态和本段冲突，必须以本段实时数据库状态为准。",
-    "产品路径固定为：小说 -> 资产 -> 分镜表 -> 分镜图 -> 视频。当前项目不使用“改编剧本”步骤，不要建议用户生成、确认或管理改编剧本。",
+    "注意：如果 Memory/历史摘要里的剧本数、资产数、章节状态和本段冲突，必须以本段实时数据库状态为准。",
     `projectId：${projectId}`,
     `项目名称：${projectData?.name ?? "未知"}`,
     `小说类型：${projectData?.type ?? "未知"}`,
@@ -159,14 +109,17 @@ export async function runDecisionAI(ctx: AgentContext) {
     `目标画风：${projectData?.artStyle ?? "无"}`,
     `导演手册：${projectData?.directorManual ?? "无"}`,
     `视频画幅：${projectData?.videoRatio ?? "16:9"}`,
+    "项目事实源优先级：角色事实卡/上传参考图 > 项目硬约束 > 资产描述词 > 视觉手册 > 小说原文。",
+    factBundlePrompt ? `项目事实源 bundle：\n${factBundlePrompt}` : "项目事实源 bundle：当前未提供，按旧项目上下文继续。",
     `小说导入条目数：${(novels as any[]).length}，事件分析完成：${completedNovelCount}/${(novels as any[]).length}`,
     `导入条目列表：${(novels as any[]).map((novel) => `${novel.id}:项目内第${novel.chapterIndex}条（原始名：${novel.chapter ?? ""}）eventState=${novel.eventState}`).join("；") || "无"}`,
     "章节称呼规则：不要无条件跟随用户口误；若用户说第N章但原始名不是第N章，必须说“项目内第N条/原始名xxx”，不能断言原文有第N章。",
     importedChapterEpisodeHint,
     `项目资产数：${Object.values(assetSummary).reduce((sum, value) => sum + value, 0)}（角色${assetSummary.role}，场景${assetSummary.scene}，道具${assetSummary.tool}，其他${assetSummary.other}）`,
-    `内部章节分镜工作区记录数：${workspaceSummaries.length}`,
-    `内部章节分镜工作区记录：${workspaceSummaries.map((workspace) => `${workspace.id}:${workspace.name}${workspace.matchedNovelChapter ? `（内容与${workspace.matchedNovelChapter}原文相同，是章节工作区，不是改编剧本）` : ""}`).join("；") || "无"}`,
-    "沟通要求：不要把内部 o_script/scriptId/episodesId 说成剧本或生产容器；对用户只说小说章节、资产库、分镜表、分镜图、视频。需要保存分镜时自动创建或复用章节分镜工作区。",
+    `剧本表记录数：${scriptSummaries.length}`,
+    `剧本表记录：${scriptSummaries.map((script) => `${script.id}:${script.name}${script.matchedNovelChapter ? `（内容与${script.matchedNovelChapter}原文相同，可能不是用户另写剧本；不要把它当成全项目唯一剧本/唯一集数）` : ""}`).join("；") || "无"}`,
+    "沟通要求：用户没要求走剧本时，不要把剧本当成必经步骤；可直接围绕小说导入条目/事件分析/资产库推进。旧生产表的 scriptId/episodesId 只是工作区键/生产容器，不等于必须先创作正式剧本。",
+    hasDirectStoryboardIntent ? "当前用户命中“跳过正式剧本、直接分镜/Seedance”意图：禁止调用编剧子能力，禁止说必须生成剧本；如果需要工作区键，只能说明可创建/使用原文生产容器，内容来自小说原文或事件摘要。" : "",
   ].filter(Boolean).join("\n");
 
   const { fullStream } = await u.Ai.Text("workspaceAgent:decisionAgent", ctx.thinkConfig.think, ctx.thinkConfig.thinlLevel).stream({
@@ -178,6 +131,8 @@ export async function runDecisionAI(ctx: AgentContext) {
     abortSignal,
     tools: {
       ...memory.getTools(),
+      ...useTools({ resTool: ctx.resTool, msg: ctx.msg, sourceText: text }),
+      ...useNovelWorkflowTools({ resTool: ctx.resTool, msg: ctx.msg, sourceText: text }),
       ...(await createSubAgent(ctx)),
     },
     onFinish: async (completion) => {
@@ -224,8 +179,8 @@ async function createSubAgent(parentCtx: AgentContext) {
       abortSignal,
       tools: {
         ...extraTools,
-        ...useTools({ resTool, msg: subMsg, abortSignal, sourceText: prompt }),
-        ...useNovelWorkflowTools({ resTool, msg: subMsg, abortSignal, sourceText: prompt }),
+        ...useTools({ resTool, msg: subMsg, sourceText: parentCtx.text }),
+        ...useNovelWorkflowTools({ resTool, msg: subMsg, sourceText: parentCtx.text }),
       },
     });
 
@@ -242,21 +197,61 @@ async function createSubAgent(parentCtx: AgentContext) {
     return fullResponse;
   }
 
-  async function delegateProductionAgent(prompt: string) {
-    const workspaces = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime");
-    const scriptId = resTool.data.scriptId;
+  const promptInput = z.object({
+    prompt: z.string().describe("交给子Agent的项目级任务简约描述，100字以内；不要包含虚构的 scriptId"),
+  });
 
-    const systemPrompt = [
-      "# Flova 生产总控",
-      "你是在 Flova 工作台内运行的生产总控，负责把用户的自然语言要求直接落到当前可用工具调用。",
-      "你当前可用的是工具列表中暴露的项目级工具，不是旧 productionAgent 的 run_sub_agent_* 执行层工具；不要尝试调用或提及不可用工具。",
-      "必须优先实际调用工具完成可执行任务，不能只口头说明系统没有入口。",
-      "用户要求重新推理、再次推理、覆盖重推、删除旧分镜后重推时，必须调用 regenerate_project_storyboards，并把用户原话里的章节、时长、对白承载、风格要求完整放入 sourceText/userRequirement。",
-      "调用分镜工具后，最终回复必须以工具返回的 createdCount、selectedChapterIndexes、reviewStatus、reviewFailures、reviewWarnings、reviewRetryInstruction、message 为准；如果 reviewStatus=failed，必须明确说明未写入旧分镜未覆盖，并询问用户是否按审核结论再次生成。",
-      "常用工具：get_project_overview、get_project_novel_status、generate_project_storyboard_draft、regenerate_project_storyboards、list_project_director_boards、generate_project_director_boards、regenerate_project_director_board、generate_video_prompt_from_references、submit_video_generation_from_references、list_project_assets。",
-      "用户指定章节、jubenN、导演板 ID、分镜 ID、资产 ID、模型、质量、时长、分辨率、mode、是否参考上一张导演板时，必须把这些约束传入工具参数。",
-      "对用户只说小说章节、资产库、分镜表、章节导演板、分镜图、视频；不要说改编剧本、生产容器或内部表名。",
+  async function delegateScriptAgent(prompt: string) {
+    const skill = path.join(u.getPath("skills"), "script_agent_decision.md");
+    const systemPrompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "scriptAgent:decisionAgent");
+    const [projectData, novelData, scriptList] = await Promise.all([
+      u.db("o_project").where("id", resTool.data.projectId).first(),
+      u.db("o_novel").where("projectId", resTool.data.projectId).select("chapterIndex"),
+      u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime"),
+    ]);
+
+    const projectInfo = [
+      "## 项目级编剧上下文",
+      `projectId：${resTool.data.projectId}`,
+      `小说名称：${projectData?.name ?? "未知"}`,
+      `小说类型：${projectData?.type ?? "未知"}`,
+      `小说简介：${projectData?.intro ?? "无"}`,
+      `目标画风：${projectData?.artStyle ?? "无"}`,
+      `视频画幅：${projectData?.videoRatio ?? "16:9"}`,
+      `章节数量：${novelData.length}章`,
+      `已有剧本：${scriptList.map((s: any) => `${s.id}:${s.name ?? "未命名"}`).join("，") || "无"}`,
     ].join("\n");
+
+    return runAgent({
+      key: "scriptAgent:decisionAgent",
+      prompt,
+      system: systemPrompt,
+      name: "编剧总控",
+      memoryKey: "assistant:delegation:scriptAgent",
+      messages: [
+        { role: "assistant", content: projectInfo },
+        { role: "user", content: prompt },
+      ],
+    });
+  }
+
+  async function delegateProductionAgent(prompt: string) {
+    const scripts = await u.db("o_script").where("projectId", resTool.data.projectId).select("id", "name", "extractState", "createTime");
+    const scriptId = resTool.data.scriptId;
+    const needsScript = /分镜| storyboard|storyboard|导演|拍摄|视频|生产|生成视频|镜头/i.test(prompt);
+
+    if (!scriptId && needsScript) {
+      return {
+        status: "workspace_key_required",
+        projectId: resTool.data.projectId,
+        message:
+          "旧生产工作台的分镜/导演计划/视频生产数据当前仍需要一个 scriptId/episodesId 作为工作区键。这个键只是生产容器，不等于必须生成正式改编剧本；若用户要求跳过剧本，应创建或选择一个‘小说原文/事件摘要生产容器’，内容来自小说原文或事件摘要，再继续分镜。",
+        scripts,
+      };
+    }
+
+    const skill = path.join(u.getPath("skills"), "production_agent_decision.md");
+    const systemPrompt = getSkillContentForAgent(await fs.promises.readFile(skill, "utf-8"), "productionAgent:decisionAgent");
     const [projectData, assets] = await Promise.all([
       u.db("o_project").where("id", resTool.data.projectId).first(),
       u
@@ -266,22 +261,18 @@ async function createSubAgent(parentCtx: AgentContext) {
         .select("id", "name", "type", "describe", "prompt")
         .orderBy("id", "asc"),
     ]);
+    const factBundlePrompt = formatProjectFactBundleForPrompt(await loadProjectFactBundle({ projectId: resTool.data.projectId }), { includeProject: true, maxAssets: 30 });
 
     const productionContext = [
       "## 项目级生产上下文",
-      "你是生产总控，负责把用户的自然语言要求落到工具调用：分镜表、章节导演板、视频提示词、视频生成。必须实际调用工具完成可执行任务，不能只口头说明。",
-      "分镜覆盖重推必须走 regenerate_project_storyboards；不要自己生成质量校验结论，不要沿用历史失败摘要。工具已经会处理 JSON 失败、时长不足和稳定兜底。",
-      "章节导演板能力：可生成 continuity 空间连续性导演板、textStoryboard 文字分镜导演板、hybridStoryboard 融合导演板；用户明确要求上一张作连续性参考时才开启 usePreviousBoardReference。",
-      "视频能力：可按 directorBoardIds/storyboardIds/assetIds 自动生成视频提示词，也可直接提交视频生成；选择导演板时应自动带入导演板绑定资产作为参考，避免让用户手动逐个选择。",
-      "模型与质量：用户指定图像/视频模型、1K/2K/4K、分辨率、时长、音频或 mode 时，必须把这些参数传给对应工具；未指定时才使用项目默认配置。",
       `projectId：${resTool.data.projectId}`,
-      `当前章节分镜工作区ID：${scriptId ?? "未指定，必要时由工具按小说章节自动创建或复用"}`,
+      `scriptId：${scriptId ?? "未指定"}`,
       `项目名称：${projectData?.name ?? "未知"}`,
       `目标画风：${projectData?.artStyle ?? "无"}`,
+      "项目事实源优先级：角色事实卡/上传参考图 > 项目硬约束 > 资产描述词 > 视觉手册 > 小说原文。",
+      factBundlePrompt ? `项目事实源 bundle：\n${factBundlePrompt}` : "项目事实源 bundle：当前未提供，按旧资产库继续。",
       `资产库：${JSON.stringify(assets).slice(0, 12000)}`,
-      `已有章节分镜工作区：${workspaces.map((s: any) => `${s.id}:${toPublicWorkspaceName(s.name ?? "未命名分镜工作区")}`).join("，") || "无"}`,
-      "本项目不走改编剧本步骤；生产流程必须使用小说章节/事件分析、项目资产库、分镜表、分镜图、视频。",
-      "如果工具返回需要指定章节工作区，不要说“生产容器”；请让用户按小说章节或章节工作区名称选择。",
+      `可用剧本：${scripts.map((s: any) => `${s.id}:${s.name ?? "未命名"}`).join("，") || "无"}`,
     ].join("\n");
 
     return runAgent({
@@ -294,48 +285,6 @@ async function createSubAgent(parentCtx: AgentContext) {
         { role: "assistant", content: productionContext },
         { role: "user", content: prompt },
       ],
-    });
-  }
-
-  async function delegateAssetAgent(prompt: string) {
-    const [projectData, novels, assets, skills] = await Promise.all([
-      u.db("o_project").where("id", resTool.data.projectId).first(),
-      u.db("o_novel").where("projectId", resTool.data.projectId).select("id", "chapter", "chapterIndex", "eventState").orderBy("chapterIndex", "asc"),
-      u
-        .db("o_assets")
-        .leftJoin("o_image", "o_assets.imageId", "o_image.id")
-        .where("o_assets.projectId", resTool.data.projectId)
-        .whereNull("o_assets.assetsId")
-        .select("o_assets.id", "o_assets.name", "o_assets.type", "o_assets.describe", "o_assets.prompt", "o_assets.imageId", "o_image.state as imageState")
-        .orderBy("o_assets.id", "asc"),
-      getWorkspaceSkillCatalog(Number(resTool.data.projectId)),
-    ]);
-    const assetContext = [
-      "## 资产子控上下文",
-      "你是资产子控，负责小说资产提取、资产库维护、角色/场景/道具参考图生成。必须实际调用工具完成可执行任务，不能只口头说明。",
-      "所有资产出图必须先判断用户真实意图，再选择生图模式：",
-      "- 用户说全新、重新设计、新形象、不要参考原图、只按文字生成：generationMode=fresh_design，referencePolicy=none，useExistingAssetReference=false。",
-      "- 用户明确说参考现有图、沿用当前图、基于原图修改：generationMode=partial_edit 或 reference_redraw，referencePolicy=current_asset。",
-      "- 用户只说重绘、修改、改成但没说明是否参考：先向用户确认，不要直接提交任务。",
-      "- 不得因为资产已有图片就自动作为参考图；参考图只能来自用户明确要求或工具参数 referencePolicy=current_asset。",
-      "- 用户指定 1K/2K/4K、低质量/标准质量/高质量时，必须在资产出图工具里填写 imageQuality；不要被项目默认质量覆盖。",
-      "- 用户指定出图模型、生图预设/skill、并发时，必须填写 imageModel、skillId、concurrentCount；不要被项目默认模型或旧预设覆盖。",
-      `projectId：${resTool.data.projectId}`,
-      `项目名称：${projectData?.name ?? "未知"}`,
-      `项目类型：${projectData?.type ?? "未知"}`,
-      `项目简介：${projectData?.intro ?? "无"}`,
-      `目标画风：${projectData?.artStyle ?? "无"}`,
-      `小说条目：${(novels as any[]).map((novel) => `${novel.id}:项目内第${novel.chapterIndex}条/原始名${novel.chapter ?? ""}/eventState=${novel.eventState}`).join("；") || "无"}`,
-      `资产库：${JSON.stringify(assets).slice(0, 16000)}`,
-      `可用技能：${JSON.stringify((skills as any[]).filter((skill) => skill.source === "image_generation")).slice(0, 8000)}`,
-    ].join("\n");
-
-    return runAgent({
-      key: "workspaceAgent:decisionAgent",
-      prompt,
-      system: assetContext,
-      name: "资产总控",
-      memoryKey: "assistant:delegation:assetAgent",
     });
   }
 
@@ -368,14 +317,14 @@ async function createSubAgent(parentCtx: AgentContext) {
   }
 
   async function delegateDomainAgent(agentId: WorkspaceDomainAgentId, prompt: string) {
-    if (agentId === "asset") return delegateAssetAgent(prompt);
+    if (agentId === "script") return delegateScriptAgent(prompt);
     if (agentId === "production") return delegateProductionAgent(prompt);
     return buildAssetReferencePlan(prompt);
   }
 
   const list_available_agents = tool({
     description: "列出 Flova 可转交的领域子控目录。总控做路由决策前优先调用。",
-    inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
+    inputSchema: z.object({}),
     execute: async () => ({
       projectId: resTool.data.projectId,
       agents: getWorkspaceDomainAgentCatalog(),
@@ -385,7 +334,7 @@ async function createSubAgent(parentCtx: AgentContext) {
 
   const list_available_skills = tool({
     description: "列出当前项目可用的 skills 目录；只用于选择路线和说明能力，不直接激活所有技能。",
-    inputSchema: toToolJsonSchema<Record<string, never>>(z.object({})),
+    inputSchema: z.object({}),
     execute: async () => ({
       projectId: resTool.data.projectId,
       skills: await getWorkspaceSkillCatalog(Number(resTool.data.projectId)),
@@ -394,17 +343,40 @@ async function createSubAgent(parentCtx: AgentContext) {
 
   const delegate_agent = tool({
     description: "统一转交给领域子控。优先使用这个工具，而不是直接调用具体旧工具；叶子子 Agent 和 skills 由领域子控自行调度。",
-    inputSchema: toToolJsonSchema<{ agentId: WorkspaceDomainAgentId; prompt: string }>(z.object({
+    inputSchema: z.object({
       agentId: z.enum(WORKSPACE_DOMAIN_AGENT_IDS).describe("要转交的领域子控"),
-      prompt: z.string().describe("交给领域子控的项目级任务描述，100字以内"),
-    })),
+      prompt: z.string().describe("交给领域子控的项目级任务描述，100字以内；不要包含虚构的 scriptId"),
+    }),
     execute: async ({ agentId, prompt }) => delegateDomainAgent(agentId, prompt),
+  });
+
+  const run_script_agent_for_project = tool({
+    description: "兼容旧提示词：项目级转交编剧决策 Agent。新流程优先调用 delegate_agent(agentId='script')。",
+    inputSchema: promptInput,
+    execute: async ({ prompt }) => delegateScriptAgent(prompt),
+  });
+
+  const run_production_agent_for_assets = tool({
+    description: "兼容旧提示词：项目级资产/生产转交工具。新流程优先调用 delegate_agent(agentId='production')。",
+    inputSchema: promptInput,
+    execute: async ({ prompt }) => delegateProductionAgent(prompt),
+  });
+
+  const run_asset_reference_generation_plan = tool({
+    description: "兼容旧提示词：基于项目级资产库规划参考图。新流程优先调用 delegate_agent(agentId='asset_reference_planner')。",
+    inputSchema: z.object({
+      focus: z.string().optional().describe("可选：计划关注点，例如优先主角、重点场景、缺图资产等"),
+    }),
+    execute: async ({ focus }) => buildAssetReferencePlan(focus),
   });
 
   return {
     list_available_agents,
     list_available_skills,
     delegate_agent,
+    run_script_agent_for_project,
+    run_production_agent_for_assets,
+    run_asset_reference_generation_plan,
   };
 }
 

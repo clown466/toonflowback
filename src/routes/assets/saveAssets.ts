@@ -5,8 +5,11 @@ import { v4 as uuidv4 } from "uuid";
 import { error, success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
 import sharp from "sharp";
-import { queueRoleFactCardVisionRefresh, syncRoleFactCardFallback, type SyncRoleFactCardResult } from "@/services/roleFactCard";
+import { normalizeAssetSourcePrompt } from "@/services/assetImageGeneration";
 const router = express.Router();
+
+const MAX_ASSET_IMAGE_SIDE = 2048;
+const ASSET_IMAGE_WEBP_QUALITY = 92;
 
 // 保存资产图片
 export default router.post(
@@ -21,19 +24,30 @@ export default router.post(
   }),
   async (req, res) => {
     const { id, base64, type, prompt, projectId, imageId } = req.body;
-    let roleFactCardResult: SyncRoleFactCardResult | null = null;
+    const asset = await u.db("o_assets").where("id", id).select("name", "describe").first();
+    const sourcePrompt = normalizeAssetSourcePrompt(prompt, asset?.describe || asset?.name || "");
+    const assetPatch = imageId === undefined ? { prompt: sourcePrompt } : { prompt: sourcePrompt, imageId };
     if (base64) {
       //自定义上传选择的图片
       const matches = base64.match(/^data:image\/\w+;base64,(.+)$/);
       const realBase64 = (matches ? matches[1] : base64).replace(/\s/g, "");
       let imageBuffer: Buffer;
       try {
-        imageBuffer = await sharp(Buffer.from(realBase64, "base64")).rotate().png().toBuffer();
+        imageBuffer = await sharp(Buffer.from(realBase64, "base64"))
+          .rotate()
+          .resize({
+            width: MAX_ASSET_IMAGE_SIDE,
+            height: MAX_ASSET_IMAGE_SIDE,
+            fit: "inside",
+            withoutEnlargement: true,
+          })
+          .webp({ quality: ASSET_IMAGE_WEBP_QUALITY, effort: 4 })
+          .toBuffer();
       } catch {
         return res.status(400).send(error("上传图片格式不支持或文件已损坏"));
       }
       // 生成新的图片路径
-      const savePath = `/${projectId}/${type}/${uuidv4()}.png`;
+      const savePath = `/${projectId}/${type}/${uuidv4()}.webp`;
       // 写入文件
       await u.oss.writeFile(savePath, imageBuffer);
       // 插入图片表
@@ -48,26 +62,15 @@ export default router.post(
         .db("o_assets")
         .where("id", id)
         .update({
-          prompt: prompt ?? "",
+          prompt: sourcePrompt,
           imageId: idData,
         });
-      if (type === "role") {
-        roleFactCardResult = await syncRoleFactCardFallback(id, projectId);
-        queueRoleFactCardVisionRefresh(id, projectId, `data:image/png;base64,${imageBuffer.toString("base64")}`);
-      }
     } else {
       await u
         .db("o_assets")
         .where("id", id)
-        .update({
-          prompt: prompt ?? "",
-          imageId: imageId,
-        });
-      if (type === "role") {
-        roleFactCardResult = await syncRoleFactCardFallback(id, projectId);
-        queueRoleFactCardVisionRefresh(id, projectId);
-      }
+        .update(assetPatch);
     }
-    res.status(200).send(success({ message: "保存资产图片成功", roleFactCard: roleFactCardResult?.card ?? null }));
+    res.status(200).send(success({ message: "保存资产图片成功" }));
   },
 );

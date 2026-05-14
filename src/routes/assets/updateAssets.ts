@@ -3,7 +3,7 @@ import u from "@/utils";
 import { z } from "zod";
 import { success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
-import { id } from "zod/locales";
+import { normalizeAssetSourcePrompt } from "@/services/assetImageGeneration";
 const router = express.Router();
 
 // 更新资产
@@ -22,7 +22,7 @@ export default router.post(
       name,
       describe,
       remark,
-      prompt,
+      prompt: normalizeAssetSourcePrompt(prompt, describe || name || ""),
     });
     res.status(200).send(success({ message: "更新资产成功" }));
   },

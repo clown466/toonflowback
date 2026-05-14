@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import isPathInside from "is-path-inside";
 import u from "@/utils";
+import { buildProjectContextBundle } from "@/services/projectContext";
 
 export type ImageGenerationAssetType = "role" | "scene" | "tool";
 
@@ -24,6 +25,8 @@ export interface ImageGenerationPromptContext {
     type?: string | null;
     artStyle?: string | null;
     directorManual?: string | null;
+    constraints?: string | null;
+    boundSkills?: string | null;
   };
   asset: {
     id: number;
@@ -31,155 +34,54 @@ export interface ImageGenerationPromptContext {
     name: string;
     describe?: string | null;
     prompt?: string | null;
+    factCard?: string | null;
+    negativeFacts?: string | null;
   };
   visualManual: string;
   userRequirement?: string | null;
-  timeEnvironmentContext?: string | null;
-  neutralAssetLighting?: string | null;
+  conflictPriority?: string | null;
+}
+
+export interface ProjectFactBundle {
+  project?: {
+    constraints?: unknown;
+    hardConstraints?: unknown;
+    boundSkills?: unknown;
+  } | null;
+  projectConstraints?: {
+    content?: unknown;
+  } | null;
+  projectSkillContents?: Array<{
+    source?: string | null;
+    path?: string | null;
+    content?: unknown;
+  }> | null;
+  roleFactCards?: Array<{
+    id?: string | null;
+    assetId?: number | string | null;
+    roleName?: string | null;
+    facts?: unknown;
+    negativeFacts?: unknown;
+    sourceType?: string | null;
+    confidence?: number | null;
+  }> | null;
+  assets?: Array<{
+    id?: number | string | null;
+    assetId?: number | string | null;
+    name?: string | null;
+    type?: string | null;
+    factCard?: unknown;
+    negativeFacts?: unknown;
+    constraints?: unknown;
+  }> | null;
+  priority?: unknown;
+  conflictPriority?: unknown;
 }
 
 const SKILL_DIR = "image_generation_skills";
-const BUILTIN_IMAGE_GENERATION_SKILLS: Record<string, string> = {
-  role_standard_four_view: `---
-name: 角色标准四视图
-description: 生成角色正面、侧面、背面、四分之三角度设定图
-targetTypes: role
-tags: 角色,四视图,设定图,标准图
-aspectRatio: 16:9
----
-你是角色资产设计师。
+const DEFAULT_SCENE_FOUR_PANEL_ID = "scene_four_panel_multi_angle";
 
-生成一张角色标准四视图设定图：
-1. 正面
-2. 侧面
-3. 背面
-4. 四分之三角度
-
-保持同一个角色、同一服装、同一比例、同一材质。
-如果角色是拟人化水果/fruit 角色，必须明确具体水果原型，例如青梨、绿苹果、柠檬、桃子、草莓、猕猴桃等；禁止只写“水果角色”“变异水果”“fruit character”。
-使用中性展示光和干净背景，不绑定剧情时间、天气或场景光。
-不要生成文字、水印、字幕、UI。
-
-视觉手册：
-{{visualManual}}
-
-项目：
-- 名称：{{project.name}}
-- 画风：{{project.artStyle}}
-- 导演手册：{{project.directorManual}}
-
-角色：
-- 名称：{{asset.name}}
-- 描述：{{asset.describe}}
-- 资产提示词：{{asset.prompt}}
-
-用户额外要求：
-{{userRequirement}}
-`,
-  role_face_closeup_three_view: `---
-name: 角色脸部特写+三视图
-description: 左侧脸部特写，右侧正面、侧面、背面三视图
-targetTypes: role
-tags: 角色,脸部特写,三视图,四视图,设定图,标准图
-aspectRatio: 16:9
----
-你是角色资产设计师。
-
-生成一张角色资产设定图，画面从左到右分为四个区域：
-1. 左侧：大尺寸脸部/头肩特写，清楚展示脸部、眼睛、嘴、表情、头部轮廓、材质、妆容、头部配件或水果原型细节。
-2. 右侧第一栏：正面全身。
-3. 右侧第二栏：侧面全身。
-4. 右侧第三栏：背面全身。
-
-保持同一个角色、同一服装、同一比例、同一材质。
-脸部特写必须与右侧三视图完全是同一个角色，不得变成另一个角色。
-如果角色是拟人化水果/fruit 角色，必须明确具体水果原型，例如青梨、绿苹果、柠檬、桃子、草莓、猕猴桃等；禁止只写“水果角色”“变异水果”“fruit character”。
-使用中性展示光和干净背景，不绑定剧情时间、天气或场景光。
-不要生成文字、水印、字幕、UI。
-
-视觉手册：
-{{visualManual}}
-
-项目：
-- 名称：{{project.name}}
-- 画风：{{project.artStyle}}
-- 导演手册：{{project.directorManual}}
-
-角色：
-- 名称：{{asset.name}}
-- 描述：{{asset.describe}}
-- 资产提示词：{{asset.prompt}}
-
-用户额外要求：
-{{userRequirement}}
-`,
-  role_single_reference: `---
-name: 角色单张标准参考
-description: 生成单个角色的清晰全身资产参考图
-targetTypes: role
-tags: 角色,单图,全身,参考图,标准图
-aspectRatio: 1:1
----
-你是角色资产设计师。
-
-生成一张单角色全身资产参考图。
-角色需要占画面主体，轮廓清楚，外观特征、服装、道具、材质清晰可见。
-使用中性展示光和简洁背景，适合作为后续分镜、导演板和视频生成的角色参考图。
-不要生成四视图，不要生成故事场景，不要生成文字、水印、字幕、UI。
-
-视觉手册：
-{{visualManual}}
-
-项目：
-- 名称：{{project.name}}
-- 画风：{{project.artStyle}}
-- 导演手册：{{project.directorManual}}
-
-角色：
-- 名称：{{asset.name}}
-- 描述：{{asset.describe}}
-- 资产提示词：{{asset.prompt}}
-
-用户额外要求：
-{{userRequirement}}
-`,
-  scene_top_down_panorama: `---
-name: 场景俯视全景参考
-description: 生成场景鸟瞰/俯视空间布局图，适合分镜调度和导演板参考
-targetTypes: scene
-tags: 场景,俯视,鸟瞰,全景,空间布局,地图,调度
-aspectRatio: 16:9
----
-你是场景资产设计师。
-
-生成一张场景俯视全景参考图。
-视角必须是 top-down / bird's-eye view / overhead map，像室内平面布局参考或鸟瞰地图。
-严禁使用 eye-level view、normal perspective、cinematic establishing shot、front exterior view、street-level view。
-重点展示完整空间布局、入口、主要家具、关键道具、可行动区域、摄像机友好空间和灯光方向。
-这是后续分镜、导演板和视频生成的权威场景参考图。
-不要出现角色、人物、对白、字幕、UI、水印。
-除非用户明确要求，尽量不要在画面内写文字标签。
-
-视觉手册：
-{{visualManual}}
-
-项目：
-- 名称：{{project.name}}
-- 画风：{{project.artStyle}}
-- 导演手册：{{project.directorManual}}
-
-场景：
-- 名称：{{asset.name}}
-- 描述：{{asset.describe}}
-- 资产提示词：{{asset.prompt}}
-
-时间/环境约束：
-{{timeEnvironmentContext}}
-
-用户额外要求：
-{{userRequirement}}
-`,
-  scene_four_panel_multi_angle: `---
+const DEFAULT_SCENE_FOUR_PANEL_MD = `---
 name: 场景四宫格多景别
 description: 生成同一场景的4景别、多角度四宫格设定图
 targetTypes: scene
@@ -203,117 +105,30 @@ aspectRatio: 16:9
 项目风格：
 {{project.artStyle}}
 
+项目硬约束：
+{{project.constraints}}
+
+项目绑定技能/风格约束：
+{{project.boundSkills}}
+
 场景名称：
 {{asset.name}}
+
+资产事实卡：
+{{asset.factCard}}
+
+资产反向事实/禁止项：
+{{asset.negativeFacts}}
 
 场景描述：
 {{asset.describe}}
 
-资产提示词：
+资产描述词：
 {{asset.prompt}}
 
 用户额外要求：
 {{userRequirement}}
-`,
-  scene_cinematic_establishing: `---
-name: 场景电影全景参考
-description: 生成单张电影化场景全景图，强调氛围、空间和关键道具
-targetTypes: scene
-tags: 场景,全景,氛围,电影感,参考图
-aspectRatio: 16:9
----
-你是场景资产设计师。
-
-生成一张单场景电影化全景参考图。
-重点展示场景整体氛围、空间深度、建筑结构、关键道具、主光方向和色彩关系。
-不要出现角色、人物、对白、字幕、UI、水印。
-画面需要适合作为后续分镜、导演板和视频生成的场景参考。
-
-视觉手册：
-{{visualManual}}
-
-项目：
-- 名称：{{project.name}}
-- 画风：{{project.artStyle}}
-- 导演手册：{{project.directorManual}}
-
-场景：
-- 名称：{{asset.name}}
-- 描述：{{asset.describe}}
-- 资产提示词：{{asset.prompt}}
-
-时间/环境约束：
-{{timeEnvironmentContext}}
-
-用户额外要求：
-{{userRequirement}}
-`,
-  tool_standard_reference: `---
-name: 道具标准参考图
-description: 生成单个道具的清晰资产参考图
-targetTypes: tool
-tags: 道具,单图,标准图,参考图
-aspectRatio: 1:1
----
-你是道具资产设计师。
-
-生成一张单道具标准资产参考图。
-道具需要占画面主体，轮廓、材质、颜色、磨损、结构和可识别细节清楚。
-使用中性展示光和简洁背景，不绑定剧情时间、天气或场景光。
-不要生成角色、人物、文字、水印、字幕、UI。
-
-视觉手册：
-{{visualManual}}
-
-项目：
-- 名称：{{project.name}}
-- 画风：{{project.artStyle}}
-- 导演手册：{{project.directorManual}}
-
-道具：
-- 名称：{{asset.name}}
-- 描述：{{asset.describe}}
-- 资产提示词：{{asset.prompt}}
-
-用户额外要求：
-{{userRequirement}}
-`,
-  tool_multi_angle_reference: `---
-name: 道具多角度参考
-description: 生成同一道具的正面、侧面、背面和细节多角度设定图
-targetTypes: tool
-tags: 道具,多角度,四视图,细节,设定图
-aspectRatio: 16:9
----
-你是道具资产设计师。
-
-生成一张同一道具的多角度设定图：
-1. 正面
-2. 侧面
-3. 背面
-4. 关键细节特写
-
-保持同一个道具、同一材质、同一颜色和同一结构。
-使用中性展示光和干净背景，适合作为后续分镜、导演板和视频生成的道具参考。
-不要生成角色、人物、文字、水印、字幕、UI。
-
-视觉手册：
-{{visualManual}}
-
-项目：
-- 名称：{{project.name}}
-- 画风：{{project.artStyle}}
-- 导演手册：{{project.directorManual}}
-
-道具：
-- 名称：{{asset.name}}
-- 描述：{{asset.describe}}
-- 资产提示词：{{asset.prompt}}
-
-用户额外要求：
-{{userRequirement}}
-`,
-};
+`;
 
 function rootDir() {
   const dir = u.getPath(["skills", SKILL_DIR]);
@@ -323,41 +138,8 @@ function rootDir() {
 }
 
 function ensureBuiltinSkills(dir: string) {
-  for (const [id, content] of Object.entries(BUILTIN_IMAGE_GENERATION_SKILLS)) {
-    const filePath = path.join(dir, `${id}.md`);
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, content, "utf-8");
-    } else {
-      patchBuiltinSkillIfNeeded(id, filePath);
-    }
-  }
-}
-
-function patchBuiltinSkillIfNeeded(id: string, filePath: string) {
-  const content = fs.readFileSync(filePath, "utf-8");
-  if (id === "scene_top_down_panorama") {
-    if (content.includes("严禁使用 eye-level view")) return;
-    const next = content.replace(
-      "视角：top-down / bird's-eye view / overhead map。",
-      [
-        "视角必须是 top-down / bird's-eye view / overhead map，像室内平面布局参考或鸟瞰地图。",
-        "严禁使用 eye-level view、normal perspective、cinematic establishing shot、front exterior view、street-level view。",
-      ].join("\n"),
-    );
-    if (next !== content) fs.writeFileSync(filePath, next, "utf-8");
-    return;
-  }
-  if (id === "role_standard_four_view") {
-    if (content.includes("必须明确具体水果原型")) return;
-    const next = content.replace(
-      "保持同一个角色、同一服装、同一比例、同一材质。",
-      [
-        "保持同一个角色、同一服装、同一比例、同一材质。",
-        "如果角色是拟人化水果/fruit 角色，必须明确具体水果原型，例如青梨、绿苹果、柠檬、桃子、草莓、猕猴桃等；禁止只写“水果角色”“变异水果”“fruit character”。",
-      ].join("\n"),
-    );
-    if (next !== content) fs.writeFileSync(filePath, next, "utf-8");
-  }
+  const filePath = path.join(dir, `${DEFAULT_SCENE_FOUR_PANEL_ID}.md`);
+  if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, DEFAULT_SCENE_FOUR_PANEL_MD, "utf-8");
 }
 
 function normalizeId(value: string) {
@@ -514,4 +296,90 @@ export async function resolveImageGenerationSkill(options: {
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score);
   return ranked[0] ? getImageGenerationSkill(ranked[0].skill.id) : null;
+}
+
+function stringifyFactValue(value: unknown, maxLength = 4000) {
+  if (value == null) return "";
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function toIdSet(values?: number[]) {
+  return new Set((values ?? []).filter((value) => Number.isInteger(value) && value > 0));
+}
+
+function adaptProjectContextBundle(bundle: ProjectFactBundle | null | undefined): ProjectFactBundle | null {
+  if (!bundle) return null;
+  const projectConstraints = stringifyFactValue(bundle.projectConstraints?.content);
+  const boundSkills = (bundle.projectSkillContents ?? [])
+    .map((skill) => {
+      const label = [skill.source, skill.path].filter(Boolean).join(":");
+      const content = stringifyFactValue(skill.content, 1200);
+      return content ? `${label ? `${label} ` : ""}${content}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+  const roleFactAssets = (bundle.roleFactCards ?? []).map((card) => ({
+    assetId: card.assetId,
+    name: card.roleName,
+    type: "role",
+    factCard: card.facts,
+    negativeFacts: card.negativeFacts,
+  }));
+
+  return {
+    ...bundle,
+    project: {
+      ...(bundle.project ?? {}),
+      constraints: bundle.project?.constraints ?? bundle.project?.hardConstraints ?? projectConstraints,
+      hardConstraints: bundle.project?.hardConstraints ?? projectConstraints,
+      boundSkills: bundle.project?.boundSkills ?? boundSkills,
+    },
+    assets: [...(bundle.assets ?? []), ...roleFactAssets],
+  };
+}
+
+export async function loadProjectFactBundle(input: { projectId: number; assetId?: number; assetIds?: number[] }): Promise<ProjectFactBundle | null> {
+  try {
+    return adaptProjectContextBundle((await buildProjectContextBundle(input.projectId)) as ProjectFactBundle);
+  } catch (error) {
+    console.warn("[projectFactBundle] projectContext load failed", u.error(error).message);
+    return null;
+  }
+}
+
+export function formatProjectFactBundleForPrompt(
+  bundle: ProjectFactBundle | null | undefined,
+  options: { assetId?: number; assetIds?: number[]; includeProject?: boolean; maxAssets?: number } = {},
+) {
+  if (!bundle) return "";
+  const lines: string[] = [];
+  const includeProject = options.includeProject ?? true;
+  const idSet = toIdSet(options.assetIds);
+  if (options.assetId) idSet.add(options.assetId);
+
+  if (includeProject) {
+    const constraints = stringifyFactValue(bundle.project?.constraints ?? bundle.project?.hardConstraints);
+    const boundSkills = stringifyFactValue(bundle.project?.boundSkills);
+    if (constraints) lines.push(`项目硬约束：${constraints}`);
+    if (boundSkills) lines.push(`项目绑定技能/风格约束：${boundSkills}`);
+  }
+
+  const assets = (bundle.assets ?? []).filter((asset) => {
+    if (!idSet.size) return true;
+    const id = Number(asset.assetId ?? asset.id);
+    return idSet.has(id);
+  });
+  for (const asset of assets.slice(0, options.maxAssets ?? 12)) {
+    const id = asset.assetId ?? asset.id ?? "";
+    const name = asset.name ? ` ${asset.name}` : "";
+    const factCard = stringifyFactValue(asset.factCard ?? asset.constraints);
+    const negativeFacts = stringifyFactValue(asset.negativeFacts);
+    if (factCard) lines.push(`资产事实卡${id ? ` #${id}` : ""}${name}：${factCard}`);
+    if (negativeFacts) lines.push(`资产反向事实/禁止项${id ? ` #${id}` : ""}${name}：${negativeFacts}`);
+  }
+
+  const priority = stringifyFactValue(bundle.conflictPriority ?? bundle.priority);
+  if (priority) lines.push(`冲突优先级：${priority}`);
+  return lines.join("\n");
 }

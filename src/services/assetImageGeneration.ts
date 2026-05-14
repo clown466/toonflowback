@@ -2,13 +2,13 @@ import pLimit from "p-limit";
 import { v4 as uuidv4 } from "uuid";
 import u from "@/utils";
 import {
+  formatProjectFactBundleForPrompt,
   getVisualManualForAssetType,
   ImageGenerationAssetType,
+  loadProjectFactBundle,
   renderImageGenerationSkillPrompt,
   resolveImageGenerationSkill,
 } from "@/services/imageGenerationSkill";
-import { inferTimeEnvironment, buildNeutralAssetLightingText } from "@/services/timeEnvironmentInference";
-import { decideAssetImageIntent, type AssetImageGenerationMode, type AssetImagePromptPolicy, type AssetImageReferencePolicy } from "@/services/assetImageIntent";
 
 type AssetType = "role" | "scene" | "tool";
 
@@ -28,10 +28,8 @@ export interface AssetImageGenerationItem {
   describe?: string | null;
   base64?: string | null;
   skillId?: string | null;
-  generationMode?: AssetImageGenerationMode | null;
-  referencePolicy?: AssetImageReferencePolicy | null;
-  promptPolicy?: AssetImagePromptPolicy | null;
   userRequirement?: string | null;
+  promptMode?: "source" | "final";
 }
 
 export interface SubmitAssetImageGenerationInput {
@@ -40,9 +38,6 @@ export interface SubmitAssetImageGenerationInput {
   resolution: "1K" | "2K" | "4K" | string;
   concurrentCount?: number;
   skillId?: string | null;
-  generationMode?: AssetImageGenerationMode | null;
-  referencePolicy?: AssetImageReferencePolicy | null;
-  promptPolicy?: AssetImagePromptPolicy | null;
   userRequirement?: string | null;
   items: AssetImageGenerationItem[];
   onStatusChange?: (event: AssetImageGenerationStatusEvent) => void | Promise<void>;
@@ -56,7 +51,25 @@ export interface AssetImageGenerationStatusEvent {
   src?: string | null;
   filePath?: string | null;
   errorReason?: string | null;
-  fallbackImageId?: number | null;
+}
+
+export function normalizeAssetSourcePrompt(prompt?: string | null, fallback?: string | null) {
+  const raw = String(prompt ?? "").trim();
+  const fallbackText = String(fallback ?? "").trim();
+  if (!raw) return fallbackText;
+
+  const extracted = raw.match(/-\s*描述词[:：]\s*([\s\S]*?)\n\s*-\s*用户额外要求[:：]/)?.[1]?.trim();
+  if (extracted) return extracted;
+
+  const assetSettingBlock = raw.match(/\*\*[^*\n]*(?:角色|场景|道具|资产)[^*\n]*设定[:：]?\*\*\s*([\s\S]*?)(?:\n\s*请严格|\n\s*请根据|\n\s*$)/)?.[1] ?? "";
+  const blockExtracted = assetSettingBlock.match(/-\s*描述词[:：]\s*([\s\S]*?)(?:\n\s*-\s*|$)/)?.[1]?.trim();
+  if (blockExtracted) return blockExtracted;
+
+  if (/冲突优先级|项目事实源\s*bundle|角色事实卡\/上传参考图|请根据以下参数生成/.test(raw)) {
+    return fallbackText;
+  }
+
+  return raw;
 }
 
 const assetTypeConfig: Record<AssetType, AssetTypeConfig> = {
@@ -85,45 +98,115 @@ const assetTypeConfig: Record<AssetType, AssetTypeConfig> = {
 
 function buildPrompt(
   cfg: AssetTypeConfig,
-  project: { artStyle?: string | null; type?: string | null; intro?: string | null },
-  name: string,
-  prompt: string,
+  project: { artStyle?: string | null; type?: string | null; intro?: string | null; constraints?: string | null; boundSkills?: string | null },
+  asset: { name: string; prompt: string; factCard?: string | null; negativeFacts?: string | null },
   visualManual: string,
   userRequirement?: string | null,
-  options?: { timeEnvironmentContext?: string | null; neutralAssetLighting?: string | null },
+  factBundlePrompt?: string,
 ): string {
   return `
     请根据以下参数生成${cfg.promptTitle}：
+
+    **冲突优先级（必须遵守）：**
+    角色事实卡/上传参考图 > 项目硬约束 > 资产描述词 > 视觉手册 > 小说原文。
+    当小说原文、视觉手册或资产描述词与角色事实卡/上传参考图冲突时，以角色事实卡/上传参考图为准。
 
     **基础参数：**
     - 画风风格: ${project.artStyle || "未指定"}
     - 项目类型: ${project.type || "未指定"}
     - 项目简介: ${project.intro || "无"}
+    - 项目硬约束: ${project.constraints || "无"}
+    - 项目绑定技能/风格约束: ${project.boundSkills || "无"}
+
+    **项目事实源 bundle：**
+    ${factBundlePrompt || "当前项目未提供额外事实源 bundle。"}
 
     **视觉手册：**
     ${visualManual || "当前项目未配置对应视觉手册，请只按项目画风和资产设定生成。"}
 
     **${cfg.label}设定：**
-    - 名称:${name},
-    - 提示词:${prompt},
+    - 名称:${asset.name},
+    - 角色事实卡/资产事实卡:${asset.factCard || "无"},
+    - 反向事实/禁止项:${asset.negativeFacts || "无"},
+    - 描述词:${asset.prompt},
     - 用户额外要求:${userRequirement || "无"}
-    - 时间环境推理（仅场景标准图使用）:${options?.timeEnvironmentContext || "无"}
-    - 标准展示光约束（角色/道具标准图固定使用）:${options?.neutralAssetLighting || "无"}
 
     请严格按照系统规范生成${cfg.promptEnd}。
   `;
 }
 
-function buildStandardAssetUserRequirement(userRequirement: string | null, neutralAssetLighting: string | null) {
-  if (!neutralAssetLighting) return userRequirement;
-  return `
-    ${userRequirement || "无"}
-
-    标准图约束：角色/道具标准图仅采纳外观、造型、材质、比例、构图等资产展示类要求；
-    使用中性标准展示光，不绑定剧情时间，不使用强烈环境色污染设定；
-    不绑定剧情时间，不继承雨夜、黄昏、夜晚、清晨、室内暖光等时间/天气/环境光设定；
-    ${neutralAssetLighting}
-  `;
+export async function buildFinalAssetImagePrompt(input: {
+  projectId: number;
+  assetId?: number;
+  type: AssetType;
+  name: string;
+  prompt: string;
+  describe?: string | null;
+  skillId?: string | null;
+  userRequirement?: string | null;
+}) {
+  const project = await u.db("o_project").where("id", input.projectId).select("id", "name", "artStyle", "type", "intro", "directorManual").first();
+  if (!project) throw new Error("项目为空");
+  const cfg = assetTypeConfig[input.type];
+  if (!cfg) throw new Error("不支持的类型");
+  const visualManual = getVisualManualForAssetType(project.artStyle, input.type);
+  const factBundle = await loadProjectFactBundle({ projectId: input.projectId, assetId: input.assetId });
+  const assetFact = factBundle?.assets?.find((asset) => Number(asset.assetId ?? asset.id) === input.assetId);
+  const projectConstraints = String(factBundle?.project?.constraints ?? factBundle?.project?.hardConstraints ?? "");
+  const projectBoundSkills = String(factBundle?.project?.boundSkills ?? "");
+  const assetFactCard = typeof assetFact?.factCard === "string" ? assetFact.factCard : assetFact?.factCard ? JSON.stringify(assetFact.factCard) : "";
+  const assetNegativeFacts = typeof assetFact?.negativeFacts === "string" ? assetFact.negativeFacts : assetFact?.negativeFacts ? JSON.stringify(assetFact.negativeFacts) : "";
+  const factBundlePrompt = formatProjectFactBundleForPrompt(factBundle, { assetId: input.assetId, includeProject: true, maxAssets: 4 });
+  const conflictPriority = "角色事实卡/上传参考图 > 项目硬约束 > 资产描述词 > 视觉手册 > 小说原文";
+  const selectedSkill = await resolveImageGenerationSkill({
+    skillId: input.skillId,
+    requestText: input.userRequirement,
+    assetType: input.type,
+  });
+  const promptContext = {
+    project: {
+      id: input.projectId,
+      name: project.name,
+      intro: project.intro,
+      type: project.type,
+      artStyle: project.artStyle,
+      directorManual: project.directorManual,
+      constraints: projectConstraints,
+      boundSkills: projectBoundSkills,
+    },
+    asset: {
+      id: input.assetId ?? 0,
+      type: input.type,
+      name: input.name,
+      describe: input.describe ?? null,
+      prompt: input.prompt,
+      factCard: assetFactCard,
+      negativeFacts: assetNegativeFacts,
+    },
+    visualManual,
+    userRequirement: input.userRequirement ?? null,
+    conflictPriority,
+  };
+  const finalPrompt = selectedSkill
+    ? [
+        "冲突优先级（必须遵守）：角色事实卡/上传参考图 > 项目硬约束 > 资产描述词 > 视觉手册 > 小说原文。",
+        factBundlePrompt,
+        renderImageGenerationSkillPrompt(selectedSkill, promptContext),
+      ].filter(Boolean).join("\n\n")
+    : buildPrompt(
+        cfg,
+        { ...project, constraints: projectConstraints, boundSkills: projectBoundSkills },
+        { name: input.name, prompt: input.prompt, factCard: assetFactCard, negativeFacts: assetNegativeFacts },
+        visualManual,
+        input.userRequirement,
+        factBundlePrompt,
+      );
+  return {
+    finalPrompt,
+    sourcePrompt: input.prompt,
+    promptMode: "final" as const,
+    skill: selectedSkill ? { id: selectedSkill.id, name: selectedSkill.name, aspectRatio: selectedSkill.aspectRatio } : null,
+  };
 }
 
 function isSupportedAssetType(type: string): type is AssetType {
@@ -136,7 +219,7 @@ function wait(ms: number) {
 
 function isRetryableImageError(error: unknown) {
   const message = u.error(error).message;
-  return /状态码:\s*(429|500|502|503|504|524)|\b(429|500|502|503|504|524)\b|do_request_failed|负载|饱和|稍后|timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|temporarily|rate limit/i.test(message);
+  return /429|负载|饱和|稍后|timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|temporarily|rate limit/i.test(message);
 }
 
 function notifyStatusChange(input: SubmitAssetImageGenerationInput, event: AssetImageGenerationStatusEvent) {
@@ -144,10 +227,6 @@ function notifyStatusChange(input: SubmitAssetImageGenerationInput, event: Asset
   Promise.resolve(input.onStatusChange(event)).catch((error) => {
     console.warn("[assetImageGeneration] status callback failed", u.error(error).message);
   });
-}
-
-function imageModelName(model: SubmitAssetImageGenerationInput["model"]) {
-  return String(model).split(/:(.+)/)[1] || String(model);
 }
 
 async function runImageTaskWithRetry(task: () => Promise<void>, maxAttempts = 3) {
@@ -202,8 +281,6 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
       type: item.type,
       state: "生成中",
       assetsId: item.id,
-      model: imageModelName(model),
-      resolution,
     });
     imageIdByAssetId.set(item.id, imageId);
     await u.db("o_assets").where("id", item.id).update({ imageId });
@@ -239,94 +316,41 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
 
         const imagePath = `/${projectId}/${cfg.dir}/${uuidv4()}.jpg`;
         const assetType = item.type as ImageGenerationAssetType;
-        const visualManual = getVisualManualForAssetType(project.artStyle, assetType);
-        const rawUserRequirement = item.userRequirement ?? input.userRequirement ?? null;
-        const intentText = [rawUserRequirement, item.prompt].filter((value) => typeof value === "string" && value.trim()).join("\n");
-        const intentDecision = decideAssetImageIntent(intentText, {
-          generationMode: item.generationMode ?? input.generationMode,
-          referencePolicy: item.referencePolicy ?? input.referencePolicy,
-          promptPolicy: item.promptPolicy ?? input.promptPolicy,
-        });
-        const effectiveBase64 = intentDecision.referencePolicy === "none" ? null : item.base64;
-        const neutralAssetLighting = assetType === "scene" ? null : buildNeutralAssetLightingText(assetType);
-        const effectiveUserRequirement = buildStandardAssetUserRequirement(rawUserRequirement, neutralAssetLighting);
-        const timeEnvironmentContext =
-          assetType === "scene"
-            ? inferTimeEnvironment({
-                project: {
-                  id: projectId,
-                  name: project.name,
-                  intro: project.intro,
-                  type: project.type,
-                  artStyle: project.artStyle,
-                },
-                asset: {
-                  id: item.id,
-                  type: assetType,
-                  name: item.name,
-                  describe: item.describe ?? null,
-                  prompt: item.prompt,
-                },
-                userRequirement: rawUserRequirement,
-              }).contextText
-            : null;
-        const selectedSkill = await resolveImageGenerationSkill({
-          skillId: item.skillId ?? input.skillId,
-          requestText: rawUserRequirement,
-          assetType,
-        });
-        if (selectedSkill) skillUsage.set(item.id, { id: selectedSkill.id, name: selectedSkill.name });
-        const promptContext = {
-          project: {
-            id: projectId,
-            name: project.name,
-            intro: project.intro,
-            type: project.type,
-            artStyle: project.artStyle,
-            directorManual: project.directorManual,
-          },
-          asset: {
-            id: item.id,
-            type: assetType,
-            name: item.name,
-            describe: item.describe ?? null,
-            prompt: item.prompt,
-          },
-          visualManual,
-          userRequirement: effectiveUserRequirement,
-          timeEnvironmentContext,
-          neutralAssetLighting,
-        };
-        const userPrompt = selectedSkill
-          ? renderImageGenerationSkillPrompt(selectedSkill, promptContext)
-          : buildPrompt(cfg, project, item.name, item.prompt, visualManual, effectiveUserRequirement, {
-              timeEnvironmentContext,
-              neutralAssetLighting,
+        const selectedSkillForFinal = item.promptMode === "final"
+          ? await resolveImageGenerationSkill({
+              skillId: item.skillId ?? input.skillId,
+              requestText: item.userRequirement ?? input.userRequirement,
+              assetType,
+            })
+          : null;
+        const promptResult = item.promptMode === "final"
+          ? null
+          : await buildFinalAssetImagePrompt({
+              projectId,
+              assetId: item.id,
+              type: assetType,
+              name: item.name,
+              prompt: item.prompt,
+              describe: item.describe,
+              skillId: item.skillId ?? input.skillId,
+              userRequirement: item.userRequirement ?? input.userRequirement,
             });
-        const describe = `生成${cfg.label}图，名称：${item.name}，提示词：${item.prompt}`;
-        const relatedObjects = {
-          id: item.id,
-          assetId: item.id,
-          imageId,
-          projectId,
-          type: cfg.label,
-          skillId: selectedSkill?.id ?? null,
-          generationMode: intentDecision.generationMode,
-          referencePolicy: intentDecision.referencePolicy,
-          promptPolicy: intentDecision.promptPolicy,
-          referenceImageCount: effectiveBase64 ? 1 : 0,
-          userRequirement: rawUserRequirement?.slice(0, 500) ?? null,
-          prompt: userPrompt.slice(0, 1200),
-        };
+        const effectiveSkill = promptResult?.skill ?? (selectedSkillForFinal ? { id: selectedSkillForFinal.id, name: selectedSkillForFinal.name, aspectRatio: selectedSkillForFinal.aspectRatio } : null);
+        if (effectiveSkill) skillUsage.set(item.id, { id: effectiveSkill.id, name: effectiveSkill.name });
+        const userPrompt = item.promptMode === "final"
+          ? item.prompt
+          : promptResult!.finalPrompt;
+        const describe = `生成${cfg.label}图，名称：${item.name}，描述词：${item.prompt}`;
+        const relatedObjects = { id: item.id, projectId, type: cfg.label, skillId: effectiveSkill?.id ?? null, prompt: userPrompt.slice(0, 1200) };
 
         await runImageTaskWithRetry(async () => {
           const aiImage = u.Ai.Image(model as `${string}:${string}`);
           await aiImage.run(
             {
               prompt: userPrompt,
-              referenceList: effectiveBase64 ? [{ base64: effectiveBase64, type: "image" }] : [],
+              referenceList: item.base64 ? [{ base64: item.base64, type: "image" }] : [],
               size: resolution as "1K" | "2K" | "4K",
-              aspectRatio: selectedSkill?.aspectRatio ?? "16:9",
+              aspectRatio: effectiveSkill?.aspectRatio ?? "16:9",
             },
             {
               taskClass: cfg.taskClass,
@@ -361,7 +385,7 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
             filePath: imagePath,
             errorReason: null,
             type: item.type,
-            model: imageModelName(model),
+            model: String(model).split(/:(.+)/)[1],
             resolution,
           });
 
@@ -390,15 +414,15 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
         const previousCompletedImageId = previousCompletedImageIds.get(item.id);
         if (previousCompletedImageId) {
           await u.db("o_assets").where("id", item.id).where("imageId", imageId).update({ imageId: previousCompletedImageId });
+        } else {
+          notifyStatusChange(input, {
+            projectId,
+            assetId: item.id,
+            imageId,
+            state: "生成失败",
+            errorReason,
+          });
         }
-        notifyStatusChange(input, {
-          projectId,
-          assetId: item.id,
-          imageId,
-          state: "生成失败",
-          errorReason,
-          fallbackImageId: previousCompletedImageId ?? null,
-        });
       }
     }),
   );

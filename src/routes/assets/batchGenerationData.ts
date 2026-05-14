@@ -3,7 +3,13 @@ import u from "@/utils";
 import { z } from "zod";
 import { success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
+import { normalizeAssetSourcePrompt } from "@/services/assetImageGeneration";
 const router = express.Router();
+
+function withSourcePrompt(asset: any) {
+  const sourcePrompt = normalizeAssetSourcePrompt(asset.prompt, asset.describe || asset.name || "");
+  return { ...asset, prompt: sourcePrompt, sourcePrompt };
+}
 
 // 获取资产
 export default router.post(
@@ -24,6 +30,7 @@ export default router.post(
     }
     // 分页查询
     const parentAssets = await query.offset(offset).limit(limit);
+    const result = parentAssets.map((asset) => withSourcePrompt(asset));
 
     // 统计总数
     const totalQuery = (await u
@@ -37,6 +44,6 @@ export default router.post(
       })
       .count("* as total")
       .first()) as any;
-    res.status(200).send(success({ data: parentAssets, total: totalQuery?.total }));
+    res.status(200).send(success({ data: result, total: totalQuery?.total }));
   },
 );

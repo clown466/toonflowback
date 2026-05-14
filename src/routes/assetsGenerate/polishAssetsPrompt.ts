@@ -3,62 +3,13 @@ import u from "@/utils";
 import * as zod from "zod";
 import { error, success } from "@/lib/responseFormat";
 import { validateFields } from "@/middleware/middleware";
-import {
-  getVisualManualForAssetType,
-  ImageGenerationAssetType,
-  renderImageGenerationSkillPrompt,
-  resolveImageGenerationSkill,
-} from "@/services/imageGenerationSkill";
-import { buildNeutralAssetLightingText, inferTimeEnvironment } from "@/services/timeEnvironmentInference";
-import { stripThink } from "@/utils/stripThink";
+import { buildFinalAssetImagePrompt, normalizeAssetSourcePrompt } from "@/services/assetImageGeneration";
+import { formatProjectFactBundleForPrompt, loadProjectFactBundle } from "@/services/imageGenerationSkill";
 const router = express.Router();
 
 
 type ItemType = "characters" | "props" | "scenes";
-
-function normalizeAssetType(type: string): ImageGenerationAssetType | null {
-  if (type === "role" || type === "scene" || type === "tool") return type;
-  if (type === "props") return "tool";
-  return null;
-}
-
-function getTextOutput(result: any) {
-  return stripThink(String(result?._output || result?.text || "")).trim();
-}
-
-function buildRoleIdentityGuard(assetType: ImageGenerationAssetType) {
-  if (assetType !== "role") return "";
-  return [
-    "角色身份硬规则：",
-    "1. 如果角色描述、现有提示词、项目设定或视觉手册提到水果、果、fruit，最终提示词必须在开头明确一个具体水果原型。",
-    "2. 禁止只写“拟人化水果”“变异水果”“水果角色”“fruit character”“mutated fruit”；必须写成“拟人化青梨角色”“anthropomorphic green pear character”这类具体身份。",
-    "3. 如果原文没有明确水果种类，必须根据角色名称、颜色、轮廓、剧情职能和已有描述选择一个最合理的单一水果原型；不要混合多个水果。",
-    "4. 不要用固定水果负面约束来防误识别，例如不要写“不要草莓、不要柠檬”；正确做法是正向写清楚具体水果原型。",
-  ].join("\n");
-}
-
-function buildSkillPromptPolishSystem(visualManual: string, skillPrompt: string, assetType: ImageGenerationAssetType) {
-  return [
-    "你是 Toonflow 的资产生图提示词推理器。",
-    "用户会选择一个资产生图预设。请根据该预设、视觉手册、项目设定和资产描述，生成最终可直接发送给图片模型的提示词。",
-    "如果现有生图提示词与所选预设冲突，必须以所选预设为最高优先级，重写冲突部分。",
-    "例如选择俯视/鸟瞰/overhead 预设时，不要输出 eye-level、cinematic establishing、front view、exterior perspective 等非俯视构图。",
-    "只输出最终生图提示词，不要解释，不要 markdown，不要 JSON。",
-    "提示词要简洁、明确、可执行；不要堆叠无关规则。",
-    "",
-    "视觉手册：",
-    visualManual || "当前项目未配置对应视觉手册。",
-    "",
-    buildRoleIdentityGuard(assetType),
-    "",
-    "用户选择的资产生图预设：",
-    skillPrompt,
-  ].join("\n");
-}
-
-function buildDefaultPromptPolishSystem(visualManual: string, assetType: ImageGenerationAssetType) {
-  return [visualManual, buildRoleIdentityGuard(assetType)].filter(Boolean).join("\n\n");
-}
+type AssetImageType = "role" | "scene" | "tool";
 
 //润色提示词
 export default router.post(
@@ -71,22 +22,20 @@ export default router.post(
     describe: zod.string(),
     skillId: zod.string().optional().nullable(),
     userRequirement: zod.string().optional().nullable(),
-    currentPrompt: zod.string().optional().nullable(),
+    responsePromptMode: zod.enum(["source", "final"]).optional(),
   }),
   async (req, res) => {
-    const { assetsId, projectId, type, name, describe, skillId, userRequirement, currentPrompt } = req.body;
+    const { assetsId, projectId, type, name, describe, skillId, userRequirement, responsePromptMode } = req.body;
     //获取风格
-    const project = await u.db("o_project").where("id", projectId).select("id", "name", "artStyle", "type", "intro", "directorManual").first();
+    const project = await u.db("o_project").where("id", projectId).select("artStyle", "type", "intro").first();
     //如果没有找到对应的项目，返回错误
     if (!project) return res.status(500).send(success({ message: "项目为空" }));
 
     await u.db("o_assets").where("id", assetsId).update({ promptState: "生成中" });
 
     //查询资产是否是衍生资产
-    const assetsData = await u.db("o_assets").where("id", assetsId).select("assetsId", "prompt").first();
+    const assetsData = await u.db("o_assets").where("id", assetsId).select("assetsId").first();
     if (!assetsData) return { code: 500, message: "资产不存在" };
-    const assetType = normalizeAssetType(type);
-    if (!assetType) return res.status(500).send(error("不支持的类型"));
     const typeConfig: Record<string, { promptKey: string; itemType: ItemType; label: string; nameLabel: string; visualManual: string }> = {
       role: {
         promptKey: "role-polish",
@@ -111,89 +60,67 @@ export default router.post(
       },
     };
 
-    const config = typeConfig[assetType];
+    const config = typeConfig[type];
     if (!config) return res.status(500).send(error("不支持的类型"));
     if (!config.visualManual) return res.status(500).send(error("视觉手册未定义"));
     //获取到视觉手册
     const visualManual = await u.getArtPrompt(project.artStyle as string, "art_skills", config.visualManual);
     if (!visualManual) return res.status(500).send(error("视觉手册未定义"));
+    const systemPrompt = `${visualManual}
+
+你正在生成资产中心保存的“资产描述词”，不是最终生图请求。只输出资产本身的稳定视觉描述，不要输出冲突优先级、项目事实源、视觉手册原文、JSON 或 Markdown 标题。`;
     try {
-      const selectedSkill = await resolveImageGenerationSkill({
-        skillId,
-        requestText: userRequirement,
-        assetType,
-      });
-      const existingPrompt = String(currentPrompt || assetsData.prompt || "").trim();
-      const neutralAssetLighting = assetType === "scene" ? null : buildNeutralAssetLightingText(assetType);
-      const timeEnvironmentContext =
-        assetType === "scene"
-          ? inferTimeEnvironment({
-              project: {
-                id: projectId,
-                name: project.name,
-                intro: project.intro,
-                type: project.type,
-                artStyle: project.artStyle,
-              },
-              asset: {
-                id: assetsId,
-                type: assetType,
-                name,
-                describe,
-              },
-              userRequirement,
-            }).contextText
-          : null;
-      const skillPrompt = selectedSkill
-        ? renderImageGenerationSkillPrompt(selectedSkill, {
-            project: {
-              id: projectId,
-              name: project.name,
-              intro: project.intro,
-              type: project.type,
-              artStyle: project.artStyle,
-              directorManual: project.directorManual,
-            },
-            asset: {
-              id: assetsId,
-              type: assetType,
-              name,
-              describe,
-              prompt: existingPrompt || describe,
-            },
-            visualManual: getVisualManualForAssetType(project.artStyle, assetType, !!assetsData.assetsId) || visualManual,
-            userRequirement,
-            timeEnvironmentContext,
-            neutralAssetLighting,
-          })
-        : "";
-      const systemPrompt = selectedSkill ? buildSkillPromptPolishSystem(visualManual, skillPrompt, assetType) : buildDefaultPromptPolishSystem(visualManual, assetType);
-      const aiResult = await u.Ai.Text("universalAi").invoke({
+      const factBundle = await loadProjectFactBundle({ projectId, assetId: assetsId });
+      const factBundlePrompt = formatProjectFactBundleForPrompt(factBundle, { assetId: assetsId, includeProject: true, maxAssets: 4 });
+      const { _output } = (await u.Ai.Text("universalAi").invoke({
         system: systemPrompt,
         messages: [
           {
             role: "user",
-            content: `**基础参数：**
-      - 项目名称:${project.name || "未指定"},
-      - 项目类型:${project.type || "未指定"},
-      - 项目简介:${project.intro || "无"},
-      - 选择的生图预设:${selectedSkill ? `${selectedSkill.name} (${selectedSkill.id})` : "默认视觉手册标准生图"},
-      **${config.nameLabel}设定：**
-      - ${config.nameLabel}名称:${name},
-      - ${config.nameLabel}描述:${describe},
-      - 现有生图提示词:${existingPrompt || "无"},
-      - 用户额外要求:${userRequirement || "无"},
-      - 时间环境推理:${timeEnvironmentContext || "无"},
-      - 标准展示光约束:${neutralAssetLighting || "无"},`,
+            content: `**冲突优先级（必须遵守）：**
+角色事实卡/上传参考图 > 项目硬约束 > 资产描述 > 视觉手册 > 小说原文。
+当名称、描述、小说或视觉手册与角色事实卡/上传参考图冲突时，必须以角色事实卡/上传参考图为准。
+
+**项目和资产事实：**
+${factBundlePrompt || "无"}
+
+**基础参数：**
+- 项目画风:${project.artStyle || "未指定"}
+- 项目类型:${project.type || "未指定"}
+- 项目简介:${project.intro || "无"}
+
+**${config.nameLabel}设定：**
+- ${config.nameLabel}名称:${name}
+- ${config.nameLabel}描述:${describe}
+
+请只输出一段可保存到资产中心的资产描述词。`,
           },
         ],
-      });
-      const _output = getTextOutput(aiResult);
+      })) as any;
 
       if (!_output) return res.status(500).send("失败");
-      await u.db("o_assets").where("id", assetsId).update({ prompt: _output, promptState: "已完成" });
+      const sourcePrompt = normalizeAssetSourcePrompt(_output, describe || name);
+      await u.db("o_assets").where("id", assetsId).update({ prompt: sourcePrompt, promptState: "已完成" });
 
-      res.status(200).send(success({ prompt: _output, assetsId }));
+      if (responsePromptMode === "final") {
+        try {
+          const { finalPrompt } = await buildFinalAssetImagePrompt({
+            projectId,
+            assetId: assetsId,
+            type: type as AssetImageType,
+            name,
+            prompt: sourcePrompt,
+            describe,
+            skillId,
+            userRequirement,
+          });
+          return res.status(200).send(success({ prompt: finalPrompt, sourcePrompt, assetsId }));
+        } catch {
+          return res.status(200).send(success({ prompt: sourcePrompt, sourcePrompt, assetsId }));
+        }
+      }
+
+      res.status(200).send(success({ prompt: sourcePrompt, sourcePrompt, assetsId }));
     } catch (e: any) {
       await u
         .db("o_assets")

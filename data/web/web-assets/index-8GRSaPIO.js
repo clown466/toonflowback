@@ -1,0 +1,21 @@
+import{d as D,l as v,t as te,v as oe,b as n,m as H,x as S,g as b,s as w,C as y,i as _,aC as ue,cc as de,ag as se,av as ce,aw as ie,z as ve,p as pe,E as M}from"./index-DXS7sV1z.js";import{F as fe}from"./fake-arrow-BlzFYW_D.js";/**
+ * tdesign v1.18.5
+ * (c) 2026 tdesign
+ * @license MIT
+ */var Ce={borderless:Boolean,defaultExpandAll:Boolean,disabled:Boolean,expandIcon:{type:[Boolean,Function],default:!0},expandIconPlacement:{type:String,default:"left",validator:function(r){return r?["left","right"].includes(r):!0}},expandMutex:Boolean,expandOnRowClick:{type:Boolean,default:!0},value:{type:Array,default:void 0},modelValue:{type:Array,default:void 0},defaultValue:{type:Array},onChange:Function};/**
+ * tdesign v1.18.5
+ * (c) 2026 tdesign
+ * @license MIT
+ */var ye=D({name:"TCollapse",props:Ce,setup:function(r){var V=v("collapse"),B=v("-border-less"),s=H(),o=S(r),e=o.value,I=o.expandMutex,k=o.borderless,A=o.modelValue,p=te(e,A,r.defaultValue,r.onChange),x=oe(p,2),g=x[0],N=x[1],f=function(C){var u=[].concat(g.value||[]),c=u.indexOf(C);c>=0?u.splice(c,1):I.value?u=[C]:u.push(C),N(u)},h=b(function(){return[V.value,w({},B.value,!!k.value)]}),P=function(){var t=0;return function(){return t++}}();return y("collapseValue",g),y("updateCollapseValue",f),y("collapseProps",S(r)),y("getUniqId",P),y("renderParentTNode",s),function(){var t=s("default");return n("div",{class:h.value},[t])}}});/**
+ * tdesign v1.18.5
+ * (c) 2026 tdesign
+ * @license MIT
+ */var _e={content:{type:[String,Function]},default:{type:[String,Function]},destroyOnCollapse:Boolean,disabled:{type:Boolean,default:void 0},expandIcon:{type:[Boolean,Function],default:void 0},header:{type:[String,Function]},headerRightContent:{type:[String,Function]},value:{type:[String,Number]}};/**
+ * tdesign v1.18.5
+ * (c) 2026 tdesign
+ * @license MIT
+ */function be(d){return typeof d=="function"||Object.prototype.toString.call(d)==="[object Object]"&&!se(d)}var xe=D({name:"TCollapsePanel",props:_e,setup:function(r,V){var B=V.slots,s=H(),o=pe(),e=v("collapse-panel"),I=v("is-disabled"),k=v("is-clickable"),A=v("slide-down"),p=S(r),x=p.value,g=p.disabled,N=p.destroyOnCollapse,f=_("collapseValue"),h=_("updateCollapseValue"),P=_("getUniqId",function(){},!1),t=_("collapseProps"),C=t.defaultExpandAll,u=t.disabled,c=t.expandIconPlacement,O=t.expandOnRowClick,j=_("renderParentTNode"),m=x.value||P();C.value&&h(m);var i=de(),q=i.beforeEnter,U=i.enter,J=i.afterEnter,X=i.beforeLeave,z=i.leave,$=i.afterLeave,T=ve(),R=b(function(){return g.value||u.value}),E=b(function(){return f.value instanceof Array?f.value.includes(m):f.value===m}),G=b(function(){return[e.value,w({},I.value,R.value)]}),K=b(function(){return B.expandIcon||r.expandIcon}),F=function(l){var re=O.value||l.currentTarget===T.value;re&&!R.value&&h(m),l.stopPropagation()},Q=function(l){l.stopPropagation()},W=function(){return n(fe,{overlayClassName:"".concat(e.value,"__icon--default")},null)},L=function(){var l=K.value===void 0?j:s;return n("div",{ref:T,class:"".concat(e.value,"__icon ").concat(e.value,"__icon--").concat(c.value," ").concat(E.value?"".concat(e.value,"__icon--active"):""),onClick:F},[l("expandIcon",W())])},Y=function(){return n("div",{class:"".concat(e.value,"__header--blank")},null)},Z=function(){var l=s("headerRightContent");return l?n("div",{onClick:Q},[l]):null},ee=function(){var l=["".concat(e.value,"__header"),w({},k.value,O.value&&!R.value)];return n("div",{class:l,onClick:F},[c.value==="left"&&L(),s("header"),Y(),Z(),c.value==="right"&&L()])},ae=function(){return ce(n("div",{class:"".concat(e.value,"__body")},[n("div",{class:"".concat(e.value,"__content")},[o("default","content")])]),[[ie,E.value]])},ne=function(){return E.value?n("div",{class:"".concat(e.value,"__body")},[n("div",{class:"".concat(e.value,"__content")},[o("default","content")])]):null},le=function(){return N.value?ne():ae()};return function(){var a;return n("div",{class:G.value},[n("div",{class:"".concat(e.value,"__wrapper")},[ee(),n(ue,{name:A.value,onBeforeEnter:q,onEnter:U,onAfterEnter:J,onBeforeLeave:X,onLeave:z,onAfterLeave:$},be(a=le())?a:{default:function(){return[a]}})])])}}});/**
+ * tdesign v1.18.5
+ * (c) 2026 tdesign
+ * @license MIT
+ */var me=M(ye),Ve=M(xe);export{me as C,Ve as a};

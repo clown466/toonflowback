@@ -6,7 +6,7 @@ import Memory from "@/utils/agent/memory";
 import { createSkillTools, getSkillContentForAgent, parseFrontmatter, scanSkills, ToonflowAgentKey } from "@/utils/agent/skillsTools";
 import useTools from "@/agents/productionAgent/tools";
 import ResTool from "@/socket/resTool";
-import { toToolJsonSchema } from "@/utils/jsonSchema";
+import { formatProjectFactBundleForPrompt, loadProjectFactBundle } from "@/services/imageGenerationSkill";
 import * as fs from "fs";
 import path from "path";
 
@@ -85,13 +85,19 @@ export async function runDecisionAI(ctx: AgentContext) {
   const projectInfo = await u.db("o_project").where("id", ctx.resTool.data.projectId).first();
   if (!projectInfo) throw new Error(`项目不存在，ID: ${ctx.resTool.data.projectId}`);
   const modelInfo = await buildProductionModelInfo(projectInfo);
+  const factBundlePrompt = formatProjectFactBundleForPrompt(await loadProjectFactBundle({ projectId: ctx.resTool.data.projectId }), { includeProject: true, maxAssets: 30 });
+  const productionFactContext = [
+    "## 项目事实源上下文",
+    "优先级：角色事实卡/上传参考图 > 项目硬约束 > 资产描述词 > 视觉手册 > 小说原文。",
+    factBundlePrompt || "当前项目未提供事实源 bundle，按旧项目上下文继续。",
+  ].join("\n");
 
   const mem = buildMemPrompt(await memory.get(text));
 
   const { fullStream } = await u.Ai.Text("productionAgent:decisionAgent", ctx.thinkConfig.think, ctx.thinkConfig.thinlLevel).stream({
     messages: [
       { role: "system", content: prompt },
-      { role: "assistant", content: mem + "\n" + modelInfo },
+      { role: "assistant", content: mem + "\n" + modelInfo + "\n" + productionFactContext },
       { role: "user", content: text },
     ],
     abortSignal,
@@ -157,12 +163,18 @@ async function createSubAgent(parentCtx: AgentContext) {
     return fullResponse;
   }
 
-  const promptInput = toToolJsonSchema<{ prompt: string }>(z.object({
+  const promptInput = z.object({
     prompt: z.string().describe("交给子Agent的任务简约描述，100字以内"),
-  }));
+  });
 
   const projectInfo = await u.db("o_project").where("id", resTool.data.projectId).first();
   if (!projectInfo) throw new Error(`项目不存在，ID: ${resTool.data.projectId}`);
+  const factBundlePrompt = formatProjectFactBundleForPrompt(await loadProjectFactBundle({ projectId: resTool.data.projectId }), { includeProject: true, maxAssets: 30 });
+  const productionFactContext = [
+    "## 项目事实源上下文",
+    "优先级：角色事实卡/上传参考图 > 项目硬约束 > 资产描述词 > 视觉手册 > 小说原文。",
+    factBundlePrompt || "当前项目未提供事实源 bundle，按旧项目上下文继续。",
+  ].join("\n");
   const deriveAssetSkills = await createArtSkills(projectInfo?.artStyle ?? "", projectInfo?.directorManual ?? "", "productionAgent:deriveAssetsAgent");
   const generateAssetSkills = await createArtSkills(projectInfo?.artStyle ?? "", projectInfo?.directorManual ?? "", "productionAgent:generateAssetsAgent");
   const directorPlanSkills = await createArtSkills(projectInfo?.artStyle ?? "", projectInfo?.directorManual ?? "", "productionAgent:directorPlanAgent");
@@ -214,7 +226,7 @@ async function createSubAgent(parentCtx: AgentContext) {
         name: "执行导演",
         memoryKey: "assistant:execution",
         messages: [
-          { role: "assistant", content: deriveAssetSkills.prompt + `\n${modelInfo}` },
+          { role: "assistant", content: deriveAssetSkills.prompt + `\n${modelInfo}\n${productionFactContext}` },
           { role: "user", content: prompt },
         ],
         tools: { activate_skill: deriveAssetSkills.tools.activate_skill },
@@ -236,7 +248,7 @@ async function createSubAgent(parentCtx: AgentContext) {
         name: "执行导演",
         memoryKey: "assistant:execution",
         messages: [
-          { role: "assistant", content: generateAssetSkills.prompt + `\n${modelInfo}` },
+          { role: "assistant", content: generateAssetSkills.prompt + `\n${modelInfo}\n${productionFactContext}` },
           { role: "user", content: prompt },
         ],
         tools: { activate_skill: generateAssetSkills.tools.activate_skill },
@@ -261,7 +273,7 @@ async function createSubAgent(parentCtx: AgentContext) {
         name: "执行导演",
         memoryKey: "assistant:execution",
         messages: [
-          { role: "assistant", content: directorPlanSkills.prompt + `\n${modelInfo}` },
+          { role: "assistant", content: directorPlanSkills.prompt + `\n${modelInfo}\n${productionFactContext}` },
           { role: "user", content: prompt + addPrompt },
         ],
         tools: { activate_skill: directorPlanSkills.tools.activate_skill },
@@ -283,7 +295,7 @@ async function createSubAgent(parentCtx: AgentContext) {
         name: "执行导演",
         memoryKey: "assistant:execution",
         messages: [
-          { role: "assistant", content: storyboardGenSkills.prompt + `\n${modelInfo}` },
+          { role: "assistant", content: storyboardGenSkills.prompt + `\n${modelInfo}\n${productionFactContext}` },
           { role: "user", content: prompt },
         ],
         tools: { activate_skill: storyboardGenSkills.tools.activate_skill },
@@ -330,7 +342,7 @@ async function createSubAgent(parentCtx: AgentContext) {
         name: "执行导演",
         memoryKey: "assistant:execution",
         messages: [
-          { role: "assistant", content: storyboardPanelSkills.prompt + `\n${modelInfo}` },
+          { role: "assistant", content: storyboardPanelSkills.prompt + `\n${modelInfo}\n${productionFactContext}` },
           { role: "user", content: prompt + addPrompt },
         ],
         tools: { activate_skill: storyboardPanelSkills.tools.activate_skill },
@@ -355,7 +367,7 @@ async function createSubAgent(parentCtx: AgentContext) {
         name: "执行导演",
         memoryKey: "assistant:execution",
         messages: [
-          { role: "assistant", content: storyboardTableSkills.prompt + `\n${modelInfo}` },
+          { role: "assistant", content: storyboardTableSkills.prompt + `\n${modelInfo}\n${productionFactContext}` },
           { role: "user", content: prompt + addPrompt },
         ],
         tools: { activate_skill: storyboardTableSkills.tools.activate_skill },

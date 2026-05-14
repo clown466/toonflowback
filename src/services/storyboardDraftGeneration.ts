@@ -1,6 +1,7 @@
 import u from "@/utils";
+import { formatProjectFactBundleForPrompt, loadProjectFactBundle, ProjectFactBundle } from "@/services/imageGenerationSkill";
 
-export interface ProjectRow {
+interface ProjectRow {
   id: number;
   name?: string | null;
   intro?: string | null;
@@ -10,7 +11,7 @@ export interface ProjectRow {
   videoRatio?: string | null;
 }
 
-export interface NovelRow {
+interface NovelRow {
   id: number;
   chapterIndex?: number | null;
   chapter?: string | null;
@@ -19,7 +20,7 @@ export interface NovelRow {
   eventState?: number | null;
 }
 
-export interface ScriptRow {
+interface ScriptRow {
   id: number;
   name?: string | null;
   content?: string | null;
@@ -27,17 +28,16 @@ export interface ScriptRow {
   createTime?: number | null;
 }
 
-export interface AssetRow {
+interface AssetRow {
   id: number;
   name?: string | null;
   type?: string | null;
   describe?: string | null;
   prompt?: string | null;
   imageId?: number | null;
-  filePath?: string | null;
 }
 
-export interface StoryboardDraftItem {
+interface StoryboardDraftItem {
   index: number;
   duration: number;
   track: string;
@@ -46,28 +46,6 @@ export interface StoryboardDraftItem {
   shouldGenerateImage: number;
   associateAssetsIds: number[];
   sourceTitle: string;
-  narrativeFunction?: string;
-  pictureDescription?: string;
-  role1?: string;
-  role1Description?: string;
-  role1Image?: string;
-  role2?: string;
-  role2Description?: string;
-  role2Image?: string;
-  reference?: string;
-  shotSize?: string;
-  cameraMove?: string;
-  focalLength?: string;
-  aperture?: string;
-  shutterSpeed?: string;
-  iso?: string;
-  action?: string;
-  emotion?: string;
-  scene?: string;
-  lighting?: string;
-  sound?: string;
-  dialogue?: string;
-  videoMotionPrompt?: string;
 }
 
 export interface GenerateProjectStoryboardDraftOptions {
@@ -91,16 +69,8 @@ export interface GenerateProjectStoryboardDraftResult {
   appended: boolean;
   selectedNovelIds: number[];
   selectedChapterIndexes: number[];
-  selectedChapterLabels: string[];
   storyboardTable: string;
   message: string;
-  usedSkillId?: string;
-  usedSkillName?: string;
-  fallbackReason?: string;
-  reviewStatus?: "passed" | "warning" | "failed";
-  reviewWarnings?: string[];
-  reviewFailures?: string[];
-  reviewRetryInstruction?: string;
 }
 
 export interface ClearProjectStoryboardsOptions {
@@ -119,108 +89,24 @@ export interface ClearProjectStoryboardsResult {
   message: string;
 }
 
-export const LEGACY_FLOVA_SCRIPT_NAME = "Flova 原文生产容器";
-export const FLOVA_SCRIPT_NAME = "Flova 小说章节工作区";
+export const FLOVA_SCRIPT_NAME = "Flova 原文生产容器";
 const MAIN_TRACK_NAME = "主线分镜";
 
-export function nonEmpty(value: unknown): string | undefined {
+function nonEmpty(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-export function compactText(value: unknown, maxLength = 600) {
+function compactText(value: unknown, maxLength = 600) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength - 1)}...`;
 }
 
-export function cleanName(value: unknown) {
+function cleanName(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function mdCell(value: unknown) {
-  const text = String(value ?? "").replace(/\r?\n/g, "<br>").replace(/\|/g, "/").trim();
-  return text || "-";
-}
-
-export function inferCameraTechnicalSettings(input: {
-  shotSize?: string | null;
-  cameraMove?: string | null;
-  lighting?: string | null;
-  action?: string | null;
-  focalLength?: string | null;
-  aperture?: string | null;
-  shutterSpeed?: string | null;
-  iso?: string | null;
-}) {
-  const text = [input.shotSize, input.cameraMove, input.lighting, input.action].map(cleanName).join(" ");
-  const isNight = /夜|暗|黑|low[-\s]?light|night|dark|dim/i.test(text);
-  const isFast = /快|甩|冲|跑|爆|撞|whip|fast|rush|run|impact|action/i.test(text);
-  const isWide = /远景|全景|wide|establishing|overhead|俯视/i.test(text);
-  const isClose = /特写|大特写|close|close-up|detail/i.test(text);
-  const isMediumClose = /近景|medium close|portrait/i.test(text);
-
-  let focalLength = isClose ? "85mm" : isMediumClose ? "50mm" : isWide ? "24mm" : "35mm";
-  let aperture = isClose ? "f/2.8" : isNight ? "f/2.8" : isWide ? "f/5.6" : "f/4";
-  let shutterSpeed = isFast ? "1/96" : "1/48";
-  let iso = isNight ? "ISO 800" : isWide ? "ISO 400" : "ISO 640";
-
-  focalLength = cleanName(input.focalLength) || focalLength;
-  aperture = cleanName(input.aperture) || aperture;
-  shutterSpeed = cleanName(input.shutterSpeed) || shutterSpeed;
-  iso = cleanName(input.iso) || iso;
-
-  return { focalLength, aperture, shutterSpeed, iso };
-}
-
-function listAssetNames(assets: AssetRow[]) {
-  return assets.map((asset) => cleanName(asset.name)).filter(Boolean);
-}
-
-export function assetDescription(asset?: AssetRow) {
-  return compactText(nonEmpty(asset?.prompt) ?? nonEmpty(asset?.describe) ?? nonEmpty(asset?.name) ?? "", 140);
-}
-
-function toOssUrl(filePath?: string | null) {
-  const raw = String(filePath ?? "").trim();
-  if (!raw) return "";
-  if (/^(https?:)?\/\//i.test(raw)) return raw;
-  if (/^\/(?:oss|smallImage)\//i.test(raw)) return raw;
-  return `/oss/${raw.replace(/^[/\\]+/, "")}`;
-}
-
-export function assetImageMarkdown(asset?: AssetRow) {
-  const url = toOssUrl(asset?.filePath);
-  if (!url) return "";
-  const alt = cleanName(asset?.name).replace(/[\]\[]/g, "");
-  return `![${alt || "asset"}](${url})`;
-}
-
-export function summarizeReference(assets: AssetRow[]) {
-  const names = listAssetNames(assets);
-  if (!names.length) return "";
-  return names.map((name) => `参考${name}`).join("、");
-}
-
-export function buildStructuredVideoDesc(item: StoryboardDraftItem) {
-  const assetIdText = item.associateAssetsIds.length ? item.associateAssetsIds.join("/") : "-";
-  const assetNameText = [item.role1, item.role2, item.reference].filter(Boolean).join("/") || "-";
-  return `（${[
-    item.pictureDescription || item.videoDesc,
-    item.scene || "未指定场景",
-    assetNameText,
-    `${item.duration}s`,
-    item.shotSize || "中景",
-    item.cameraMove || "静止",
-    item.action || item.pictureDescription || item.videoDesc,
-    item.emotion || "叙事推进",
-    item.lighting || "遵循项目视觉手册光影",
-    item.dialogue || "无台词",
-    item.sound || "环境音",
-    assetIdText,
-  ].map(mdCell).join("、")}）`;
-}
-
-export function toUniquePositiveNumbers(values: unknown[]) {
+function toUniquePositiveNumbers(values: unknown[]) {
   const result: number[] = [];
   for (const value of values) {
     const numberValue = Number(value);
@@ -312,36 +198,6 @@ export function parseStoryboardChapterIndexes(sourceText?: string) {
   return indexes;
 }
 
-function addParsedChapterNameToken(target: string[], value: string | undefined) {
-  const token = String(value ?? "").replace(/\s+/g, "").trim();
-  if (token && !target.some((item) => item.toLowerCase() === token.toLowerCase())) target.push(token);
-}
-
-function parseStoryboardChapterNameTokens(sourceText?: string) {
-  const text = sourceText ?? "";
-  const tokens: string[] = [];
-  const numberToken = String.raw`(\d{1,4})`;
-  const rangePattern = new RegExp(String.raw`\bjuben\s*${numberToken}\s*(?:-|~|—|到|至)\s*(?:juben\s*)?${numberToken}\b`, "gi");
-  for (const match of text.matchAll(rangePattern)) {
-    const start = Number(match[1]);
-    const end = Number(match[2]);
-    for (const index of expandRange(start, end)) addParsedChapterNameToken(tokens, `juben${index}`);
-  }
-
-  const jubenPattern = /\bjuben\s*(\d{1,4})\b/gi;
-  for (const match of text.matchAll(jubenPattern)) addParsedChapterNameToken(tokens, `juben${match[1]}`);
-
-  const namedPatterns = [
-    /(?:原始名|章节名|chapter)\s*[:：]?\s*["“']([^"”'\n，。；]+)["”']?/gi,
-    /(?:原始名|章节名)\s*[:：]?\s*([^\n，。；]+)/g,
-  ];
-  for (const pattern of namedPatterns) {
-    for (const match of text.matchAll(pattern)) addParsedChapterNameToken(tokens, match[1]);
-  }
-
-  return tokens;
-}
-
 function normalizeForMatch(value: unknown) {
   return String(value ?? "")
     .toLowerCase()
@@ -362,7 +218,7 @@ function splitAssetAliases(asset: AssetRow) {
   return Array.from(new Set([normalizedName, ...parts].filter((alias) => alias.length >= 2)));
 }
 
-export function parseEvent(event: string | null | undefined) {
+function parseEvent(event: string | null | undefined) {
   const text = nonEmpty(event);
   if (!text) return { title: "", assetHint: "", summary: "" };
   const cells = text
@@ -392,9 +248,9 @@ function buildScriptContent(project: ProjectRow, novels: NovelRow[], fallbackScr
       .join("\n\n");
   }
 
-  const scriptContent = fallbackScripts.map((script) => `${toPublicWorkspaceName(script.name ?? "未命名分镜工作区")}\n${script.content ?? ""}`).join("\n\n").trim();
+  const scriptContent = fallbackScripts.map((script) => `${script.name ?? "未命名剧本"}\n${script.content ?? ""}`).join("\n\n").trim();
   if (scriptContent) return scriptContent;
-  return [project.name, project.type, project.intro].filter(Boolean).join("\n") || "Flova 自动创建的小说章节工作区";
+  return [project.name, project.type, project.intro].filter(Boolean).join("\n") || "Flova 自动创建的生产容器";
 }
 
 async function linkProjectAssetsToScript(projectId: number, scriptId: number) {
@@ -425,50 +281,23 @@ function getProductionScriptName(novels: NovelRow[]) {
   return FLOVA_SCRIPT_NAME;
 }
 
-function getLegacyProductionScriptName(novels: NovelRow[]) {
-  if (novels.length === 1) return `${LEGACY_FLOVA_SCRIPT_NAME} - ${formatChapterLabel(novels[0]!)}`;
-  if (novels.length > 1) {
-    const indexes = novels.map((novel) => novel.chapterIndex ?? novel.id).filter((index): index is number => typeof index === "number");
-    const label = indexes.length ? `第${indexes[0]}-${indexes[indexes.length - 1]}章` : `${novels.length}章`;
-    return `${LEGACY_FLOVA_SCRIPT_NAME} - ${label}`;
-  }
-  return LEGACY_FLOVA_SCRIPT_NAME;
-}
-
-export function toPublicWorkspaceName(name: string | null | undefined) {
-  const value = String(name ?? FLOVA_SCRIPT_NAME).trim() || FLOVA_SCRIPT_NAME;
-  return value.replace(LEGACY_FLOVA_SCRIPT_NAME, FLOVA_SCRIPT_NAME);
-}
-
-export function formatChapterSelectionLabel(novel: NovelRow) {
-  const index = novel.chapterIndex ?? novel.id;
-  const title = cleanName(novel.chapter);
-  return title ? `${title}（项目内第${index}条）` : `项目内第${index}条`;
-}
-
-export async function ensureProductionScript(project: ProjectRow, novels: NovelRow[], preferredScriptId?: number) {
+async function ensureProductionScript(project: ProjectRow, novels: NovelRow[], preferredScriptId?: number) {
   const scriptRows = await u.db("o_script").where("projectId", project.id).select("id", "name", "content", "projectId", "createTime").orderBy("id", "asc");
   const scripts: ScriptRow[] = scriptRows.filter((script: { id?: number | null }): script is ScriptRow => typeof script.id === "number");
   const content = buildScriptContent(project, novels, scripts);
   const targetScriptName = getProductionScriptName(novels);
-  const legacyTargetScriptName = getLegacyProductionScriptName(novels);
 
   if (preferredScriptId) {
     const preferred = scripts.find((script) => script.id === preferredScriptId);
-    if (preferred && (!novels.length || preferred.name === targetScriptName || preferred.name === legacyTargetScriptName)) {
-      if (preferred.name === legacyTargetScriptName) {
-        await u.db("o_script").where("id", preferred.id).update({ name: targetScriptName });
-        preferred.name = targetScriptName;
-      }
+    if (preferred && (!novels.length || preferred.name === targetScriptName)) {
       await linkProjectAssetsToScript(project.id, preferred.id);
       return { script: preferred, created: false, content };
     }
   }
 
-  const flovaScript = scripts.find((script) => script.name === targetScriptName || script.name === legacyTargetScriptName);
+  const flovaScript = scripts.find((script) => script.name === targetScriptName);
   if (flovaScript) {
     const update: Partial<ScriptRow> = {};
-    if (flovaScript.name === legacyTargetScriptName) update.name = targetScriptName;
     if (content && content !== flovaScript.content) update.content = content;
     if (Object.keys(update).length > 0) await u.db("o_script").where("id", flovaScript.id).update(update);
     await linkProjectAssetsToScript(project.id, flovaScript.id);
@@ -528,7 +357,7 @@ function buildSourceUnits(project: ProjectRow, novels: NovelRow[], scriptContent
   }));
 }
 
-export function matchAssets(assets: AssetRow[], sourceText: string, maxCount = 7) {
+function matchAssets(assets: AssetRow[], sourceText: string, maxCount = 7) {
   const normalizedSource = normalizeForMatch(sourceText);
   const matched = assets.filter((asset) => splitAssetAliases(asset).some((alias) => normalizedSource.includes(alias)));
   const byType = (type: string) => matched.filter((asset) => asset.type === type);
@@ -555,98 +384,79 @@ export function matchAssets(assets: AssetRow[], sourceText: string, maxCount = 7
   return result.slice(0, maxCount);
 }
 
-export function buildStoryboardPrompt(project: ProjectRow, videoDesc: string, assetNames: string[]) {
+function buildStoryboardPrompt(project: ProjectRow, videoDesc: string, assetNames: string[], assetFactSummary: string) {
   const style = [project.artStyle, project.directorManual, project.type].filter(Boolean).join(", ") || "cinematic animation";
   const ratio = project.videoRatio || "16:9";
   return [
     `Storyboard keyframe, ${style}, aspect ratio ${ratio}.`,
     videoDesc,
+    assetFactSummary ? `Asset fact summary, must override novel appearance if there is conflict: ${assetFactSummary}` : "",
     assetNames.length ? `Use consistent project assets: ${assetNames.join(", ")}.` : "",
+    "Conflict priority: character fact cards / uploaded references > project hard constraints > asset descriptions > visual manual > novel source text.",
     "Clear composition, expressive character acting, cinematic lighting, no subtitles, no UI, no watermark.",
   ]
     .filter(Boolean)
     .join(" ");
 }
 
-function createDraftItems(project: ProjectRow, novels: NovelRow[], scriptContent: string, assets: AssetRow[]) {
+function buildAssetFactSummary(bundle: ProjectFactBundle | null, associatedAssets: AssetRow[]) {
+  const factSummary = formatProjectFactBundleForPrompt(bundle, {
+    assetIds: associatedAssets.map((asset) => asset.id),
+    includeProject: true,
+    maxAssets: 7,
+  });
+  if (factSummary) return compactText(factSummary, 1800);
+  return associatedAssets
+    .map((asset) => {
+      const name = cleanName(asset.name);
+      const desc = compactText([asset.describe, asset.prompt].filter(Boolean).join("；"), 260);
+      return [asset.id, name, asset.type, desc].filter(Boolean).join(":");
+    })
+    .filter(Boolean)
+    .join(" | ");
+}
+
+async function createDraftItems(project: ProjectRow, novels: NovelRow[], scriptContent: string, assets: AssetRow[]) {
   const units = buildSourceUnits(project, novels, scriptContent).slice(0, 12);
   const shotsPerUnit = units.length >= 8 ? 2 : 3;
-  const cameraPlans = [
-    { shotSize: "远景/全景", cameraMove: "缓推建立", functionName: "定场与冲突建立" },
-    { shotSize: "中景/近景", cameraMove: "跟拍或推近", functionName: "动作推进" },
-    { shotSize: "特写/运动镜头", cameraMove: "快速切入或轻微摇移", functionName: "反应与转场" },
-  ];
+  const cameras = ["宽幅建立镜头，交代地点和冲突", "中近景动作镜头，突出角色反应和推进", "特写/运动镜头，制造笑点、危险或转场"];
   const draft: StoryboardDraftItem[] = [];
+  const factBundle = await loadProjectFactBundle({ projectId: project.id, assetIds: assets.map((asset) => asset.id) });
 
   for (const [unitIndex, unit] of units.entries()) {
     const associatedAssets = matchAssets(assets, `${unit.title}\n${unit.assetHint}\n${unit.summary}\n${unit.sourceText}`);
-    const associatedAssetNames = associatedAssets.map((asset) => cleanName(asset.name)).filter(Boolean);
-    const roleAssets = associatedAssets.filter((asset) => asset.type === "role");
-    const sceneAssets = associatedAssets.filter((asset) => asset.type === "scene");
-    const propAssets = associatedAssets.filter((asset) => asset.type === "tool");
+    const assetNames = associatedAssets.map((asset) => cleanName(asset.name)).filter(Boolean);
+    const assetFactSummary = buildAssetFactSummary(factBundle, associatedAssets);
     const sourceTitle = unit.title || `段落 ${unitIndex + 1}`;
 
     for (let shotIndex = 0; shotIndex < shotsPerUnit; shotIndex++) {
       const index = draft.length;
-      const cameraPlan = cameraPlans[shotIndex] ?? cameraPlans[cameraPlans.length - 1]!;
+      const camera = cameras[shotIndex] ?? cameras[cameras.length - 1]!;
       const beat =
         shotIndex === 0
           ? `镜头${index + 1}：${sourceTitle}的开场，${unit.summary}`
           : shotIndex === 1
             ? `镜头${index + 1}：${sourceTitle}的核心动作推进，${unit.summary}`
             : `镜头${index + 1}：${sourceTitle}的结果反应和下一段转场，${unit.summary}`;
-      const role1 = roleAssets[0];
-      const role2 = roleAssets[1];
-      const scene = cleanName(sceneAssets[0]?.name) || sourceTitle;
-      const sceneAndPropNames = listAssetNames([...sceneAssets, ...propAssets]);
-      const reference = sceneAndPropNames.length ? sceneAndPropNames : listAssetNames(associatedAssets);
-      const duration = shotIndex === 1 ? 5 : 4;
-      const itemBase: StoryboardDraftItem = {
+      const videoDesc = `${beat}。镜头设计：${camera}。`;
+
+      draft.push({
         index,
-        duration,
+        duration: shotIndex === 1 ? 5 : 4,
         track: MAIN_TRACK_NAME,
-        videoDesc: "",
-        prompt: "",
+        videoDesc,
+        prompt: buildStoryboardPrompt(project, videoDesc, assetNames, assetFactSummary),
         shouldGenerateImage: 1,
         associateAssetsIds: associatedAssets.map((asset) => asset.id),
         sourceTitle,
-        narrativeFunction: cameraPlan.functionName,
-        pictureDescription: beat,
-        role1: cleanName(role1?.name),
-        role1Description: assetDescription(role1),
-        role1Image: assetImageMarkdown(role1),
-        role2: cleanName(role2?.name),
-        role2Description: assetDescription(role2),
-        role2Image: assetImageMarkdown(role2),
-        reference: reference.join("、"),
-        shotSize: cameraPlan.shotSize,
-        cameraMove: cameraPlan.cameraMove,
-        ...inferCameraTechnicalSettings({
-          shotSize: cameraPlan.shotSize,
-          cameraMove: cameraPlan.cameraMove,
-          lighting: "遵循项目视觉手册，突出主体与冲突",
-          action: beat,
-        }),
-        action: `${beat}｜朝向：按角色关系保持连续`,
-        emotion: shotIndex === 0 ? "紧张铺垫" : shotIndex === 1 ? "动作推进" : "反应收束",
-        scene,
-        lighting: "遵循项目视觉手册，突出主体与冲突",
-        sound: shotIndex === 1 ? "动作音 + 环境音" : "环境音",
-        dialogue: "无台词",
-      };
-      const videoDesc = buildStructuredVideoDesc(itemBase);
-      itemBase.videoDesc = videoDesc;
-      itemBase.prompt = buildStoryboardPrompt(project, videoDesc, associatedAssetNames);
-      itemBase.videoMotionPrompt = `${cameraPlan.shotSize}，${cameraPlan.cameraMove}，${beat}，${itemBase.lighting}，${itemBase.sound}`;
-
-      draft.push(itemBase);
+      });
     }
   }
 
   return draft.slice(0, 30);
 }
 
-export async function deleteStoryboards(scriptId: number, projectId: number) {
+async function deleteStoryboards(scriptId: number, projectId: number) {
   const rows = await u.db("o_storyboard").where({ scriptId, projectId }).select("id", "trackId");
   const storyboardIds = rows.map((row: { id?: number | null }) => row.id).filter((id): id is number => typeof id === "number");
   if (!storyboardIds.length) return 0;
@@ -698,14 +508,13 @@ async function ensureTrack(projectId: number, scriptId: number, track: string, d
   return trackId;
 }
 
-export async function insertDraftItems(projectId: number, scriptId: number, items: StoryboardDraftItem[], startIndex: number) {
+async function insertDraftItems(projectId: number, scriptId: number, items: StoryboardDraftItem[], startIndex: number) {
   const trackDuration = items.reduce((sum, item) => sum + item.duration, 0);
   const trackId = await ensureTrack(projectId, scriptId, MAIN_TRACK_NAME, trackDuration);
   const storyboardIds: number[] = [];
   const now = Date.now();
 
   for (const item of items) {
-    const cameraTech = inferCameraTechnicalSettings(item);
     const [insertedId] = await u.db("o_storyboard").insert({
       prompt: item.prompt,
       duration: String(item.duration),
@@ -715,10 +524,6 @@ export async function insertDraftItems(projectId: number, scriptId: number, item
       track: item.track,
       trackId,
       videoDesc: item.videoDesc,
-      focalLength: cameraTech.focalLength,
-      aperture: cameraTech.aperture,
-      shutterSpeed: cameraTech.shutterSpeed,
-      iso: cameraTech.iso,
       shouldGenerateImage: item.shouldGenerateImage,
       index: startIndex + item.index,
       createTime: now + item.index,
@@ -741,44 +546,15 @@ export async function insertDraftItems(projectId: number, scriptId: number, item
   return storyboardIds;
 }
 
-export function buildStoryboardTable(items: StoryboardDraftItem[]) {
-  const rows = [
-    "| 镜号 | 时长 | 画面描述 | 角色1 | 角色描述1 | 角色图1 | 角色2 | 角色描述2 | 角色图2 | 参考 | 景别 | 运镜 | 焦距 | 光圈 | 快门 | ISO | 角色动作 | 情绪 | 场景标签 | 光影氛围 | 音效 | 对白 | 分镜提示词 | 视频运动提示词 |",
-    "| --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-  ];
+function buildStoryboardTable(items: StoryboardDraftItem[]) {
+  const rows = ["| 镜号 | 时长 | 画面/动作 | 关联资产 |", "| --- | ---: | --- | --- |"];
   for (const item of items) {
-    const cameraTech = inferCameraTechnicalSettings(item);
-    rows.push(`| ${[
-      item.index + 1,
-      `${item.duration}s`,
-      item.pictureDescription || item.videoDesc,
-      item.role1,
-      item.role1Description,
-      item.role1Image,
-      item.role2,
-      item.role2Description,
-      item.role2Image,
-      item.reference || (item.associateAssetsIds.length ? `资产ID ${item.associateAssetsIds.join(", ")}` : ""),
-      item.shotSize,
-      item.cameraMove,
-      cameraTech.focalLength,
-      cameraTech.aperture,
-      cameraTech.shutterSpeed,
-      cameraTech.iso,
-      item.action,
-      item.emotion,
-      item.scene,
-      item.lighting,
-      item.sound,
-      item.dialogue || "无台词",
-      item.prompt,
-      item.videoMotionPrompt || item.videoDesc,
-    ].map(mdCell).join(" | ")} |`);
+    rows.push(`| ${item.index + 1} | ${item.duration}s | ${item.videoDesc.replace(/\|/g, "/")} | ${item.associateAssetsIds.join(", ") || "-"} |`);
   }
   return rows.join("\n");
 }
 
-export async function upsertProductionWorkData(projectId: number, scriptId: number, scriptContent: string, storyboardTable: string) {
+async function upsertProductionWorkData(projectId: number, scriptId: number, scriptContent: string, storyboardTable: string) {
   const existing = await u.db("o_agentWorkData").where({ projectId, episodesId: scriptId, key: "productionAgent" }).first();
   let data: Record<string, any> = {};
   if (existing?.data) {
@@ -818,36 +594,23 @@ export async function upsertProductionWorkData(projectId: number, scriptId: numb
   }
 }
 
-export function shouldForce(sourceText?: string) {
-  return /重新|重做|重推|再次推理|重新推理|覆盖|替换|清空|删除.*重|再生成|重建/i.test(sourceText ?? "");
+function shouldForce(sourceText?: string) {
+  return /重新|重做|覆盖|替换|清空|再生成|重建/i.test(sourceText ?? "");
 }
 
-export function shouldAppend(sourceText?: string) {
+function shouldAppend(sourceText?: string) {
   return /追加|补充|继续|接着/i.test(sourceText ?? "");
 }
 
-export function selectStoryboardNovels(allNovels: NovelRow[], options: GenerateProjectStoryboardDraftOptions) {
+function selectStoryboardNovels(allNovels: NovelRow[], options: GenerateProjectStoryboardDraftOptions) {
   if (!allNovels.length) return [];
 
   const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);
-  const requestedChapterNameTokens = parseStoryboardChapterNameTokens(options.sourceText);
-  const normalizedChapterNameTokens = requestedChapterNameTokens.map((token) => normalizeForMatch(token)).filter(Boolean);
   const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(options.sourceText)]);
 
   let selected = allNovels;
   if (requestedNovelIds.length) {
     selected = allNovels.filter((novel) => requestedNovelIds.includes(novel.id));
-  } else if (normalizedChapterNameTokens.length) {
-    const exactMatches = allNovels.filter((novel) => {
-      const chapter = normalizeForMatch(novel.chapter);
-      return chapter && normalizedChapterNameTokens.includes(chapter);
-    });
-    selected = exactMatches.length
-      ? exactMatches
-      : allNovels.filter((novel) => {
-          const chapter = normalizeForMatch(novel.chapter);
-          return chapter && normalizedChapterNameTokens.some((token) => chapter.includes(token));
-        });
   } else if (requestedChapterIndexes.length) {
     selected = allNovels.filter((novel) => typeof novel.chapterIndex === "number" && requestedChapterIndexes.includes(novel.chapterIndex));
   } else {
@@ -876,7 +639,7 @@ async function getProjectScriptsWithStoryboardCounts(projectId: number) {
 
   return rows.map((row: any) => ({
     id: Number(row.id),
-    name: toPublicWorkspaceName(row.name ?? "未命名分镜工作区"),
+    name: String(row.name ?? "未命名生产容器"),
     projectId: Number(row.projectId),
     storyboardCount: Number(row.storyboardCount ?? 0),
   }));
@@ -905,7 +668,7 @@ export async function clearProjectStoryboards(projectId: number, options: ClearP
       targetScripts: scriptsWithStoryboards,
       needsSelection: scriptsWithStoryboards.length > 1,
       message: scriptsWithStoryboards.length
-        ? `没有匹配到要清空的章节分镜工作区。当前有分镜的工作区：${scriptsWithStoryboards.map((script) => `${toPublicWorkspaceName(script.name)}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`
+        ? `没有匹配到要清空的生产容器。当前有分镜的容器：${scriptsWithStoryboards.map((script) => `${script.name}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`
         : "当前项目没有可清空的分镜。",
     };
   }
@@ -918,7 +681,7 @@ export async function clearProjectStoryboards(projectId: number, options: ClearP
       remainingCount: scriptsWithStoryboards.reduce((sum, script) => sum + script.storyboardCount, 0),
       targetScripts,
       needsSelection: true,
-      message: `当前有多个章节分镜工作区含分镜，请指定要清空的章节：${targetScripts.map((script) => `${toPublicWorkspaceName(script.name)}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`,
+      message: `当前有多个生产容器含分镜，请指定要清空的容器：${targetScripts.map((script) => `${script.name}（ID: ${script.id}，${script.storyboardCount}条）`).join("；")}。`,
     };
   }
 
@@ -937,7 +700,7 @@ export async function clearProjectStoryboards(projectId: number, options: ClearP
     remainingCount,
     targetScripts,
     needsSelection: false,
-    message: `已清空 ${targetScripts.map((script) => `「${toPublicWorkspaceName(script.name)}」`).join("、")} 的 ${deletedCount} 条分镜。`,
+    message: `已清空 ${targetScripts.map((script) => `「${script.name}」`).join("、")} 的 ${deletedCount} 条分镜。`,
   };
 }
 
@@ -949,24 +712,17 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
     u.db("o_novel").where("projectId", projectId).select("id", "chapterIndex", "chapter", "chapterData", "event", "eventState").orderBy("chapterIndex", "asc") as Promise<NovelRow[]>,
     u
       .db("o_assets")
-      .leftJoin("o_image", "o_assets.imageId", "o_image.id")
-      .where("o_assets.projectId", projectId)
-      .whereNull("o_assets.assetsId")
-      .select("o_assets.id", "o_assets.name", "o_assets.type", "o_assets.describe", "o_assets.prompt", "o_assets.imageId", "o_image.filePath")
-      .orderByRaw(`CASE o_assets.type WHEN 'scene' THEN 1 WHEN 'role' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
-      .orderBy("o_assets.id", "asc") as Promise<AssetRow[]>,
+      .where("projectId", projectId)
+      .whereNull("assetsId")
+      .select("id", "name", "type", "describe", "prompt", "imageId")
+      .orderByRaw(`CASE type WHEN 'scene' THEN 1 WHEN 'role' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`)
+      .orderBy("id", "asc") as Promise<AssetRow[]>,
   ]);
   const requestedChapterIndexes = toUniquePositiveNumbers([...(options.chapterIndexes ?? []), ...parseStoryboardChapterIndexes(options.sourceText)]);
   const requestedNovelIds = toUniquePositiveNumbers(options.novelIds ?? []);
-  const requestedChapterNameTokens = parseStoryboardChapterNameTokens(options.sourceText);
   const novels = selectStoryboardNovels(allNovels, options);
-  if (allNovels.length && (requestedChapterIndexes.length || requestedNovelIds.length || requestedChapterNameTokens.length) && !novels.length) {
-    const requestedParts = [
-      requestedChapterNameTokens.length ? `原始章节名 ${requestedChapterNameTokens.join(", ")}` : "",
-      requestedChapterIndexes.length ? `内部章节 ${requestedChapterIndexes.join(", ")}` : "",
-      requestedNovelIds.length ? `小说记录 ${requestedNovelIds.join(", ")}` : "",
-    ].filter(Boolean);
-    const requested = requestedParts.join(" 或 ");
+  if (allNovels.length && (requestedChapterIndexes.length || requestedNovelIds.length) && !novels.length) {
+    const requested = requestedChapterIndexes.length ? `章节 ${requestedChapterIndexes.join(", ")}` : `小说记录 ${requestedNovelIds.join(", ")}`;
     throw new Error(`没有匹配到${requested}，已停止生成，避免把其他章节误写入分镜。`);
   }
 
@@ -983,7 +739,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
     return {
       projectId,
       episodesId,
-      scriptName: toPublicWorkspaceName(script.name),
+      scriptName: script.name ?? FLOVA_SCRIPT_NAME,
       scriptCreated,
       storyboardIds: existingRows.map((row: { id?: number | null }) => Number(row.id)).filter(Boolean),
       createdCount: 0,
@@ -992,9 +748,8 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
       appended: false,
       selectedNovelIds: novels.map((novel) => novel.id),
       selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
-      selectedChapterLabels: novels.map(formatChapterSelectionLabel),
       storyboardTable,
-      message: `当前章节分镜工作区「${toPublicWorkspaceName(script.name)}」已有 ${existingCount} 个分镜，已切换到该章节。需要覆盖重做时请说“重新生成分镜”。`,
+      message: `当前生产容器「${script.name ?? FLOVA_SCRIPT_NAME}」已有 ${existingCount} 个分镜，已切换到该章节剧集。需要覆盖重做时请说“重新生成分镜”。`,
     };
   }
 
@@ -1004,8 +759,8 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
   }
 
   const startIndex = append && existingCount > 0 ? existingCount : 0;
-  const draftItems = createDraftItems(project, novels, scriptContent, assets);
-  if (!draftItems.length) throw new Error("当前项目缺少可用于生成分镜的小说章节、事件分析或项目简介。");
+  const draftItems = await createDraftItems(project, novels, scriptContent, assets);
+  if (!draftItems.length) throw new Error("当前项目缺少可用于生成分镜的小说、剧本或项目简介。");
 
   const storyboardIds = await insertDraftItems(projectId, episodesId, draftItems, startIndex);
   const storyboardTable = buildStoryboardTable(draftItems);
@@ -1015,7 +770,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
   return {
     projectId,
     episodesId,
-    scriptName: toPublicWorkspaceName(script.name),
+    scriptName: script.name ?? FLOVA_SCRIPT_NAME,
     scriptCreated,
     storyboardIds,
     createdCount: storyboardIds.length,
@@ -1024,8 +779,7 @@ export async function generateProjectStoryboardDraft(projectId: number, options:
     appended: append && existingCount > 0,
     selectedNovelIds: novels.map((novel) => novel.id),
     selectedChapterIndexes: novels.map((novel) => novel.chapterIndex ?? novel.id),
-    selectedChapterLabels: novels.map(formatChapterSelectionLabel),
     storyboardTable,
-    message: `${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。`,
+    message: `${verb} ${storyboardIds.length} 个分镜，生产剧集为「${script.name ?? FLOVA_SCRIPT_NAME}」。已按单章节隔离处理，未把后续章节并入上下文。`,
   };
 }

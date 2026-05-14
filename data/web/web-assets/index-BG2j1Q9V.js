@@ -1,0 +1,2 @@
+import{i as a}from"./axios-CJ9BA_kU.js";import{B as r}from"./index-4QgiPXjH.js";import{d as c,c as i,b as m,w as p,e as l,a as _,$ as f,f as u,z as d,o as x}from"./index-DXS7sV1z.js";const B={class:"test"},N=c({__name:"index",setup(g){const t=d("");function s(){a.get("/test/test").then(e=>{t.value=e})}return(e,o)=>{const n=r;return x(),i("div",B,[m(n,{theme:"primary",onClick:s},{default:p(()=>[...o[0]||(o[0]=[l("测试按钮",-1)])]),_:1}),_("pre",null,"      "+f(u(t))+`
+    `,1)])}}});export{N as default};

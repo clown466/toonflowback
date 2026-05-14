@@ -101,6 +101,57 @@ export default (nsp: Namespace) => {
       console.log("[workspaceAgent] 更新思考配置:", thinkConfig);
     });
 
+    socket.on("getImageModels", async (callback) => {
+      try {
+        const projectId = resTool.data.projectId;
+        const project = await u.db("o_project").where("id", projectId).select("imageModel", "imageQuality").first();
+        const vendors = await u.db("o_vendorConfig").where("enable", 1).select("id", "name");
+        const options = [];
+        for (const vendor of vendors) {
+          const models = await u.vendor.getModelList(vendor.id);
+          const imageModels = models.filter((m: any) => m.type === "image");
+          for (const m of imageModels) {
+            options.push({
+              vendorId: vendor.id,
+              vendorName: vendor.name,
+              modelName: m.modelName,
+              label: m.label || m.modelName,
+              value: `${vendor.id}:${m.modelName}`,
+            });
+          }
+        }
+        callback?.({
+          success: true,
+          current: project?.imageModel || null,
+          currentQuality: project?.imageQuality || null,
+          options,
+        });
+      } catch (err: any) {
+        console.error("[workspaceAgent] getImageModels error:", err);
+        callback?.({ success: false, message: err.message });
+      }
+    });
+
+    socket.on("setImageModel", async (data: { model: string; quality?: string }, callback) => {
+      try {
+        const projectId = resTool.data.projectId;
+        const [vendorId] = data.model.split(":");
+        const vendor = await u.db("o_vendorConfig").where("id", vendorId).where("enable", 1).first();
+        if (!vendor) {
+          callback?.({ success: false, message: "该厂商未启用" });
+          return;
+        }
+        const update: any = { imageModel: data.model };
+        if (data.quality) update.imageQuality = data.quality;
+        await u.db("o_project").where("id", projectId).update(update);
+        console.log("[workspaceAgent] 图像模型已更新:", data.model);
+        callback?.({ success: true, model: data.model, quality: data.quality });
+      } catch (err: any) {
+        console.error("[workspaceAgent] setImageModel error:", err);
+        callback?.({ success: false, message: err.message });
+      }
+    });
+
     socket.on("stop", () => {
       abortController?.abort();
       abortController = null;

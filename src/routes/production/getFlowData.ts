@@ -6,94 +6,147 @@ import { validateFields } from "@/middleware/middleware";
 const router = express.Router();
 import { FlowData } from "@/agents/productionAgent/tools";
 
+type MaybeId = number | null | undefined;
+type FlowAsset = FlowData["assets"][number];
+type FlowAssetType = FlowAsset["type"];
+type FlowAssetState = FlowAsset["derive"][number]["state"];
+
+function isValidId(id: MaybeId): id is number {
+  return typeof id === "number" && Number.isFinite(id);
+}
+
+async function getSmallImageUrl(filePath?: string | null) {
+  if (!filePath) return null;
+  try {
+    return await u.oss.getSmallImageUrl(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAssetType(type: unknown): FlowAssetType {
+  return type as FlowAssetType;
+}
+
+function normalizeAssetState(state: unknown): FlowAssetState {
+  return state === "已完成" || state === "生成中" || state === "生成失败" ? state : "未生成";
+}
+
+function emptyFlowData(script = ""): FlowData {
+  return {
+    script,
+    scriptPlan: "",
+    assets: [],
+    storyboardTable: "",
+    storyboard: [],
+    //todo：矫正workbench数据
+    //@ts-ignore
+    workbench: {
+      videoList: [],
+    },
+    // //todo：矫正封面数据
+    // poster: {
+    //   items: [],
+    // },
+  };
+}
+
+function parseFlowData(data: string | null | undefined, script: string): FlowData {
+  if (!data) return emptyFlowData(script);
+  try {
+    return { ...emptyFlowData(script), ...JSON.parse(data) };
+  } catch {
+    return emptyFlowData(script);
+  }
+}
+
+export async function getProjectLevelAssets(projectId: number, episodesId?: MaybeId): Promise<FlowData["assets"]> {
+  const scriptAssets = isValidId(episodesId) ? await u.db("o_scriptAssets").where("scriptId", episodesId) : [];
+  const assetIds = scriptAssets.map((i) => Number(i.assetId)).filter((id) => Number.isFinite(id));
+  const assetsQuery = u
+    .db("o_assets")
+    .leftJoin("o_image", "o_assets.imageId", "o_image.id")
+    .select("o_assets.*", "o_image.filePath", "o_image.state as imageState", "o_image.errorReason as imageErrorReason")
+    .where("o_assets.projectId", projectId)
+    .whereNull("o_assets.assetsId");
+
+  if (assetIds.length > 0) {
+    assetsQuery.orderByRaw(`CASE WHEN o_assets.id IN (${assetIds.map(() => "?").join(",")}) THEN 0 ELSE 1 END`, assetIds);
+  }
+  assetsQuery.orderByRaw(`CASE o_assets.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`).orderBy("o_assets.id", "asc");
+
+  const assetsData = await assetsQuery;
+  const parentAssetIds = assetsData.map((item) => item.id).filter((id) => Number.isFinite(Number(id)));
+
+  const childAssetsData = parentAssetIds.length
+    ? await u
+        .db("o_assets")
+        .leftJoin("o_image", "o_assets.imageId", "o_image.id")
+        .select("o_assets.*", "o_image.filePath", "o_image.state as imageState", "o_image.errorReason as imageErrorReason")
+        .where("o_assets.projectId", projectId)
+        .whereIn("o_assets.assetsId", parentAssetIds)
+        .whereNotNull("o_assets.assetsId")
+    : [];
+
+  return Promise.all(
+    assetsData.map(async (item) => ({
+      id: item.id,
+      name: item.name ?? "",
+      type: normalizeAssetType(item.type),
+      prompt: item.prompt ?? "",
+      desc: item.describe ?? "",
+      src: await getSmallImageUrl(item.filePath),
+      state: normalizeAssetState(item.imageState),
+      errorReason: item.imageErrorReason ?? "",
+      flowId: item.flowId,
+      derive: await Promise.all(
+        childAssetsData
+          .filter((child) => child.assetsId === item.id)
+          .map(async (child) => ({
+            id: child.id,
+            assetsId: item.id,
+            name: child.name ?? "",
+            type: normalizeAssetType(child.type),
+            prompt: child.prompt ?? "",
+            desc: child.describe ?? "",
+            src: await getSmallImageUrl(child.filePath),
+            state: normalizeAssetState(child.imageState),
+            errorReason: child.imageErrorReason ?? "",
+            flowId: child.flowId,
+          })),
+      ),
+    })),
+  );
+}
+
 export default router.post(
   "/",
   validateFields({
     projectId: z.number(),
-    episodesId: z.number(),
+    episodesId: z.number().optional().nullable(),
   }),
   async (req, res) => {
-    const { projectId, episodesId }: { projectId: number; episodesId: number } = req.body;
-    const sqlData = await u
-      .db("o_agentWorkData")
-      .where("projectId", String(projectId))
-      .andWhere("episodesId", String(episodesId))
-      .select("data")
-      .first();
-
-    const scriptData = await u.db("o_script").where("projectId", projectId).where("id", episodesId).first();
-    const scriptAssets = await u.db("o_scriptAssets").where("scriptId", episodesId);
-    const assetIds = scriptAssets.map((i) => Number(i.assetId)).filter((id) => Number.isFinite(id));
-    const assetsQuery = u
-      .db("o_assets")
-      .leftJoin("o_image", "o_assets.imageId", "o_image.id")
-      .select("o_assets.*", "o_image.filePath", "o_image.state", "o_image.errorReason")
-      .andWhere("o_assets.assetsId", null)
-      .where("o_assets.projectId", projectId);
-
-    if (assetIds.length > 0) {
-      assetsQuery.orderByRaw(`CASE WHEN o_assets.id IN (${assetIds.map(() => "?").join(",")}) THEN 0 ELSE 1 END`, assetIds);
-    }
-    assetsQuery.orderByRaw(`CASE o_assets.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 4 END`).orderBy("o_assets.id", "asc");
-
-    const assetsData = await assetsQuery;
-    const parentAssetIds = assetsData.map((item) => item.id);
-
-    let childAssetsData = await u
-      .db("o_assets")
-      .leftJoin("o_image", "o_assets.imageId", "o_image.id")
-      .select("o_assets.*", "o_image.filePath", "o_image.state", "o_image.errorReason")
-      .where("o_assets.projectId", projectId)
-      // @ts-ignore
-      .where("o_assets.assetsId", "in", parentAssetIds)
-      .whereNotNull("o_assets.assetsId");
+    const { projectId, episodesId }: { projectId: number; episodesId?: MaybeId } = req.body;
+    const [sqlData, scriptData, assets] = await Promise.all([
+      isValidId(episodesId)
+        ? u
+            .db("o_agentWorkData")
+            .where("projectId", String(projectId))
+            .andWhere("episodesId", String(episodesId))
+            .select("data")
+            .first()
+        : null,
+      isValidId(episodesId) ? u.db("o_script").where("projectId", projectId).where("id", episodesId).first() : null,
+      getProjectLevelAssets(projectId, episodesId),
+    ]);
 
     if (!sqlData) {
-      const flowData: FlowData = {
-        script: scriptData?.content ?? "",
-        scriptPlan: "",
-        assets: await Promise.all(
-          assetsData.map(async (item) => ({
-            id: item.id,
-            name: item.name ?? "",
-            type: item.type ?? "",
-            prompt: item.prompt ?? "",
-            desc: item.describe ?? "",
-            src: item.filePath && (await u.oss.getSmallImageUrl(item.filePath!)),
-            state: item.state ?? "未生成",
-            errorReason: item.errorReason ?? "",
-            derive: await Promise.all(
-              childAssetsData
-                .filter((child) => child.assetsId === item.id)
-                .map(async (child) => ({
-                  id: child.id,
-                  assetsId: item.id,
-                  name: child.name ?? "",
-                  type: child.type,
-                  prompt: child.prompt,
-                  desc: child.describe ?? "",
-                  src: child.filePath && (await u.oss.getSmallImageUrl(child.filePath!)),
-                  state: child.state ?? "未生成", //todo：矫正状态值
-                })),
-            ),
-          })),
-        ),
-        storyboardTable: "",
-        storyboard: [],
-        //todo：矫正workbench数据
-        //@ts-ignore
-        workbench: {
-          videoList: [],
-        },
-        // //todo：矫正封面数据
-        // poster: {
-        //   items: [],
-        // },
-      };
+      const flowData = emptyFlowData(scriptData?.content ?? "");
+      flowData.assets = assets;
       return res.status(200).send(success(flowData));
     } else {
       try {
-        const storyboardData = await u.db("o_storyboard").where("scriptId", episodesId);
+        const storyboardData = isValidId(episodesId) ? await u.db("o_storyboard").where("scriptId", episodesId) : [];
 
         await Promise.all(
           storyboardData.map(async (i) => {
@@ -118,36 +171,8 @@ export default router.post(
           }
           assets2StoryboardMap[i.storyboardId!].push(i.assetId!);
         });
-        const flowData = JSON.parse(sqlData!.data ?? "{}");
-        flowData.assets = await Promise.all(
-          assetsData.map(async (item) => ({
-            id: item.id,
-            name: item.name ?? "",
-            type: item.type ?? "",
-            prompt: item.prompt ?? "",
-            desc: item.describe ?? "",
-            src: item.filePath && (await u.oss.getSmallImageUrl(item.filePath!)),
-            state: item.state ?? "未生成",
-            errorReason: item.errorReason ?? "",
-            flowId: item.flowId,
-            derive: await Promise.all(
-              childAssetsData
-                .filter((child) => child.assetsId === item.id)
-                .map(async (child) => ({
-                  id: child.id,
-                  assetsId: item.id,
-                  name: child.name ?? "",
-                  prompt: child.prompt,
-                  type: child.type,
-                  desc: child.describe ?? "",
-                  src: child.filePath && (await u.oss.getSmallImageUrl(child.filePath!)),
-                  state: child.state ?? "未生成",
-                  errorReason: child?.errorReason ?? "",
-                  flowId: child.flowId,
-                })),
-            ),
-          })),
-        );
+        const flowData: any = parseFlowData(sqlData!.data, scriptData?.content ?? "");
+        flowData.assets = assets;
         flowData.storyboard = storyboardData
           .map((i) => ({
             id: i.id,

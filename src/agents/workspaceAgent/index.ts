@@ -84,6 +84,7 @@ export async function runDecisionAI(ctx: AgentContext) {
         resTool: ctx.resTool,
         msg: ctx.msg,
         sourceText: text,
+        abortSignal,
       },
       { force: true },
     );

@@ -165,6 +165,20 @@ async function main() {
               if (response.name) error.name = response.name;
               throw error;
             }
+            if (response && typeof response === 'object' && response.__streamChunks) {
+              const chunks = response.__streamChunks;
+              const throwAfterChunks = response.__throwAfterChunks;
+              return {
+                textStream: (async function* () {
+                  for (const chunk of chunks) yield chunk;
+                  if (throwAfterChunks) {
+                    const error = new Error(response.message || 'aborted');
+                    if (response.name) error.name = response.name;
+                    throw error;
+                  }
+                })(),
+              };
+            }
             const text = typeof response === 'string' ? response : JSON.stringify(response);
             return {
               textStream: (async function* () {
@@ -358,7 +372,7 @@ async function main() {
 
   capturedPrompts = [];
   capturedModelKeys = [];
-  mockStoryboardResponses = [{ __throw: true, message: '分镜模型响应超过 180 秒，请检查当前文本模型是否可用，或切换更快的文本模型后重试' }];
+  mockStoryboardResponses = [{ __throw: true, message: '分镜模型响应超过 120 秒，请检查当前文本模型是否可用，或切换更快的文本模型后重试' }];
   const timeoutFallbackResult = await service.generateProjectStoryboardWithSkill(9, {
     sourceText: '请针对 juben17 重新生成分镜表',
     force: true,
@@ -410,6 +424,57 @@ async function main() {
   assert.ok(String(terminatedFallbackResult.fallbackReason).includes('稳定分镜草案'), terminatedFallbackResult.fallbackReason);
   const terminatedStoryboards = await db('o_storyboard').where({ projectId: 11, scriptId: terminatedFallbackResult.episodesId });
   assert.strictEqual(terminatedStoryboards.length, terminatedFallbackResult.createdCount, 'terminated fallback should still write usable storyboards');
+
+  await db('o_project').insert({
+    id: 13,
+    name: 'Partial Stream Recovery',
+    intro: 'English-language fast drama',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Recover usable streamed shots before provider timeout',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 130,
+    projectId: 13,
+    chapterIndex: 17,
+    chapter: 'juben17',
+    chapterData: 'Chloe runs through the bunker. Bob blocks the door. Leo spots the alarm. Chloe says, "Move now."',
+    event: '| juben17 | Chloe, Bob, Leo, bunker | The team escapes before the alarm locks the bunker |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 131, projectId: 13, name: 'Chloe', type: 'role', describe: 'peach lead', prompt: 'Chloe prompt' },
+    { id: 132, projectId: 13, name: 'Bob', type: 'role', describe: 'orange soldier', prompt: 'Bob prompt' },
+    { id: 133, projectId: 13, name: 'Leo', type: 'role', describe: 'yellow lemon', prompt: 'Leo prompt' },
+    { id: 134, projectId: 13, name: 'bunker', type: 'scene', describe: 'safe bunker', prompt: 'bunker prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  const partialShots = Array.from({ length: 4 }, (_, index) => ({
+    duration: 3,
+    videoDesc: `Recovered streamed bunker beat ${index + 1}.`,
+    imagePrompt: `Chloe Bob Leo bunker recovered beat ${index + 1}`,
+    associateAssetNames: ['Chloe', 'Bob', 'Leo', 'bunker'],
+    dialogue: index === 2 ? 'Chloe: Move now.' : 'No dialogue',
+  }));
+  mockStoryboardResponses = [
+    {
+      __streamChunks: [`{"storyboardTable":"","shots":[${partialShots.map((shot) => JSON.stringify(shot)).join(',')},`],
+      __throwAfterChunks: true,
+      name: 'AbortError',
+      message: 'aborted',
+    },
+  ];
+  const partialRecoveryResult = await service.generateProjectStoryboardWithSkill(13, {
+    sourceText: '请针对 juben17 生成4个分镜',
+    force: true,
+  });
+  assert.strictEqual(partialRecoveryResult.fallbackReason, undefined, 'usable partial streamed JSON should be recovered instead of falling back');
+  assert.strictEqual(partialRecoveryResult.createdCount, 4, 'complete streamed shot objects should be written');
+  const partialRows = await db('o_storyboard').where({ projectId: 13, scriptId: partialRecoveryResult.episodesId }).orderBy('index');
+  assert.ok(partialRows.every((row) => String(row.videoDesc).includes('Recovered streamed bunker beat')), 'partial recovery should preserve model-produced shots');
 
   await db('o_project').insert({
     id: 10,

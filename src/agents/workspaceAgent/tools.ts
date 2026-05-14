@@ -883,32 +883,42 @@ export async function runProjectStoryboardDraftTool(
   const thinking = msg.thinking("正在生成生产分镜草案...");
   thinking.updateTitle("正在调用分镜模型生成结构化分镜...");
 
-  const result = await generateProjectStoryboardWithSkill(projectId, {
-    sourceText,
-    userRequirement: options?.userRequirement,
-    skillId: options?.skillId,
-    preferredScriptId: typeof resTool.data.scriptId === "number" ? resTool.data.scriptId : undefined,
-    force: options?.force ?? shouldForce(sourceText),
-    append: options?.append ?? shouldAppend(sourceText),
-    novelIds: options?.novelIds,
-    chapterIndexes: options?.chapterIndexes,
-    abortSignal: config.abortSignal,
-    onWorkspaceResolved: (workspace) => {
-      resTool.socket.emit("productionDataUpdated", {
-        projectId,
-        episodesId: workspace.episodesId,
-        scriptName: workspace.scriptName,
-        scriptCreated: workspace.scriptCreated,
-        existingCount: workspace.existingCount,
-        selectedNovelIds: workspace.selectedNovelIds,
-        selectedChapterIndexes: workspace.selectedChapterIndexes,
-        selectedChapterLabels: workspace.selectedChapterLabels,
-        createdCount: 0,
-        storyboardIds: [],
-        stage: "workspace_resolved",
-      });
-    },
-  });
+  const startedAt = Date.now();
+  const progressTimer = setInterval(() => {
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    thinking.updateTitle(`分镜模型仍在推理中，已等待 ${seconds}s；超时会自动尝试救回已返回内容或启用稳定草案。`);
+  }, 30000);
+  let result: Awaited<ReturnType<typeof generateProjectStoryboardWithSkill>>;
+  try {
+    result = await generateProjectStoryboardWithSkill(projectId, {
+      sourceText,
+      userRequirement: options?.userRequirement,
+      skillId: options?.skillId,
+      preferredScriptId: typeof resTool.data.scriptId === "number" ? resTool.data.scriptId : undefined,
+      force: options?.force ?? shouldForce(sourceText),
+      append: options?.append ?? shouldAppend(sourceText),
+      novelIds: options?.novelIds,
+      chapterIndexes: options?.chapterIndexes,
+      abortSignal: config.abortSignal,
+      onWorkspaceResolved: (workspace) => {
+        resTool.socket.emit("productionDataUpdated", {
+          projectId,
+          episodesId: workspace.episodesId,
+          scriptName: workspace.scriptName,
+          scriptCreated: workspace.scriptCreated,
+          existingCount: workspace.existingCount,
+          selectedNovelIds: workspace.selectedNovelIds,
+          selectedChapterIndexes: workspace.selectedChapterIndexes,
+          selectedChapterLabels: workspace.selectedChapterLabels,
+          createdCount: 0,
+          storyboardIds: [],
+          stage: "workspace_resolved",
+        });
+      },
+    });
+  } finally {
+    clearInterval(progressTimer);
+  }
 
   thinking.appendText(
     JSON.stringify(

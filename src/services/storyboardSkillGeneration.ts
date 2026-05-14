@@ -151,7 +151,7 @@ const CJK_SLOW_CHARS_PER_SECOND = 2;
 const STORYBOARD_MODEL_KEY = "productionAgent:storyboardTableAgent";
 const MAX_MODEL_CONTEXT_ASSETS = 12;
 const MAX_STORYBOARD_SKILL_PROMPT_CHARS = 4200;
-const STORYBOARD_MODEL_TIMEOUT_MS = 180000;
+const STORYBOARD_MODEL_TIMEOUT_MS = 120000;
 const STABLE_FALLBACK_MAX_SOURCE_BEATS = 18;
 
 function fallback(projectId: number, options: GenerateProjectStoryboardWithSkillOptions, reason: string) {
@@ -248,6 +248,10 @@ function extractJsonText(text: string) {
   return trimmed;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function parseStoryboardJson(text: string): SkillStoryboardJson {
   let parsed: any;
   try {
@@ -299,6 +303,85 @@ function parseStoryboardJson(text: string): SkillStoryboardJson {
     storyboardTable: nonEmpty(parsed.storyboardTable) ?? "",
     shots: normalizedShots.slice(0, MAX_STORYBOARD_SHOTS),
   };
+}
+
+function extractCompletedJsonObjectsFromArray(text: string, propertyName: string) {
+  const propertyIndex = text.search(new RegExp(`["']${escapeRegExp(propertyName)}["']\\s*:`));
+  if (propertyIndex < 0) return [];
+  const arrayStart = text.indexOf("[", propertyIndex);
+  if (arrayStart < 0) return [];
+
+  const objects: any[] = [];
+  let objectStart = -1;
+  let depth = 0;
+  let inString = false;
+  let stringQuote = "";
+  let escaped = false;
+
+  for (let index = arrayStart + 1; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === stringQuote) {
+        inString = false;
+        stringQuote = "";
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      inString = true;
+      stringQuote = char;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) objectStart = index;
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      if (depth <= 0) continue;
+      depth -= 1;
+      if (depth === 0 && objectStart >= 0) {
+        const objectText = text.slice(objectStart, index + 1);
+        try {
+          objects.push(JSON.parse(objectText));
+        } catch {
+          // Ignore malformed trailing objects; earlier complete shots may still be usable.
+        }
+        objectStart = -1;
+      }
+      continue;
+    }
+    if (char === "]" && depth === 0) break;
+  }
+
+  return objects;
+}
+
+function parsePartialStoryboardJson(text: string) {
+  try {
+    return parseStoryboardJson(text);
+  } catch {
+    const shots = extractCompletedJsonObjectsFromArray(extractJsonText(text), "shots");
+    if (!shots.length) return null;
+    try {
+      return parseStoryboardJson(JSON.stringify({ storyboardTable: "", shots }));
+    } catch {
+      return null;
+    }
+  }
+}
+
+function isPartialStoryboardUsable(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint) {
+  if (!parsed.shots.length) return false;
+  if (planning?.explicitShotCount) return parsed.shots.length === planning.explicitShotCount;
+  const estimatedMinimum = planning?.estimatedMinimumShots ?? 4;
+  const minimumRecoverableCount = Math.max(4, Math.ceil(estimatedMinimum * 0.5));
+  return parsed.shots.length >= minimumRecoverableCount;
 }
 
 function parseSimpleCount(value: string) {
@@ -1390,6 +1473,17 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
   } catch (error) {
     if (abortSignal?.aborted) throw error;
     if (timeout.signal.aborted || isAbortLikeError(error)) {
+      const partial = text ? parsePartialStoryboardJson(String(text)) : null;
+      if (partial && isPartialStoryboardUsable(partial, planning)) {
+        console.warn("[storyboardSkillGeneration] recovered partial storyboard model output", {
+          modelKey: STORYBOARD_MODEL_KEY,
+          elapsedMs: Date.now() - startedAt,
+          outputChars: text.length,
+          recoveredShots: partial.shots.length,
+          estimatedMinimumShots: planning?.estimatedMinimumShots,
+        });
+        return partial;
+      }
       throw new Error(`分镜模型响应超过 ${Math.round(STORYBOARD_MODEL_TIMEOUT_MS / 1000)} 秒，请检查当前文本模型是否可用，或切换更快的文本模型后重试`);
     }
     throw error;

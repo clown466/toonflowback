@@ -1,4 +1,4 @@
-// @db-hash b346440a96356b280f00655be4d219e2
+// @db-hash 0c81cb07ffc1c6bfae89afde93549ccf
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -212,17 +212,21 @@ export interface o_skillList {
   'updateTime': number;
 }
 export interface o_storyboard {
+  'aperture'?: string | null;
   'createTime'?: number | null;
   'duration'?: string | null;
   'filePath'?: string | null;
   'flowId'?: number | null;
+  'focalLength'?: string | null;
   'id'?: number;
   'index'?: number | null;
+  'iso'?: string | null;
   'projectId'?: number | null;
   'prompt'?: string | null;
   'reason'?: string | null;
   'scriptId'?: number | null;
   'shouldGenerateImage'?: number | null;
+  'shutterSpeed'?: string | null;
   'state'?: string | null;
   'track'?: string | null;
   'trackId'?: number | null;

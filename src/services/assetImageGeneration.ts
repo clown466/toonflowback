@@ -306,6 +306,8 @@ export async function submitAssetImageGeneration(input: SubmitAssetImageGenerati
         const describe = `生成${cfg.label}图，名称：${item.name}，提示词：${item.prompt}`;
         const relatedObjects = {
           id: item.id,
+          assetId: item.id,
+          imageId,
           projectId,
           type: cfg.label,
           skillId: selectedSkill?.id ?? null,

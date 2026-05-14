@@ -93,6 +93,10 @@ export default router.post(
     );
     const generateTask = async (item: (typeof storyboardData)[number]) => {
       const repeloadObj = {
+        storyboardId: item.id!,
+        projectId,
+        scriptId,
+        associateAssetsIds: assetRecord[item.id!] || [],
         prompt: item.prompt!,
         size: projectSettingData?.imageQuality as "1K" | "2K" | "4K",
         aspectRatio: projectSettingData?.videoRatio as `${number}:${number}`,

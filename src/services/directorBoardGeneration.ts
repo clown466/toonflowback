@@ -1092,6 +1092,7 @@ async function runDirectorBoardImageTask(
           relatedObjects: JSON.stringify({
             projectId: project.id,
             scriptId: script.id,
+            directorBoardId: rowId,
             storyboardIds: storyboards.map((item) => item.id),
           }),
           projectId: project.id,

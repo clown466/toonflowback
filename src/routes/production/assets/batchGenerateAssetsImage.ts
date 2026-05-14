@@ -94,6 +94,12 @@ export default router.post(
       const imageBase64 = imageUrlRecord[item.assetsId!] ? await u.oss.getImageBase64(imageUrlRecord[item.assetsId!]) : null;
       try {
         const repeloadObj = {
+          assetId: item.id!,
+          imageId,
+          projectId,
+          scriptId,
+          type: item.type,
+          name: item.name,
           prompt: text,
           size: projectSettingData?.imageQuality as "1K" | "2K" | "4K",
           aspectRatio: "16:9" as `${number}:${number}`,

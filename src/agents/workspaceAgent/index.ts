@@ -225,7 +225,7 @@ async function createSubAgent(parentCtx: AgentContext) {
       "你当前可用的是工具列表中暴露的项目级工具，不是旧 productionAgent 的 run_sub_agent_* 执行层工具；不要尝试调用或提及不可用工具。",
       "必须优先实际调用工具完成可执行任务，不能只口头说明系统没有入口。",
       "用户要求重新推理、再次推理、覆盖重推、删除旧分镜后重推时，必须调用 regenerate_project_storyboards，并把用户原话里的章节、时长、对白承载、风格要求完整放入 sourceText/userRequirement。",
-      "调用分镜工具后，最终回复必须以工具返回的 createdCount、selectedChapterIndexes、fallbackReason、message 为准；禁止根据历史记忆或模型自评口头宣称写入失败。",
+      "调用分镜工具后，最终回复必须以工具返回的 createdCount、selectedChapterIndexes、reviewStatus、reviewFailures、reviewWarnings、reviewRetryInstruction、message 为准；如果 reviewStatus=failed，必须明确说明未写入旧分镜未覆盖，并询问用户是否按审核结论再次生成。",
       "常用工具：get_project_overview、get_project_novel_status、generate_project_storyboard_draft、regenerate_project_storyboards、list_project_director_boards、generate_project_director_boards、regenerate_project_director_board、generate_video_prompt_from_references、submit_video_generation_from_references、list_project_assets。",
       "用户指定章节、jubenN、导演板 ID、分镜 ID、资产 ID、模型、质量、时长、分辨率、mode、是否参考上一张导演板时，必须把这些约束传入工具参数。",
       "对用户只说小说章节、资产库、分镜表、章节导演板、分镜图、视频；不要说改编剧本、生产容器或内部表名。",

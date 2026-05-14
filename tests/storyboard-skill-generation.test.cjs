@@ -233,7 +233,7 @@ async function main() {
   assert.ok(capturedPrompt.includes('narrativeFunction'), 'prompt should include the storyboard table template fields');
   assert.ok(capturedPrompt.includes('先生成 storyboardTable'), 'prompt should require storyboard table first');
   assert.ok(capturedPrompt.includes('用户明确要求数量'), 'prompt should respect explicit shot count');
-  assert.ok(capturedPrompt.includes('shots.length 必须等于 storyboardTable 的数据行数'), 'prompt should keep table and shots aligned');
+  assert.ok(capturedPrompt.includes('shots.length 必须等于内部表的数据行数'), 'prompt should keep table and shots aligned');
 
   const storyboards = await db('o_storyboard').where({ projectId: 1, scriptId: result.episodesId }).orderBy('index');
   assert.strictEqual(storyboards.length, 1);
@@ -334,15 +334,17 @@ async function main() {
   capturedPrompts = [];
   capturedModelKeys = [];
   mockStoryboardResponses = ['not json'];
-  const invalidJsonFallbackResult = await service.generateProjectStoryboardWithSkill(3, {
+  const invalidJsonResult = await service.generateProjectStoryboardWithSkill(3, {
     sourceText: '请针对 juben10 重新生成分镜',
     force: true,
   });
-  assert.ok(invalidJsonFallbackResult.createdCount >= 4, `invalid JSON fallback should create a usable storyboard, got ${invalidJsonFallbackResult.createdCount}`);
-  assert.ok(String(invalidJsonFallbackResult.fallbackReason).includes('稳定分镜草案'), invalidJsonFallbackResult.fallbackReason);
+  assert.strictEqual(invalidJsonResult.createdCount, 0, 'invalid JSON should not auto-write a fallback storyboard');
+  assert.strictEqual(invalidJsonResult.reviewStatus, 'failed');
+  assert.ok(String(invalidJsonResult.message).includes('没有启用兜底草案'), invalidJsonResult.message);
+  assert.ok(String(invalidJsonResult.reviewRetryInstruction).includes('按审核结论重新生成'), invalidJsonResult.reviewRetryInstruction);
   assert.strictEqual(capturedPrompts.length, 1, 'structured path should still call the model once');
   const invalidStoryboards = await db('o_storyboard').where({ projectId: 3 });
-  assert.strictEqual(invalidStoryboards.length, invalidJsonFallbackResult.createdCount, 'invalid model output should recover with stable fallback storyboards');
+  assert.strictEqual(invalidStoryboards.length, 0, 'invalid model output should leave existing storyboard data untouched');
 
   await db('o_project').insert({
     id: 9,
@@ -373,22 +375,17 @@ async function main() {
   capturedPrompts = [];
   capturedModelKeys = [];
   mockStoryboardResponses = [{ __throw: true, message: '分镜模型响应超过 120 秒，请检查当前文本模型是否可用，或切换更快的文本模型后重试' }];
-  const timeoutFallbackResult = await service.generateProjectStoryboardWithSkill(9, {
+  const timeoutResult = await service.generateProjectStoryboardWithSkill(9, {
     sourceText: '请针对 juben17 重新生成分镜表',
     force: true,
   });
-  assert.ok(timeoutFallbackResult.createdCount >= 8, `timeout fallback should create a real multi-shot draft, got ${timeoutFallbackResult.createdCount}`);
-  assert.ok(String(timeoutFallbackResult.fallbackReason).includes('稳定分镜草案'), timeoutFallbackResult.fallbackReason);
-  assert.ok(String(timeoutFallbackResult.message).includes('稳定分镜草案'), timeoutFallbackResult.message);
-  assert.strictEqual(capturedPrompts.length, 1, 'timeout fallback should call the structured model once before local recovery');
+  assert.strictEqual(timeoutResult.createdCount, 0, 'timeout should not auto-write a fallback storyboard');
+  assert.strictEqual(timeoutResult.reviewStatus, 'failed');
+  assert.ok(String(timeoutResult.message).includes('没有启用兜底草案'), timeoutResult.message);
+  assert.strictEqual(capturedPrompts.length, 1, 'timeout path should call the structured model once');
   assert.ok(capturedPrompts[0].includes('juben17'), 'target chapter should reach the model before timeout');
-  const timeoutStoryboards = await db('o_storyboard').where({ projectId: 9, scriptId: timeoutFallbackResult.episodesId }).orderBy('index');
-  assert.strictEqual(timeoutStoryboards.length, timeoutFallbackResult.createdCount);
-  assert.ok(timeoutStoryboards.every((row) => Number(row.duration) >= 1 && Number(row.duration) <= 4), 'fallback shots should keep fast 1-4s pacing');
-  const timeoutTotal = timeoutStoryboards.reduce((sum, row) => sum + Number(row.duration), 0);
-  assert.ok(timeoutTotal <= 120, `fallback total duration should stay under two minutes, got ${timeoutTotal}s`);
-  assert.ok(timeoutStoryboards.some((row) => String(row.videoDesc).includes('Chloe')), 'fallback should still use matched chapter assets');
-  assert.ok(timeoutStoryboards.some((row) => String(row.prompt).includes('Reference assets')), 'fallback prompts should be production-ready keyframe prompts');
+  const timeoutStoryboards = await db('o_storyboard').where({ projectId: 9, scriptId: timeoutResult.episodesId }).orderBy('index');
+  assert.strictEqual(timeoutStoryboards.length, 0, 'timeout should leave storyboard rows untouched');
 
   await db('o_project').insert({
     id: 11,
@@ -416,14 +413,14 @@ async function main() {
   capturedPrompts = [];
   capturedModelKeys = [];
   mockStoryboardResponses = [{ __throw: true, message: 'terminated' }];
-  const terminatedFallbackResult = await service.generateProjectStoryboardWithSkill(11, {
+  const terminatedResult = await service.generateProjectStoryboardWithSkill(11, {
     sourceText: '再次推理 juben17 分镜，增加对白承载镜头',
     force: true,
   });
-  assert.ok(terminatedFallbackResult.createdCount >= 4, `terminated model stream should recover with fallback, got ${terminatedFallbackResult.createdCount}`);
-  assert.ok(String(terminatedFallbackResult.fallbackReason).includes('稳定分镜草案'), terminatedFallbackResult.fallbackReason);
-  const terminatedStoryboards = await db('o_storyboard').where({ projectId: 11, scriptId: terminatedFallbackResult.episodesId });
-  assert.strictEqual(terminatedStoryboards.length, terminatedFallbackResult.createdCount, 'terminated fallback should still write usable storyboards');
+  assert.strictEqual(terminatedResult.createdCount, 0, 'terminated model stream should not auto-write a fallback');
+  assert.strictEqual(terminatedResult.reviewStatus, 'failed');
+  const terminatedStoryboards = await db('o_storyboard').where({ projectId: 11, scriptId: terminatedResult.episodesId });
+  assert.strictEqual(terminatedStoryboards.length, 0, 'terminated stream should leave storyboard rows untouched');
 
   await db('o_project').insert({
     id: 13,
@@ -475,6 +472,54 @@ async function main() {
   assert.strictEqual(partialRecoveryResult.createdCount, 4, 'complete streamed shot objects should be written');
   const partialRows = await db('o_storyboard').where({ projectId: 13, scriptId: partialRecoveryResult.episodesId }).orderBy('index');
   assert.ok(partialRows.every((row) => String(row.videoDesc).includes('Recovered streamed bunker beat')), 'partial recovery should preserve model-produced shots');
+
+  await db('o_project').insert({
+    id: 14,
+    name: 'Review Blocked Candidate',
+    intro: 'English-language fast drama',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Respect explicit shot counts',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 140,
+    projectId: 14,
+    chapterIndex: 17,
+    chapter: 'juben17',
+    chapterData: 'Chloe enters the bunker. Bob blocks the door. Leo checks the alarm reflection.',
+    event: '| juben17 | Chloe, Bob, Leo, bunker | The team enters the bunker under pressure |',
+    eventState: 1,
+  });
+  await db('o_assets').insert([
+    { id: 141, projectId: 14, name: 'Chloe', type: 'role', describe: 'peach lead', prompt: 'Chloe prompt' },
+    { id: 142, projectId: 14, name: 'bunker', type: 'scene', describe: 'safe bunker', prompt: 'bunker prompt' },
+  ]);
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  mockStoryboardResponses = [
+    {
+      storyboardTable: '',
+      shots: [1, 2].map((index) => ({
+        duration: 3,
+        videoDesc: `Only two beats ${index}.`,
+        imagePrompt: `Chloe bunker beat ${index}`,
+        associateAssetNames: ['Chloe', 'bunker'],
+        dialogue: '无台词',
+      })),
+    },
+  ];
+  const reviewBlockedResult = await service.generateProjectStoryboardWithSkill(14, {
+    sourceText: '请针对 juben17 生成4个分镜',
+    force: true,
+  });
+  assert.strictEqual(reviewBlockedResult.createdCount, 0, 'review failure should not write candidate storyboards');
+  assert.strictEqual(reviewBlockedResult.reviewStatus, 'failed');
+  assert.ok(String(reviewBlockedResult.reviewFailures?.[0]).includes('用户明确要求 4 个分镜'), reviewBlockedResult.reviewFailures);
+  assert.ok(String(reviewBlockedResult.reviewRetryInstruction).includes('严格输出 4 个镜头'), reviewBlockedResult.reviewRetryInstruction);
+  const reviewBlockedRows = await db('o_storyboard').where({ projectId: 14, scriptId: reviewBlockedResult.episodesId });
+  assert.strictEqual(reviewBlockedRows.length, 0, 'review-blocked candidates should leave old storyboard rows untouched');
 
   await db('o_project').insert({
     id: 10,

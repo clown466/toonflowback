@@ -886,7 +886,7 @@ export async function runProjectStoryboardDraftTool(
   const startedAt = Date.now();
   const progressTimer = setInterval(() => {
     const seconds = Math.round((Date.now() - startedAt) / 1000);
-    thinking.updateTitle(`分镜模型仍在推理中，已等待 ${seconds}s；超时会自动尝试救回已返回内容或启用稳定草案。`);
+    thinking.updateTitle(`分镜模型仍在推理中，已等待 ${seconds}s；超时会尝试救回已返回的完整镜头，不会自动写入兜底草案。`);
   }, 30000);
   let result: Awaited<ReturnType<typeof generateProjectStoryboardWithSkill>>;
   try {
@@ -936,13 +936,16 @@ export async function runProjectStoryboardDraftTool(
         usedSkillId: result.usedSkillId,
         usedSkillName: result.usedSkillName,
         fallbackReason: result.fallbackReason,
+        reviewStatus: result.reviewStatus,
+        reviewWarnings: result.reviewWarnings,
+        reviewFailures: result.reviewFailures,
         storyboardIds: result.storyboardIds,
       },
       null,
       2,
     ),
   );
-  thinking.updateTitle(result.createdCount > 0 ? "分镜草案已写入章节工作区" : "已有分镜，已切换章节工作区");
+  thinking.updateTitle(result.reviewStatus === "failed" ? "分镜候选未通过审核，等待确认" : result.createdCount > 0 ? "分镜草案已写入章节工作区" : "已有分镜，已切换章节工作区");
   thinking.complete();
 
   resTool.socket.emit("productionDataUpdated", {
@@ -952,6 +955,7 @@ export async function runProjectStoryboardDraftTool(
     createdCount: result.createdCount,
     existingCount: result.existingCount,
     storyboardIds: result.storyboardIds,
+    stage: result.reviewStatus === "failed" ? "storyboard_review_failed" : "storyboard_generated",
   });
 
   const tableRows = result.storyboardTable
@@ -960,14 +964,20 @@ export async function runProjectStoryboardDraftTool(
     .filter((line) => line && line.includes("|") && !/^\|\s*-/.test(line));
   const tableDataRows = Math.max(0, tableRows.length - 1);
   const tablePreview = tableRows.slice(0, 5).join("\n");
+  const reviewFailed = result.reviewStatus === "failed";
   const lines = [
     result.message,
     result.usedSkillName ? `分镜方法：${result.usedSkillName}。` : "",
-    result.fallbackReason ? `已回退旧模板生成器：${result.fallbackReason}。` : "",
+    result.fallbackReason ? `已使用显式草稿路径：${result.fallbackReason}。` : "",
+    result.reviewFailures?.length ? `审核未通过：${result.reviewFailures.join("；")}。` : "",
+    result.reviewWarnings?.length ? `审核提醒：${result.reviewWarnings.join("；")}。` : "",
+    result.reviewRetryInstruction ? `如果要按审核结论重新生成，请确认：${result.reviewRetryInstruction}` : "",
     result.selectedChapterLabels.length ? `本次章节：${result.selectedChapterLabels.join("、")}。` : "",
-    tableDataRows > 0 ? `分镜表已生成 ${tableDataRows} 行并写入章节工作区数据。` : "",
-    tablePreview ? `分镜表预览：\n${tablePreview}` : "",
-    `已关联当前项目资产库，并写入 Flova 工作台可读取的数据。`,
+    tableDataRows > 0 && !reviewFailed ? `分镜表已生成 ${tableDataRows} 行并写入章节工作区数据。` : "",
+    tableDataRows > 0 && reviewFailed ? `候选分镜表有 ${tableDataRows} 行，但本次未写入。` : "",
+    tablePreview ? `${reviewFailed ? "候选分镜表预览" : "分镜表预览"}：\n${tablePreview}` : "",
+    !reviewFailed ? `已关联当前项目资产库，并写入 Flova 工作台可读取的数据。` : "",
+    reviewFailed ? "旧分镜保持不变；确认重推前不会覆盖当前章节工作区。" : "",
     result.createdCount > 0 ? "现在可以在左侧分镜列表查看分镜表；默认下一步是点“生成章节导演板”生成分镜故事板。首帧图只是可选补充。" : "",
   ].filter(Boolean);
   const text = msg.text(lines.join("\n"));

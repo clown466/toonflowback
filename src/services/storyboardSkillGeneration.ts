@@ -21,7 +21,6 @@ import {
   insertDraftItems,
   matchAssets,
   nonEmpty,
-  parseEvent,
   parseStoryboardChapterIndexes,
   selectStoryboardNovels,
   shouldAppend,
@@ -152,7 +151,12 @@ const STORYBOARD_MODEL_KEY = "productionAgent:storyboardTableAgent";
 const MAX_MODEL_CONTEXT_ASSETS = 12;
 const MAX_STORYBOARD_SKILL_PROMPT_CHARS = 4200;
 const STORYBOARD_MODEL_TIMEOUT_MS = 120000;
-const STABLE_FALLBACK_MAX_SOURCE_BEATS = 18;
+const REVIEW_SHOT_COUNT_LOWER_RATIO = 0.7;
+const REVIEW_SHOT_COUNT_UPPER_RATIO = 1.25;
+const REVIEW_DURATION_LOWER_RATIO = 0.75;
+const REVIEW_DURATION_SOFT_LOWER_RATIO = 0.9;
+const REVIEW_DIALOGUE_COVERAGE_HARD_RATIO = 0.45;
+const REVIEW_DIALOGUE_COVERAGE_SOFT_RATIO = 0.6;
 
 function fallback(projectId: number, options: GenerateProjectStoryboardWithSkillOptions, reason: string) {
   return generateProjectStoryboardDraft(projectId, options).then((result) => ({
@@ -204,14 +208,6 @@ function createStoryboardModelSignal(parent?: AbortSignal) {
 function isAbortLikeError(error: unknown) {
   if (!(error instanceof Error)) return false;
   return error.name === "AbortError" || /abort|aborted|cancel/i.test(error.message);
-}
-
-function isRecoverableStoryboardModelFailure(message: string) {
-  return /分镜模型响应超过|storyboard_model_timeout|timed?\s*out|timeout|socket hang up|ECONNRESET|ETIMEDOUT|terminated|stream.*interrupt|response.*abort|aborted|模型未返回合法 JSON|模型 JSON|缺少 shots|缺少 videoDesc|缺少 imagePrompt|模型分镜质量不合格/i.test(message);
-}
-
-function stableFallbackMessage(message: string) {
-  return `结构化分镜模型失败：${message}。已启用稳定分镜草案（基于当前章节事件、对白切片和资产库生成，不是三段式兜底模板；请审核后再出图）`;
 }
 
 async function resolveStoryboardSkill(skillId?: string, requestText?: string): Promise<StoryboardGenerationSkill | null> {
@@ -649,199 +645,6 @@ function mergeAssociateAssetNames(first: string[], second: string[]) {
     result.push(cleaned);
   }
   return result;
-}
-
-function splitSourceBeats(text: string, maxCount = STABLE_FALLBACK_MAX_SOURCE_BEATS) {
-  const source = String(text ?? "")
-    .replace(/\r/g, "\n")
-    .split(/\n+|(?<=[.!?。！？；;])\s+/)
-    .map((part) => part.replace(/\s+/g, " ").trim())
-    .filter((part) => part.length >= 8 && !/^\|?\s*(?:事件|角色|章节|chapter|scene|shot|镜号)\b/i.test(part));
-  const beats: string[] = [];
-  for (const part of source) {
-    if (beats.length >= maxCount) break;
-    if (part.length <= 220) {
-      beats.push(part);
-      continue;
-    }
-    for (let index = 0; index < part.length && beats.length < maxCount; index += 180) {
-      const chunk = part.slice(index, index + 220).trim();
-      if (chunk.length >= 8) beats.push(chunk);
-    }
-  }
-  return uniqueTextParts(beats).slice(0, maxCount);
-}
-
-function buildStableFallbackBeatPool(project: ProjectRow, novels: NovelRow[], scriptContent: string) {
-  const result: Array<{ title: string; summary: string; sourceText: string }> = [];
-  if (novels.length) {
-    for (const novel of novels) {
-      const parsed = parseEvent(novel.event);
-      const title = parsed.title || formatChapterSelectionLabel(novel);
-      const eventSummary = nonEmpty(parsed.summary);
-      if (eventSummary) {
-        result.push({
-          title,
-          summary: eventSummary,
-          sourceText: [parsed.assetHint, parsed.summary, novel.chapterData].filter(Boolean).join("\n"),
-        });
-      }
-      const sourceBeats = splitSourceBeats(String(novel.chapterData ?? ""));
-      for (const [index, beat] of sourceBeats.entries()) {
-        result.push({
-          title: `${title} beat ${index + 1}`,
-          summary: beat,
-          sourceText: [parsed.assetHint, parsed.summary, beat].filter(Boolean).join("\n"),
-        });
-      }
-    }
-  } else {
-    for (const [index, beat] of splitSourceBeats([scriptContent, project.intro].filter(Boolean).join("\n\n")).entries()) {
-      result.push({
-        title: `source beat ${index + 1}`,
-        summary: beat,
-        sourceText: beat,
-      });
-    }
-  }
-  if (!result.length) {
-    result.push({
-      title: cleanName(project.name) || "project beat",
-      summary: cleanName(project.intro) || "项目主线冲突推进",
-      sourceText: [project.name, project.intro, project.type].filter(Boolean).join("\n"),
-    });
-  }
-  return result.slice(0, STABLE_FALLBACK_MAX_SOURCE_BEATS);
-}
-
-function stableFallbackShotCount(planning: StoryboardPlanningHint) {
-  if (planning.explicitShotCount) return planning.explicitShotCount;
-  const durationBased = Math.ceil((planning.targetDurationMax || STANDARD_CHAPTER_TARGET_MAX_SECONDS) / DEFAULT_STORYBOARD_SHOT_DURATION);
-  const dialogueBased = planning.sourceDialogueFastCutChunks.length ? planning.sourceDialogueFastCutChunks.length + Math.ceil(planning.sourceDialogueFastCutChunks.length / 3) : 0;
-  return clamp(Math.max(planning.estimatedMinimumShots, durationBased, dialogueBased), planning.estimatedMinimumShots, planning.estimatedMaximumShots || MAX_STORYBOARD_SHOTS);
-}
-
-function inferStableFallbackLanguage(project: ProjectRow, novels: NovelRow[], requestText?: string) {
-  const text = [
-    requestText,
-    project.name,
-    project.intro,
-    project.type,
-    project.artStyle,
-    project.directorManual,
-    ...novels.flatMap((novel) => [novel.chapter, novel.event, novel.chapterData]),
-  ]
-    .filter(Boolean)
-    .join("\n");
-  if (/美剧|english|american|short drama|sitcom|drama/i.test(text)) return "en";
-  return hasMostlyEnglishText(text) ? "en" : "zh";
-}
-
-function stableFallbackCameraPlan(index: number, english: boolean) {
-  const englishPlans = [
-    { shotSize: "wide establishing shot", cameraMove: "slow push-in", functionName: "establish location and pressure" },
-    { shotSize: "medium tracking shot", cameraMove: "side tracking move", functionName: "advance the action beat" },
-    { shotSize: "over-the-shoulder shot", cameraMove: "controlled handheld hold", functionName: "carry dialogue and spatial relation" },
-    { shotSize: "tight close-up", cameraMove: "small push-in", functionName: "catch reaction and emotional turn" },
-    { shotSize: "insert detail shot", cameraMove: "quick cut-in", functionName: "highlight prop, clue, or impact" },
-    { shotSize: "two-shot", cameraMove: "subtle pan", functionName: "show character conflict in one frame" },
-  ];
-  const chinesePlans = [
-    { shotSize: "全景建立镜头", cameraMove: "缓慢推入", functionName: "建立地点和压力" },
-    { shotSize: "中景跟拍", cameraMove: "横移跟拍", functionName: "推进动作节拍" },
-    { shotSize: "过肩镜头", cameraMove: "轻微手持保持", functionName: "承接对白和空间关系" },
-    { shotSize: "特写镜头", cameraMove: "小幅推近", functionName: "捕捉反应和情绪转折" },
-    { shotSize: "道具插入镜头", cameraMove: "快速切入", functionName: "突出道具、线索或冲击" },
-    { shotSize: "双人镜头", cameraMove: "轻微摇移", functionName: "同框呈现角色冲突" },
-  ];
-  const plans = english ? englishPlans : chinesePlans;
-  return plans[index % plans.length]!;
-}
-
-function stableFallbackDuration(index: number, dialogue?: string) {
-  if (dialogue && !isNoDialogueText(dialogue)) return clamp(estimateSpeechDurationSeconds(dialogue), 2, PREFERRED_STORYBOARD_SHOT_MAX);
-  const pattern = [2, 3, 3, 4, 2, 3, 4, 3];
-  return pattern[index % pattern.length] ?? DEFAULT_STORYBOARD_SHOT_DURATION;
-}
-
-function buildStableFallbackParsed(input: {
-  project: ProjectRow;
-  novels: NovelRow[];
-  assets: AssetRow[];
-  scriptContent: string;
-  planning: StoryboardPlanningHint;
-  requestText?: string;
-}): SkillStoryboardJson {
-  const english = inferStableFallbackLanguage(input.project, input.novels, input.requestText) === "en";
-  const beatPool = buildStableFallbackBeatPool(input.project, input.novels, input.scriptContent);
-  const targetCount = stableFallbackShotCount(input.planning);
-  const dialogueChunks = input.planning.sourceDialogueFastCutChunks;
-  const shots: SkillShot[] = [];
-
-  for (let index = 0; index < targetCount; index++) {
-    const beat = beatPool[index % beatPool.length]!;
-    const plan = stableFallbackCameraPlan(index, english);
-    const dialogue = dialogueChunks[index]?.text || (index % 4 === 1 && dialogueChunks.length ? dialogueChunks[index % dialogueChunks.length]?.text : "");
-    const associatedAssets = matchAssets(input.assets, `${beat.title}\n${beat.sourceText}\n${dialogue || ""}`, 7);
-    const roleAssets = associatedAssets.filter((asset) => asset.type === "role");
-    const sceneAssets = associatedAssets.filter((asset) => asset.type === "scene");
-    const propAssets = associatedAssets.filter((asset) => asset.type === "tool");
-    const assetNames = associatedAssets.map((asset) => cleanName(asset.name)).filter(Boolean);
-    const role1 = cleanName(roleAssets[0]?.name);
-    const role2 = cleanName(roleAssets.find((asset) => asset.id !== roleAssets[0]?.id)?.name);
-    const scene = cleanName(sceneAssets[0]?.name) || (english ? "current chapter location" : "当前章节场景");
-    const reference = summarizeReference([...sceneAssets, ...propAssets]);
-    const duration = stableFallbackDuration(index, dialogue);
-    const dialogueText = dialogue || (english ? "No dialogue" : "无台词");
-    const beatSummary = compactText(beat.summary, 220);
-    const roleText = [role1, role2].filter(Boolean).join(", ");
-    const action = english
-      ? `${plan.functionName}: ${beatSummary}`
-      : `${plan.functionName}：${beatSummary}`;
-    const videoDesc = english
-      ? `Shot ${index + 1}: ${plan.shotSize}, ${plan.cameraMove}. ${beatSummary}${roleText ? ` Main assets: ${roleText}.` : ""} Scene: ${scene}. Dialogue: ${dialogueText}.`
-      : `镜头${index + 1}：${plan.shotSize}，${plan.cameraMove}。${beatSummary}${roleText ? ` 主要资产：${roleText}。` : ""}场景：${scene}。对白：${dialogueText}。`;
-    const imagePrompt = [
-      english ? `Storyboard keyframe, ${plan.shotSize}, ${plan.cameraMove}.` : `分镜关键帧，${plan.shotSize}，${plan.cameraMove}。`,
-      beatSummary,
-      roleText ? (english ? `Use project character assets: ${roleText}.` : `使用项目角色资产：${roleText}。`) : "",
-      scene ? (english ? `Location: ${scene}.` : `场景：${scene}。`) : "",
-      assetNames.length ? (english ? `Reference assets: ${assetNames.join(", ")}.` : `参考资产：${assetNames.join("、")}。`) : "",
-      english ? "Clear composition, cinematic lighting, no subtitles, no UI, no watermark." : "构图清晰，电影感光影，无字幕，无界面，无水印。",
-    ]
-      .filter(Boolean)
-      .join(" ");
-
-    shots.push({
-      duration,
-      videoDesc,
-      imagePrompt,
-      associateAssetNames: assetNames,
-      shouldGenerateImage: true,
-      narrativeFunction: plan.functionName,
-      pictureDescription: beatSummary,
-      role1,
-      role1Description: assetDescription(roleAssets[0]),
-      role2,
-      role2Description: assetDescription(roleAssets.find((asset) => asset.id !== roleAssets[0]?.id)),
-      reference,
-      scene,
-      shotSize: plan.shotSize,
-      cameraMove: plan.cameraMove,
-      ...inferCameraTechnicalSettings({ shotSize: plan.shotSize, cameraMove: plan.cameraMove, action, lighting: input.project.artStyle }),
-      action,
-      emotion: english ? "fast short-drama tension" : "快节奏短剧情绪推进",
-      lighting: english ? "follow the project visual manual and keep the subject readable" : "遵循项目视觉手册，主体清晰可读",
-      sound: dialogue ? (english ? "dialogue with room tone and action accents" : "对白 + 环境音 + 动作音") : english ? "room tone and action accents" : "环境音 + 动作音",
-      dialogue: dialogueText,
-      beat: beat.title,
-      videoMotionPrompt: english
-        ? `${plan.shotSize}, ${plan.cameraMove}, ${action}, duration ${duration}s`
-        : `${plan.shotSize}，${plan.cameraMove}，${action}，时长 ${duration}s`,
-    });
-  }
-
-  return repairStoryboardQuality(normalizeStoryboardTimings({ storyboardTable: "", shots }, input.planning), input.planning);
 }
 
 function mergeStoryboardShots(first: SkillShot, second: SkillShot): SkillShot {
@@ -1341,41 +1144,89 @@ function getMinimumDialogueCoverage(planning?: StoryboardPlanningHint) {
   return planning?.sourceDialogueSeconds ? Math.min(planning.sourceDialogueSeconds * 0.6, (planning.targetDurationMax || CHAPTER_DURATION_HARD_CAP_SECONDS) * 0.75) : 0;
 }
 
-function validateStoryboardQuality(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint) {
+interface StoryboardReviewResult {
+  status: "passed" | "warning" | "failed";
+  failures: string[];
+  warnings: string[];
+  summary: string;
+}
+
+function createReviewResult(failures: string[], warnings: string[]): StoryboardReviewResult {
+  const status = failures.length ? "failed" : warnings.length ? "warning" : "passed";
+  const summary = failures.length
+    ? `审核未通过：${failures.join("；")}`
+    : warnings.length
+      ? `审核通过但有提醒：${warnings.join("；")}`
+      : "审核通过";
+  return { status, failures, warnings, summary };
+}
+
+function reviewStoryboardQuality(parsed: SkillStoryboardJson, planning?: StoryboardPlanningHint): StoryboardReviewResult {
+  const failures: string[] = [];
+  const warnings: string[] = [];
   const count = parsed.shots.length;
-  if (planning?.explicitShotCount && count !== planning.explicitShotCount) return `用户要求 ${planning.explicitShotCount} 个分镜，你返回了 ${count} 个`;
+  if (planning?.explicitShotCount && count !== planning.explicitShotCount) {
+    failures.push(`用户明确要求 ${planning.explicitShotCount} 个分镜，模型返回 ${count} 个`);
+  }
 
   if (!planning?.explicitShotCount && count < (planning?.estimatedMinimumShots ?? 4)) {
-    return `分镜拆分不足：当前 ${count} 个，按事件和对白长度建议不少于 ${planning?.estimatedMinimumShots ?? 4} 个`;
+    const recommended = planning?.estimatedMinimumShots ?? 4;
+    if (count < Math.ceil(recommended * REVIEW_SHOT_COUNT_LOWER_RATIO)) {
+      failures.push(`分镜拆分明显不足：当前 ${count} 个，建议约 ${recommended}-${planning?.estimatedMaximumShots ?? MAX_STORYBOARD_SHOTS} 个`);
+    } else {
+      warnings.push(`分镜数量略少：当前 ${count} 个，建议约 ${recommended}-${planning?.estimatedMaximumShots ?? MAX_STORYBOARD_SHOTS} 个`);
+    }
   }
 
   if (!planning?.explicitShotCount && planning?.estimatedMaximumShots && count > planning.estimatedMaximumShots) {
-    return `分镜拆分过多：当前 ${count} 个，按章节时长预算建议不超过 ${planning.estimatedMaximumShots} 个`;
+    const hardMax = Math.ceil(planning.estimatedMaximumShots * REVIEW_SHOT_COUNT_UPPER_RATIO);
+    if (count > hardMax) {
+      failures.push(`分镜拆分过多：当前 ${count} 个，建议不超过 ${planning.estimatedMaximumShots} 个，硬容忍上限 ${hardMax} 个`);
+    } else {
+      warnings.push(`分镜数量偏多：当前 ${count} 个，建议不超过 ${planning.estimatedMaximumShots} 个`);
+    }
   }
 
   if (hasFlatTwoSecondTiming(parsed, planning)) {
-    return `分镜时长过于机械：当前大部分镜头都是 2s。请按 2-4s 重新分配节奏，常规动作/对白/反应镜头用 3-4s`;
+    warnings.push(`分镜时长偏机械：大部分镜头都是 2s，建议混合 2/3/4s 节奏`);
   }
 
   const oversized = findOversizedDialogueShot(parsed);
   if (oversized) {
-    return `第 ${oversized.index} 镜对白预计需要 ${oversized.dialogueDuration}s，超过快切分镜单镜头对白建议 ${MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT}s；请把同一句台词拆成多个 2-4s 镜头和反应/切角度镜头`;
+    failures.push(`第 ${oversized.index} 镜对白预计需要 ${oversized.dialogueDuration}s，超过单镜头对白建议 ${MAX_DIALOGUE_SECONDS_PER_STORYBOARD_SHOT}s；需要拆成多个 2-4s 镜头`);
   }
 
-  if (planning?.estimatedMinimumDuration && getTotalDuration(parsed) < planning.estimatedMinimumDuration) {
-    return `总时长过短：当前 ${getTotalDuration(parsed)}s，选中章节对白至少需要约 ${planning.estimatedMinimumDuration}s`;
+  const totalDuration = getTotalDuration(parsed);
+  if (planning?.estimatedMinimumDuration) {
+    const dialogueHardMinimum = Math.ceil(planning.estimatedMinimumDuration * REVIEW_DURATION_LOWER_RATIO);
+    const hardMinimumDuration = planning.explicitShotCount
+      ? dialogueHardMinimum
+      : Math.min(planning.targetDurationMax || CHAPTER_DURATION_HARD_CAP_SECONDS, Math.max(Math.min(MIN_CHAPTER_TARGET_SECONDS, planning.targetDurationMin), dialogueHardMinimum));
+    const softMinimumDuration = Math.ceil(planning.estimatedMinimumDuration * REVIEW_DURATION_SOFT_LOWER_RATIO);
+    if (totalDuration < hardMinimumDuration) {
+      failures.push(`总时长明显过短：当前 ${totalDuration}s，按对白承载建议至少约 ${planning.estimatedMinimumDuration}s，硬容忍下限 ${hardMinimumDuration}s`);
+    } else if (totalDuration < softMinimumDuration) {
+      warnings.push(`总时长偏短：当前 ${totalDuration}s，按对白承载建议约 ${planning.estimatedMinimumDuration}s`);
+    }
   }
 
   if (planning?.targetDurationMax && getTotalDuration(parsed) > planning.targetDurationMax) {
-    return `总时长过长：当前 ${getTotalDuration(parsed)}s，当前章节硬上限 ${planning.targetDurationMax}s；请压缩节奏、减少冗余镜头或浓缩对白`;
+    failures.push(`总时长过长：当前 ${totalDuration}s，当前章节硬上限 ${planning.targetDurationMax}s`);
   }
 
   const minimumDialogueCoverage = getMinimumDialogueCoverage(planning);
-  if (planning?.sourceDialogueSeconds && planning.sourceDialogueSeconds >= 8 && getOutputDialogueSeconds(parsed) < minimumDialogueCoverage) {
-    return `输出对白覆盖不足：选中章节对白约 ${planning.sourceDialogueSeconds}s，但分镜对白字段明显缺失；请在 120 秒内保留关键对白并浓缩次要台词`;
+  if (planning?.sourceDialogueSeconds && planning.sourceDialogueSeconds >= 8) {
+    const outputDialogueSeconds = getOutputDialogueSeconds(parsed);
+    const hardDialogueCoverage = planning.sourceDialogueSeconds * REVIEW_DIALOGUE_COVERAGE_HARD_RATIO;
+    const softDialogueCoverage = Math.max(minimumDialogueCoverage, planning.sourceDialogueSeconds * REVIEW_DIALOGUE_COVERAGE_SOFT_RATIO);
+    if (outputDialogueSeconds < hardDialogueCoverage) {
+      failures.push(`输出对白覆盖严重不足：原文对白约 ${planning.sourceDialogueSeconds}s，分镜对白约 ${outputDialogueSeconds}s`);
+    } else if (outputDialogueSeconds < softDialogueCoverage) {
+      warnings.push(`输出对白覆盖偏少：原文对白约 ${planning.sourceDialogueSeconds}s，分镜对白约 ${outputDialogueSeconds}s`);
+    }
   }
 
-  return "";
+  return createReviewResult(failures, warnings);
 }
 
 async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: Record<string, any>, retryReason?: string, abortSignal?: AbortSignal) {
@@ -1389,8 +1240,8 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "",
     "核心流程：",
     "1. 先阅读 selectedChapters 中的 event 和 chapterData，只处理这些章节。",
-    "2. 先生成 storyboardTable，表中每一行代表一个真实分镜；为节省模型输出，最终 JSON 的 storyboardTable 字段可以填空字符串，系统会用 shots 字段重建表格。",
-    "3. 再按 storyboardTable 逐行生成 shots；shots.length 必须等于 storyboardTable 的数据行数。",
+    "2. 在内部先规划分镜表，每一行代表一个真实分镜；最终 JSON 里 storyboardTable 必须填空字符串，系统会用 shots 字段重建表格，禁止输出 Markdown 表格。",
+    "3. 再按内部表逐行生成 shots；shots.length 必须等于内部表的数据行数。",
     "4. 每个 shot 必须有 videoDesc 和 imagePrompt，且两者不能只是复制同一句话。",
     "5. storyboardTable 固定使用这些字段：镜号、时长、画面描述、角色1、角色描述1、角色图1、角色2、角色描述2、角色图2、参考、景别、运镜、焦距、光圈、快门、ISO、角色动作、情绪、场景标签、光影氛围、音效、对白、分镜提示词、视频运动提示词。",
     "6. 角色图字段可先填空；系统会按 associateAssetNames 匹配资产库图片补齐显示。",
@@ -1403,6 +1254,8 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     "13. 每个 shot 必须给出镜头技术参数：focalLength（焦距，如 24mm/35mm/50mm/85mm）、aperture（光圈，如 f/2.8/f/4/f/5.6）、shutterSpeed（快门，如 1/48 或 1/96）、iso（如 ISO 400/ISO 640/ISO 800）。参数应服务镜头语言，不能机械重复。",
     planning ? `14. 当前章节目标总时长：${planning.targetDurationMin}-${planning.targetDurationMax}s；硬上限 ${CHAPTER_DURATION_HARD_CAP_SECONDS}s，绝对不能超过 2 分钟。分镜总时长必须在这个预算内完成。` : "",
     planning?.sourceDialogueSeconds ? `15. 当前选中章节原文对白预计约 ${planning.sourceDialogueSeconds}s；如果对白过多，请在 120 秒内保留关键对白并浓缩次要台词，不要为了保留全部台词突破总时长。` : "",
+    "16. 输出要精炼但完整：videoDesc、imagePrompt、action、videoMotionPrompt 不要写成长论文；每项用生产可读的短句即可。",
+    "17. 返回前在内部自检 JSON 是否可解析、shots 是否齐全、duration 总和是否在预算内；不要把自检过程输出给用户。",
     storyboardCountInstruction(planning),
     retryReason ? `上一次输出不合格：${retryReason}。请重新拆分，不要沿用上一次数量。` : "",
     "",
@@ -1443,12 +1296,10 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
           },
         ],
       },
-      null,
-      2,
     ),
     "",
     "上下文 JSON:",
-    JSON.stringify(context, null, 2),
+    JSON.stringify(context),
   ].join("\n");
   const timeout = createStoryboardModelSignal(abortSignal);
   let text = "";
@@ -1498,6 +1349,19 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
   }
   if (!nonEmpty(text)) throw new Error("模型未返回文本");
   return parseStoryboardJson(String(text));
+}
+
+function buildReviewRetryInstruction(review: StoryboardReviewResult, planning?: StoryboardPlanningHint) {
+  const parts = [
+    ...review.failures,
+    ...review.warnings,
+    planning && !planning.explicitShotCount
+      ? `按 ${planning.estimatedMinimumShots}-${planning.estimatedMaximumShots} 个镜头、${planning.targetDurationMin}-${planning.targetDurationMax}s 总时长重新推理`
+      : "",
+    planning?.explicitShotCount ? `严格输出 ${planning.explicitShotCount} 个镜头` : "",
+    planning?.sourceDialogueSeconds ? `对白需要拆成多个 2-4s 快切镜头，保留关键对白并浓缩次要对白` : "",
+  ].filter(Boolean);
+  return `按审核结论重新生成：${uniqueTextParts(parts).join("；")}`;
 }
 
 export async function generateProjectStoryboardWithSkill(
@@ -1585,41 +1449,39 @@ export async function generateProjectStoryboardWithSkill(
   if (!skill) stopStructuredStoryboardWrite("没有可用分镜 Skill");
 
   let parsed: SkillStoryboardJson | undefined;
-  let stableFallbackReason = "";
   const requestText = [sourceText, options.userRequirement].filter(Boolean).join("\n");
   const modelContext = buildModelContext(project, novels, assets, scriptContent, requestText);
   const planning = modelContext.storyboardPlanning as StoryboardPlanningHint;
   try {
-    let retryReason = "";
-    for (let attempt = 0; attempt < 3; attempt++) {
-      parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, retryReason || undefined, options.abortSignal), planning);
-      parsed = normalizeStoryboardTimings(repairStoryboardQuality(parsed, planning), planning);
-      const qualityReason = validateStoryboardQuality(parsed, planning);
-      if (!qualityReason) break;
-      if (attempt === 2) {
-        const repaired = normalizeStoryboardTimings(repairStoryboardQuality(parsed, planning), planning);
-        const repairReason = validateStoryboardQuality(repaired, planning);
-        if (!repairReason) {
-          parsed = repaired;
-          break;
-        }
-      }
-      retryReason = qualityReason;
-      if (attempt === 2) throw new Error(`模型分镜质量不合格：${qualityReason}`);
-    }
+    parsed = normalizeStoryboardTimings(await invokeStoryboardModel(skill, modelContext, undefined, options.abortSignal), planning);
+    parsed = normalizeStoryboardTimings(repairStoryboardQuality(parsed, planning), planning);
   } catch (error) {
     if (options.abortSignal?.aborted) throw error;
     const message = error instanceof Error ? error.message : "模型生成失败";
-    if (!isRecoverableStoryboardModelFailure(message)) stopStructuredStoryboardWrite(message);
-    stableFallbackReason = stableFallbackMessage(message);
-    parsed = buildStableFallbackParsed({
-      project,
-      novels,
-      assets,
-      scriptContent,
-      planning,
-      requestText,
-    });
+    const failure = `分镜模型没有返回可写入结果：${message}`;
+    const retryInstruction = buildReviewRetryInstruction(createReviewResult([failure], []), planning);
+    return {
+      projectId,
+      episodesId,
+      scriptName: toPublicWorkspaceName(script.name),
+      scriptCreated,
+      storyboardIds: existingRows.map((row: { id?: number | null }) => Number(row.id)).filter(Boolean),
+      createdCount: 0,
+      existingCount,
+      replaced: false,
+      appended: false,
+      selectedNovelIds,
+      selectedChapterIndexes,
+      selectedChapterLabels,
+      storyboardTable: buildStoryboardTable([]),
+      usedSkillId: skill.id,
+      usedSkillName: skill.name,
+      reviewStatus: "failed",
+      reviewFailures: [failure],
+      reviewWarnings: [],
+      reviewRetryInstruction: retryInstruction,
+      message: `${failure}。本次没有清空或覆盖旧分镜，也没有启用兜底草案。请确认是否按审核结论再次生成。`,
+    };
   }
 
   if (!parsed) stopStructuredStoryboardWrite("模型未生成可用分镜");
@@ -1630,12 +1492,38 @@ export async function generateProjectStoryboardWithSkill(
 
   const draftItems = toDraftItems(project, parsed, assets);
   if (!draftItems.length) stopStructuredStoryboardWrite("模型 JSON 没有可写入镜头");
+  const review = reviewStoryboardQuality(parsed, planning);
+  const storyboardTable = buildStoryboardTable(draftItems);
+  if (review.status === "failed") {
+    const retryInstruction = buildReviewRetryInstruction(review, planning);
+    return {
+      projectId,
+      episodesId,
+      scriptName: toPublicWorkspaceName(script.name),
+      scriptCreated,
+      storyboardIds: existingRows.map((row: { id?: number | null }) => Number(row.id)).filter(Boolean),
+      createdCount: 0,
+      existingCount,
+      replaced: false,
+      appended: false,
+      selectedNovelIds,
+      selectedChapterIndexes,
+      selectedChapterLabels,
+      storyboardTable,
+      usedSkillId: skill.id,
+      usedSkillName: skill.name,
+      reviewStatus: "failed",
+      reviewFailures: review.failures,
+      reviewWarnings: review.warnings,
+      reviewRetryInstruction: retryInstruction,
+      message: `分镜模型已返回候选结果，但审核未通过，已停止写入，旧分镜不会被清空或覆盖。${review.summary}。请确认是否按审核结论再次生成。`,
+    };
+  }
 
   let removedCount = 0;
   if (existingCount > 0 && force) removedCount = await deleteStoryboards(episodesId, projectId);
   const startIndex = append && existingCount > 0 ? existingCount : 0;
   const storyboardIds = await insertDraftItems(projectId, episodesId, draftItems, startIndex);
-  const storyboardTable = buildStoryboardTable(draftItems);
   await upsertProductionWorkData(projectId, episodesId, scriptContent, storyboardTable);
 
   const verb = removedCount > 0 ? `已覆盖旧分镜 ${removedCount} 个，并使用分镜方法重新生成` : append && existingCount > 0 ? "已使用分镜方法追加生成" : "已使用分镜方法生成";
@@ -1655,7 +1543,10 @@ export async function generateProjectStoryboardWithSkill(
     storyboardTable,
     usedSkillId: skill.id,
     usedSkillName: skill.name,
-    fallbackReason: stableFallbackReason || undefined,
-    message: `${stableFallbackReason ? "分镜模型输出不可直接写入，已启用稳定分镜草案；" : ""}${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。`,
+    reviewStatus: review.status,
+    reviewWarnings: review.warnings,
+    reviewFailures: review.failures,
+    reviewRetryInstruction: review.warnings.length ? buildReviewRetryInstruction(review, planning) : undefined,
+    message: `${verb} ${storyboardIds.length} 个分镜，章节分镜工作区为「${toPublicWorkspaceName(script.name)}」。已按单章节隔离处理，未把后续章节并入上下文。${review.warnings.length ? ` 审核提醒：${review.warnings.join("；")}。` : ""}`,
   };
 }

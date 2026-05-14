@@ -97,6 +97,10 @@ export interface GenerateProjectStoryboardDraftResult {
   usedSkillId?: string;
   usedSkillName?: string;
   fallbackReason?: string;
+  reviewStatus?: "passed" | "warning" | "failed";
+  reviewWarnings?: string[];
+  reviewFailures?: string[];
+  reviewRetryInstruction?: string;
 }
 
 export interface ClearProjectStoryboardsOptions {

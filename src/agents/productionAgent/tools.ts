@@ -132,7 +132,7 @@ export default (toolCpnfig: ToolConfig) => {
         selectedNovelIds: result.selectedNovelIds,
         selectedChapterIndexes: result.selectedChapterIndexes,
         selectedChapterLabels: result.selectedChapterLabels,
-        stage: "storyboard_generated",
+        stage: result.reviewStatus === "failed" ? "storyboard_review_failed" : "storyboard_generated",
       });
       thinking.appendText(JSON.stringify({
         projectId,
@@ -146,8 +146,11 @@ export default (toolCpnfig: ToolConfig) => {
         usedSkillId: result.usedSkillId,
         usedSkillName: result.usedSkillName,
         fallbackReason: result.fallbackReason,
+        reviewStatus: result.reviewStatus,
+        reviewWarnings: result.reviewWarnings,
+        reviewFailures: result.reviewFailures,
       }, null, 2));
-      thinking.updateTitle(result.createdCount > 0 ? "分镜草案已写入章节工作区" : "已有分镜，已切换章节工作区");
+      thinking.updateTitle(result.reviewStatus === "failed" ? "分镜候选未通过审核，等待确认" : result.createdCount > 0 ? "分镜草案已写入章节工作区" : "已有分镜，已切换章节工作区");
       thinking.complete();
       return {
         ok: true,
@@ -158,11 +161,11 @@ export default (toolCpnfig: ToolConfig) => {
   });
   const regenerateProjectStoryboardsTool = createProjectStoryboardsTool(
     true,
-    "可靠覆盖重推项目章节分镜表并直接写回分镜面板。用户要求删除旧分镜、覆盖重推、重新推理、再次推理分镜时优先使用；不要用旧 XML 子 Agent 自己拼写。",
+    "可靠覆盖重推项目章节分镜表；模型输出通过审核后写回分镜面板，审核不通过时必须把审核结论交给用户确认是否重推。用户要求删除旧分镜、覆盖重推、重新推理、再次推理分镜时优先使用；不要用旧 XML 子 Agent 自己拼写。",
   );
   const generateProjectStoryboardsTool = createProjectStoryboardsTool(
     false,
-    "按小说章节/事件分析生成章节分镜表并写回分镜面板。用户要求做分镜、生成分镜表时使用；重新推理/重推/覆盖时请使用 regenerate_project_storyboards。",
+    "按小说章节/事件分析生成章节分镜表；模型输出通过审核后写回分镜面板，审核不通过时必须把审核结论交给用户确认是否重推。用户要求做分镜、生成分镜表时使用；重新推理/重推/覆盖时请使用 regenerate_project_storyboards。",
   );
 
   const generateStoryboardTool = tool({

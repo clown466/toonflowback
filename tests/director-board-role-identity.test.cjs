@@ -12,7 +12,10 @@ function loadTsModule(file, append = '') {
   const js = transform(code, { transforms: ['typescript', 'imports'] }).code;
   const module = { exports: {} };
   const localRequire = (id) => {
-    if (id === '@/utils') return { default: {} };
+    if (id === '@/utils') {
+      const utilsMock = { error: (error) => (error instanceof Error ? error : new Error(String(error))) };
+      return { ...utilsMock, default: utilsMock };
+    }
     if (id === '@/utils/stripThink') return { stripThink: (value) => String(value || '') };
     if (id.startsWith('@/')) return loadTsModule(path.join('src', `${id.slice(2)}.ts`));
     return require(id);
@@ -111,6 +114,15 @@ function testFallbackRoleCardUsesTextNotHardcodedName() {
   assert.match(peachChloe.negativeFacts, /preserve the uploaded\/selected character identity/, 'role card fallback should use generic preservation constraints');
 }
 
+function testGatewayTimeoutIsRetryableForDirectorBoardImages() {
+  const { isRetryableDirectorBoardImageError } = loadTsModule('src/services/directorBoardGeneration.ts');
+
+  assert.strictEqual(isRetryableDirectorBoardImageError(new Error('Gateway Time-out')), true, 'Cloudflare-style Gateway Time-out should be retried for heavy director boards');
+  assert.strictEqual(isRetryableDirectorBoardImageError(new Error('custom1图片请求失败，状态码: 524')), true, '524 should stay retryable');
+  assert.strictEqual(isRetryableDirectorBoardImageError(new Error('invalid API key')), false, 'configuration errors should not be retried');
+}
+
 testDirectorBoardRoleIdentityIgnoresNegativeFruitNames();
 testFallbackRoleCardUsesTextNotHardcodedName();
+testGatewayTimeoutIsRetryableForDirectorBoardImages();
 console.log('Director board role identity regression checks passed');

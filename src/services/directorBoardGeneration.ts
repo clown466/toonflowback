@@ -96,6 +96,8 @@ type DirectorBoardImageSize = "1K" | "2K" | "4K";
 
 const MAX_DIRECTOR_BOARD_DURATION_SECONDS = 15;
 const DEFAULT_DIRECTOR_BOARD_TYPE: DirectorBoardType = "continuity";
+const DIRECTOR_BOARD_IMAGE_MAX_ATTEMPTS = 6;
+const DIRECTOR_BOARD_IMAGE_RETRY_DELAYS_MS = [30000, 60000, 120000, 180000, 300000];
 
 function directorBoardTypeName(boardType: DirectorBoardType) {
   if (boardType === "textStoryboard") return "文字分镜导演板";
@@ -114,12 +116,16 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isRetryableDirectorBoardImageError(error: unknown) {
+export function isRetryableDirectorBoardImageError(error: unknown) {
   const message = u.error(error).message;
-  return /状态码:\s*(429|500|502|503|504|524)|\b(429|500|502|503|504|524)\b|do_request_failed|负载|饱和|稍后|timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|temporarily|rate limit/i.test(message);
+  return /状态码:\s*(429|500|502|503|504|524)|\b(429|500|502|503|504|524)\b|gateway\s*time[-\s]?out|time[-\s]?out|do_request_failed|负载|饱和|稍后|timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|temporarily|rate limit/i.test(message);
 }
 
-async function runDirectorBoardImageTaskWithRetry(rowId: number, task: () => Promise<void>, maxAttempts = 3) {
+function getDirectorBoardImageRetryDelayMs(attempt: number) {
+  return DIRECTOR_BOARD_IMAGE_RETRY_DELAYS_MS[attempt - 1] ?? DIRECTOR_BOARD_IMAGE_RETRY_DELAYS_MS[DIRECTOR_BOARD_IMAGE_RETRY_DELAYS_MS.length - 1]!;
+}
+
+async function runDirectorBoardImageTaskWithRetry(rowId: number, task: () => Promise<void>, maxAttempts = DIRECTOR_BOARD_IMAGE_MAX_ATTEMPTS) {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -128,8 +134,8 @@ async function runDirectorBoardImageTaskWithRetry(rowId: number, task: () => Pro
     } catch (error) {
       lastError = error;
       if (attempt >= maxAttempts || !isRetryableDirectorBoardImageError(error)) break;
-      const delayMs = 15000 * attempt;
-      const reason = `${u.error(error).message}\n正在自动重试 ${attempt + 1}/${maxAttempts}，等待 ${Math.round(delayMs / 1000)} 秒。`;
+      const delayMs = getDirectorBoardImageRetryDelayMs(attempt);
+      const reason = `${u.error(error).message}\n检测到网关/模型任务超时，章节导演板仍保持生成中。正在自动重试 ${attempt + 1}/${maxAttempts}，等待 ${Math.round(delayMs / 1000)} 秒。`;
       await u.db("o_directorBoard").where("id", rowId).update({
         state: "生成中",
         reason,

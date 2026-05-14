@@ -210,6 +210,41 @@ function isAbortLikeError(error: unknown) {
   return error.name === "AbortError" || /abort|aborted|cancel/i.test(error.message);
 }
 
+function extractStoryboardModelErrorMessage(error: unknown): string {
+  const visited = new Set<unknown>();
+  const messages: string[] = [];
+
+  const collect = (value: unknown) => {
+    if (!value || visited.has(value)) return;
+    visited.add(value);
+    if (typeof value === "string") {
+      messages.push(value);
+      return;
+    }
+    if (!(typeof value === "object")) return;
+    const record = value as Record<string, any>;
+    if (record.responseBody && typeof record.responseBody === "string") {
+      try {
+        const parsed = JSON.parse(record.responseBody);
+        const bodyMessage = parsed?.error?.message || parsed?.message;
+        if (bodyMessage) messages.push(String(bodyMessage));
+      } catch {
+        messages.push(record.responseBody);
+      }
+    }
+    if (record.statusCode || record.status) {
+      messages.push(`HTTP ${record.statusCode || record.status}`);
+    }
+    if (record.message) messages.push(String(record.message));
+    if (record.lastError) collect(record.lastError);
+    if (record.cause) collect(record.cause);
+    if (Array.isArray(record.errors)) record.errors.forEach(collect);
+  };
+
+  collect(error);
+  return uniqueTextParts(messages).join("；") || u.error(error).message || "未知模型错误";
+}
+
 async function resolveStoryboardSkill(skillId?: string, requestText?: string): Promise<StoryboardGenerationSkill | null> {
   try {
     const service = require("@/services/storyboardGenerationSkill");
@@ -1317,9 +1352,13 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
     targetDurationMax: planning?.targetDurationMax,
   });
   try {
-    const { textStream } = await u.Ai.Text(STORYBOARD_MODEL_KEY).stream({ prompt, abortSignal: timeout.signal });
-    for await (const chunk of textStream) {
-      text += chunk;
+    const { fullStream } = await u.Ai.Text(STORYBOARD_MODEL_KEY).stream({ prompt, abortSignal: timeout.signal });
+    for await (const part of fullStream) {
+      if (part.type === "text-delta") {
+        text += part.text;
+      } else if (part.type === "error") {
+        throw new Error(extractStoryboardModelErrorMessage(part.error));
+      }
     }
   } catch (error) {
     if (abortSignal?.aborted) throw error;
@@ -1337,7 +1376,7 @@ async function invokeStoryboardModel(skill: StoryboardGenerationSkill, context: 
       }
       throw new Error(`分镜模型响应超过 ${Math.round(STORYBOARD_MODEL_TIMEOUT_MS / 1000)} 秒，请检查当前文本模型是否可用，或切换更快的文本模型后重试`);
     }
-    throw error;
+    throw new Error(extractStoryboardModelErrorMessage(error));
   } finally {
     console.info("[storyboardSkillGeneration] storyboard model finished", {
       modelKey: STORYBOARD_MODEL_KEY,

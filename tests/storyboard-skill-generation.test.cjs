@@ -169,8 +169,8 @@ async function main() {
               const chunks = response.__streamChunks;
               const throwAfterChunks = response.__throwAfterChunks;
               return {
-                textStream: (async function* () {
-                  for (const chunk of chunks) yield chunk;
+                fullStream: (async function* () {
+                  for (const chunk of chunks) yield { type: 'text-delta', text: chunk };
                   if (throwAfterChunks) {
                     const error = new Error(response.message || 'aborted');
                     if (response.name) error.name = response.name;
@@ -179,10 +179,17 @@ async function main() {
                 })(),
               };
             }
+            if (response && typeof response === 'object' && response.__errorPart) {
+              return {
+                fullStream: (async function* () {
+                  yield { type: 'error', error: response.__errorPart };
+                })(),
+              };
+            }
             const text = typeof response === 'string' ? response : JSON.stringify(response);
             return {
-              textStream: (async function* () {
-                yield text;
+              fullStream: (async function* () {
+                yield { type: 'text-delta', text };
               })(),
             };
           },
@@ -520,6 +527,45 @@ async function main() {
   assert.ok(String(reviewBlockedResult.reviewRetryInstruction).includes('严格输出 4 个镜头'), reviewBlockedResult.reviewRetryInstruction);
   const reviewBlockedRows = await db('o_storyboard').where({ projectId: 14, scriptId: reviewBlockedResult.episodesId });
   assert.strictEqual(reviewBlockedRows.length, 0, 'review-blocked candidates should leave old storyboard rows untouched');
+
+  await db('o_project').insert({
+    id: 15,
+    name: 'Provider Error Visibility',
+    intro: 'English-language fast drama',
+    type: '水果美剧',
+    artStyle: 'animated short drama',
+    directorManual: 'Surface upstream model errors',
+    videoRatio: '16:9',
+  });
+  await db('o_novel').insert({
+    id: 150,
+    projectId: 15,
+    chapterIndex: 17,
+    chapter: 'juben17',
+    chapterData: 'Chloe enters the bunker. Bob blocks the door. Leo checks the alarm reflection.',
+    event: '| juben17 | Chloe, Bob, Leo, bunker | The team enters the bunker under pressure |',
+    eventState: 1,
+  });
+
+  capturedPrompts = [];
+  capturedModelKeys = [];
+  mockStoryboardResponses = [
+    {
+      __errorPart: {
+        message: 'Failed after 3 attempts',
+        statusCode: 429,
+        responseBody: '{"error":{"message":"当前分组上游负载已饱和，请稍后再试 (request id: test-request)","type":"upstream_error","code":"model_not_found"}}',
+      },
+    },
+  ];
+  const providerErrorResult = await service.generateProjectStoryboardWithSkill(15, {
+    sourceText: '重新推理17章分镜',
+    force: true,
+  });
+  assert.strictEqual(providerErrorResult.createdCount, 0, 'provider errors should not write storyboards');
+  assert.strictEqual(providerErrorResult.reviewStatus, 'failed');
+  assert.ok(String(providerErrorResult.reviewFailures?.[0]).includes('当前分组上游负载已饱和'), providerErrorResult.reviewFailures);
+  assert.ok(!String(providerErrorResult.reviewFailures?.[0]).includes('模型未返回文本'), providerErrorResult.reviewFailures);
 
   await db('o_project').insert({
     id: 10,
